@@ -26,6 +26,27 @@ Panel {
   readonly property var popularList: Countries.popularCountries
   readonly property var dropdownOptionsList: Countries.dropdownOptions()
 
+  property bool ipCopied: false
+
+  Timer {
+    id: copyResetTimer
+    interval: 2200
+    repeat: false
+    onTriggered: root.ipCopied = false
+  }
+
+  Process {
+    id: clipboardProcess
+  }
+
+  function copyIp() {
+    var ipToCopy = (cyberghost.publicIp && cyberghost.publicIp !== "") ? cyberghost.publicIp : "146.70.59.132"
+    clipboardProcess.command = ["wl-copy", ipToCopy]
+    clipboardProcess.running = true
+    root.ipCopied = true
+    copyResetTimer.restart()
+  }
+
   onOpenedChanged: {
     if (root.opened) {
       cyberghost.refresh()
@@ -72,6 +93,16 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refresh() }
+    function connect(countryCode: string): void {
+      if (countryCode && typeof countryCode === "string" && countryCode.trim() !== "") {
+        root.connectToCountry(countryCode.trim().toUpperCase())
+      } else {
+        root.toggleRunning()
+      }
+    }
+    function disconnect(): void {
+      cyberghost.disconnect()
+    }
   }
 
   // -------------------------------------------------------------
@@ -277,7 +308,7 @@ Panel {
           }
 
           // -------------------------------------------------------------
-          // 3. LIVE CONNECTION & IP CARD (PERFECTLY PADDED & BOUNDED)
+          // 3. LIVE CONNECTION & IP CARD (CLICK-TO-COPY & PADDED)
           // -------------------------------------------------------------
           Rectangle {
             id: infoCard
@@ -325,7 +356,7 @@ Panel {
                   }
                 }
 
-                // Protocol pill (Sized and positioned inside right margin)
+                // Protocol pill
                 Rectangle {
                   id: protoPill
                   anchors.right: parent.right
@@ -356,26 +387,54 @@ Panel {
                 color: Util.alpha(Color.popups.border, 0.35)
               }
 
-              // IP details
-              Row {
+              // IP details with Click-to-Copy
+              Item {
                 width: parent.width
-                spacing: Style.space(6)
+                implicitHeight: ipRow.implicitHeight
 
-                Text {
-                  text: "IP Address:"
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  color: root.dim
+                Row {
+                  id: ipRow
+                  spacing: Style.space(6)
+                  anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
+
+                  Text {
+                    text: "IP Address:"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.dim
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    text: cyberghost.publicIp !== "" ? cyberghost.publicIp : (cyberghost.fetchingIp ? "Checking IP…" : "146.70.59.132")
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    color: root.foreground
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+
+                  Text {
+                    text: root.ipCopied ? "✓ Copied!" : "󰅍"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: root.ipCopied
+                    color: root.ipCopied ? root.successGreen : root.dim
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
                 }
 
-                Text {
-                  text: cyberghost.publicIp !== "" ? cyberghost.publicIp : (cyberghost.fetchingIp ? "Checking IP…" : "146.70.59.132")
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  color: root.foreground
-                  anchors.verticalCenter: parent.verticalCenter
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.copyIp()
+                }
+
+                PanelToolTip {
+                  visible: parent.containsMouse
+                  text: root.ipCopied ? "Copied to clipboard!" : "Click to copy public IP"
+                  fontFamily: root.fontFamily
                 }
               }
 
