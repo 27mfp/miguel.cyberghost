@@ -29,9 +29,6 @@ A native, lightweight, and responsive Quickshell status bar widget and panel for
   - WireGuard (fastest, native key negotiation).
   - OpenVPN UDP.
   - OpenVPN TCP.
-- ⌨️ **Keyboard Navigation & Hyprland Keybindings:**
-  - Omarchy panel shortcuts: <kbd>Space</kbd> to toggle, <kbd>R</kbd> to refresh, <kbd>Esc</kbd> to close.
-  - Global IPC commands for window manager hotkeys (e.g. `omarchy ipc miguel.cyberghost toggle`).
 
 ---
 
@@ -75,20 +72,6 @@ And ensure it is included in your `~/.config/omarchy/shell.json` in `bar.layout.
 Then refresh the shell:
 ```bash
 omarchy restart shell
-```
-
----
-
-## ⚡ Hyprland Keybindings (Optional)
-
-You can bind a keyboard shortcut to toggle or connect directly via IPC in `~/.config/hypr/hyprland.conf`:
-
-```ini
-# Toggle CyberGhost VPN with SUPER + V
-bind = $mainMod, V, exec, omarchy ipc miguel.cyberghost toggle
-
-# Connect directly to Portugal
-bind = $mainMod SHIFT, P, exec, omarchy ipc miguel.cyberghost connect PT
 ```
 
 ---
