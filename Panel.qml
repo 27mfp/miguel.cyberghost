@@ -203,10 +203,6 @@ Panel {
       blocked: countryDropdown.popupOpen
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(text) {
-        if (text === "r" || text === "R") root.refresh()
-        else if (text === " ") root.toggleRunning()
-      }
 
       Flickable {
         id: scroll
