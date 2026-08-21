@@ -1,0 +1,14 @@
+/* Polkit rule for CyberGhost VPN Omarchy Plugin
+ * Allows users in the 'wheel' group to connect/disconnect WireGuard without a password prompt.
+ * 
+ * To install:
+ *   sudo cp 50-cyberghost.rules /etc/polkit-1/rules.d/
+ */
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        action.lookup("program") == "/usr/bin/python3" &&
+        action.lookup("command_line").indexOf("cyberghost_runner.py") !== -1 &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});

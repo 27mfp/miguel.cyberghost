@@ -7,14 +7,15 @@ import "Countries.js" as Countries
 Item {
   id: root
 
-  property var settings: ({})
+  property var settings: null
 
-  // ---- State Properties ----
+  // ---- Public State ----
   property bool installed: true
   property bool connected: false
   property bool connecting: false
   property bool disconnecting: false
-  property int _desired: -1 // Optimistic state: -1 (real), 1 (connecting/on), 0 (disconnecting/off)
+  property int _desired: -1 // -1=none, 0=disconnected, 1=connected
+
   readonly property bool active: _desired === -1 ? (connected || connecting) : (_desired === 1)
 
   property string country: "PT"
@@ -24,16 +25,14 @@ Item {
   property string serverType: "traffic"
   property string streamingService: ""
 
-  // Public IP & Geo details
   property string publicIp: ""
   property string publicCity: ""
   property string publicCountry: ""
   property string publicOrg: ""
   property bool fetchingIp: false
 
-  // Status & Error Messages
-  property string lastError: ""
   property string actionStatus: ""
+  property string lastError: ""
   property string rawStatusText: ""
 
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
@@ -41,12 +40,13 @@ Item {
   readonly property bool busy: whichProcess.running || statusProcess.running || actionProcess.running || connecting || disconnecting
 
   // ---- Helper Methods ----
-  function setting(name, fallback) {
-    var val = settings ? settings[name] : undefined
-    return val === undefined || val === null ? fallback : val
+  function setting(key, fallback) {
+    if (settings && settings[key] !== undefined) return settings[key]
+    return fallback
   }
 
   function setCountry(code) {
+    if (!code) return
     var c = Countries.countryByCode(code)
     country = c.code
     countryName = c.name
@@ -130,6 +130,7 @@ Item {
   }
 
   function toggle() {
+    if (busy) return
     if (active) {
       disconnect()
     } else {
@@ -140,13 +141,13 @@ Item {
   // ---- Processes ----
   Process {
     id: whichProcess
-    command: ["which", "cyberghostvpn"]
+    command: ["which", "wg-quick"]
     onExited: function(exitCode) {
       root.installed = (exitCode === 0)
       if (root.installed) {
         root.refresh()
       } else {
-        root.lastError = "cyberghostvpn CLI is not installed."
+        root.lastError = "wireguard-tools (wg-quick) is not installed."
       }
     }
   }
@@ -190,6 +191,17 @@ Item {
   }
 
   Process {
+    id: notifyProcess
+  }
+
+  function sendNotification(title, message, urgency) {
+    try {
+      notifyProcess.command = ["notify-send", "-a", "CyberGhost VPN", "-u", urgency || "normal", title, message]
+      notifyProcess.running = true
+    } catch (e) {}
+  }
+
+  Process {
     id: actionProcess
     stdout: StdioCollector {
       id: actionOut
@@ -207,9 +219,8 @@ Item {
 
       var out = String(actionOut.text || "").trim()
       var err = String(actionErr.text || "").trim()
-      console.warn("CyberGhost action exitCode: " + exitCode + " | STDOUT: " + out + " | STDERR: " + err)
 
-      var isEstablished = /VPN connection established|Wireguard connection found|Initialization Sequence Completed|connection established/i.test(out)
+      var isEstablished = /VPN connection established|Wireguard connection found|connection established/i.test(out)
       var hasError = /error|failed|exception|cannot connect|invalid/i.test(out) || /error|failed|exception/i.test(err)
 
       if (exitCode === 0) {
@@ -217,15 +228,17 @@ Item {
           root.connected = true
           root.actionStatus = ""
           root.lastError = ""
-        } else if (out.indexOf("No VPN connection") !== -1 || out.indexOf("Terminating") !== -1 || root.disconnecting) {
+          root.sendNotification("CyberGhost VPN Connected", "Protected & Encrypted • " + root.countryName + " " + root.countryFlag, "normal")
+        } else if (out.indexOf("No VPN connection") !== -1 || out.indexOf("Terminated") !== -1 || out.indexOf("terminated") !== -1 || root.disconnecting) {
           root.connected = false
           root.actionStatus = ""
           root.lastError = ""
+          root.sendNotification("CyberGhost VPN Disconnected", "VPN tunnel disconnected. Public IP exposed.", "normal")
         } else if (hasError) {
           root.lastError = extractCleanError(out || err)
           root.actionStatus = ""
+          root.sendNotification("Connection Failed", root.lastError, "critical")
         } else {
-          // Normal progress output without error
           root.actionStatus = ""
           root.lastError = ""
         }
@@ -234,11 +247,11 @@ Item {
           root.lastError = "Authentication cancelled"
         } else {
           root.lastError = extractCleanError(err || out || ("Command failed (code " + exitCode + ")"))
+          root.sendNotification("Connection Failed", root.lastError, "critical")
         }
         root.actionStatus = ""
       }
 
-      // Check status immediately
       delayedRefreshTimer.restart()
     }
   }
@@ -262,7 +275,6 @@ Item {
 
     if (lower.indexOf("vpn connection found") !== -1 ||
         lower.indexOf("wireguard connection found") !== -1 ||
-        lower.indexOf("openvpn connection found") !== -1 ||
         lower.indexOf("connection established") !== -1 ||
         lower.indexOf("interface: cyberghost") !== -1) {
       connected = true
@@ -316,7 +328,7 @@ Item {
 
   Timer {
     id: delayedRefreshTimer
-    interval: 1000
+    interval: 800
     repeat: false
     onTriggered: root.refresh()
   }

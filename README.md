@@ -7,44 +7,44 @@ A native, lightweight, and responsive Quickshell status bar widget and panel for
 ## ✨ Features
 
 - 👻 **Status Bar Widget:**
-  - Custom vector CyberGhost icon (scales crisply with any theme and DPI).
-  - Status indicators: connected dot, pulsing animation during connection handshakes.
+  - Official CyberGhost vector icon in brand yellow (`#FFCE00`) when connected.
+  - Active indicator dot and pulsing animation during connection handshakes.
   - Informative tooltips displaying active server, country, protocol, and external IP.
 - ⚡ **One-Click Controls:**
   - Header toggle switch for instant connect/disconnect.
   - Middle-click shortcut directly on the bar icon.
+- 📋 **Live IP & Network Diagnostics:**
+  - Real-time external IP detection, GeoIP resolution (City, Country), and ISP organization.
+  - **Click-to-Copy:** Click the IP address anytime to instantly copy it to your clipboard.
+- 🔔 **Desktop Notifications:**
+  - Native desktop notifications on connection success, disconnection, and error alerts.
 - 🌍 **100+ Countries & Fast Switching:**
-  - Quick-connect buttons for popular locations (🇵🇹 Portugal, 🇪🇸 Spain, 🇬🇧 UK, 🇺🇸 USA, 🇩🇪 Germany, 🇳🇱 Netherlands, 🇨🇭 Switzerland, 🇫🇷 France, 🇮🇹 Italy, 🇧🇷 Brazil, 🇨🇦 Canada, 🇸🇪 Sweden).
+  - Quick-connect grid for popular locations (🇵🇹 Portugal, 🇪🇸 Spain, 🇬🇧 UK, 🇺🇸 USA, 🇩🇪 Germany, 🇫🇷 France, 🇳🇱 Netherlands, 🇨🇭 Switzerland, 🇮🇹 Italy, 🇧🇷 Brazil, 🇨🇦 Canada, 🇸🇪 Sweden).
   - Searchable dropdown with real-time filtering covering all 100+ CyberGhost server countries.
 - 🛡️ **Server Modes:**
   - **⚡ Traffic:** Fastest standard routing for daily browsing.
   - **🔒 Torrent (P2P):** Specialized torrenting servers.
   - **🎬 Streaming:** Streaming-optimized server locations.
 - 🔒 **Multi-Protocol Support:**
-  - WireGuard (fastest, modern default).
+  - WireGuard (fastest, native key negotiation).
   - OpenVPN UDP.
   - OpenVPN TCP.
-- 🌐 **Real-Time Network Diagnostics:**
-  - Live external IP detection, GeoIP resolution, and ISP information.
-- ⌨️ **Full Keyboard Navigation:**
-  - Standard Omarchy shortcuts: <kbd>Space</kbd> to toggle, <kbd>R</kbd> to refresh status, <kbd>Esc</kbd> to close.
+- ⌨️ **Keyboard Navigation & Hyprland Keybindings:**
+  - Omarchy panel shortcuts: <kbd>Space</kbd> to toggle, <kbd>R</kbd> to refresh, <kbd>Esc</kbd> to close.
+  - Global IPC commands for window manager hotkeys (e.g. `omarchy ipc miguel.cyberghost toggle`).
 
 ---
 
 ## 📦 Requirements
 
-1. **CyberGhost VPN CLI** installed on Arch Linux / Omarchy:
-   ```bash
-   yay -S cyberghostvpn
-   # or paru -S cyberghostvpn
-   ```
-2. Configure your CyberGhost account:
-   ```bash
-   sudo cyberghostvpn --setup
-   ```
-3. *(Optional but recommended)* WireGuard tools:
+1. **WireGuard Tools** installed on Arch Linux / Omarchy:
    ```bash
    sudo pacman -S wireguard-tools
+   ```
+2. Configure your CyberGhost account (one-time setup to generate device token):
+   ```bash
+   yay -S cyberghostvpn
+   sudo cyberghostvpn --setup
    ```
 
 ---
@@ -54,17 +54,17 @@ A native, lightweight, and responsive Quickshell status bar widget and panel for
 Install directly with the Omarchy plugin CLI:
 
 ```bash
-omarchy plugin add https://github.com/<username>/<repo-name>.git --enable
+omarchy plugin add https://github.com/27mfp/miguel.cyberghost.git --enable
 ```
 
 Or clone manually to your user plugins directory:
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins/
-cp -r miguel.cyberghost ~/.config/omarchy/plugins/
+git clone https://github.com/27mfp/miguel.cyberghost.git ~/.config/omarchy/plugins/miguel.cyberghost
 ```
 
-And add to your `~/.config/omarchy/shell.json` in `bar.layout.right`:
+And ensure it is included in your `~/.config/omarchy/shell.json` in `bar.layout.right`:
 
 ```json
 {
@@ -79,9 +79,27 @@ omarchy restart shell
 
 ---
 
-## 🔐 Security & Privileges
+## ⚡ Hyprland Keybindings (Optional)
 
-The plugin uses `pkexec /usr/bin/cyberghostvpn` when initiating or terminating connections, integrating seamlessly with Omarchy's native Polkit Agent (`omarchy.polkit`) for visual authentication dialogs.
+You can bind a keyboard shortcut to toggle or connect directly via IPC in `~/.config/hypr/hyprland.conf`:
+
+```ini
+# Toggle CyberGhost VPN with SUPER + V
+bind = $mainMod, V, exec, omarchy ipc miguel.cyberghost toggle
+
+# Connect directly to Portugal
+bind = $mainMod SHIFT, P, exec, omarchy ipc miguel.cyberghost connect PT
+```
+
+---
+
+## 🔐 Passwordless Connection via Polkit (Optional)
+
+To connect without entering your root password every time, copy the included Polkit rule to `/etc/polkit-1/rules.d/`:
+
+```bash
+sudo cp 50-cyberghost.rules /etc/polkit-1/rules.d/
+```
 
 ---
 

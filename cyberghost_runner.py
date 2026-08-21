@@ -20,11 +20,71 @@ urllib3.disable_warnings()
 try:
     import requests
 except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "--break-system-packages"])
-    import requests
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "--break-system-packages"])
+        import requests
+    except Exception:
+        sys.exit("Error: 'requests' library is required. Please install python-requests.")
 
 WG_CONF_PATH = "/etc/wireguard/cyberghost.conf"
 INTERFACE = "cyberghost"
+
+# Comprehensive mapping of Country Code -> Primary CyberGhost city slug
+CITY_MAP = {
+    "PT": "lisbon",
+    "ES": "madrid",
+    "DE": "frankfurt",
+    "GB": "london",
+    "UK": "london",
+    "US": "newyork",
+    "FR": "paris",
+    "NL": "amsterdam",
+    "CH": "zurich",
+    "IT": "milan",
+    "BR": "saopaulo",
+    "CA": "montreal",
+    "SE": "stockholm",
+    "JP": "tokyo",
+    "AU": "sydney",
+    "AT": "vienna",
+    "BE": "brussels",
+    "PL": "warsaw",
+    "RO": "bucharest",
+    "NO": "oslo",
+    "DK": "copenhagen",
+    "FI": "helsinki",
+    "IE": "dublin",
+    "SG": "singapore",
+    "MX": "mexicocity",
+    "IN": "mumbai",
+    "ZA": "johannesburg",
+    "NZ": "auckland",
+    "CZ": "prague",
+    "GR": "athens",
+    "TR": "istanbul",
+    "HU": "budapest",
+    "BG": "sofia",
+    "HR": "zagreb",
+    "IS": "reykjavik",
+    "IL": "telaviv",
+    "KR": "seoul",
+    "AR": "buenosaires",
+    "CL": "santiago",
+    "CO": "bogota",
+    "AE": "dubai",
+    "HK": "hongkong",
+    "TW": "taipei",
+    "MY": "kualalumpur",
+    "TH": "bangkok",
+    "ID": "jakarta",
+    "PH": "manila",
+    "VN": "hanoi",
+    "UA": "kyiv",
+    "RS": "belgrade",
+    "SK": "bratislava",
+    "SI": "ljubljana",
+    "LU": "luxembourg",
+}
 
 
 def find_config_path(override_path=None):
@@ -64,109 +124,114 @@ def find_config_path(override_path=None):
 def get_credentials(config_path=None):
     path = find_config_path(config_path)
     if not os.path.exists(path):
-        raise RuntimeError(f"Configuration file not found: {path}")
+        raise RuntimeError(f"Configuration file not found: {path}. Please run 'cyberghostvpn --setup' first.")
 
     cfg = configparser.ConfigParser()
-    cfg.read(path)
+    try:
+        cfg.read(path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse config file at {path}: {e}")
 
     if not cfg.has_section("device") or not cfg.has_option("device", "token") or not cfg.has_option("device", "secret"):
         raise RuntimeError(f"Device credentials missing from {path}. Please run 'cyberghostvpn --setup'")
 
-    token = cfg.get("device", "token")
-    secret = cfg.get("device", "secret")
+    token = cfg.get("device", "token").strip()
+    secret = cfg.get("device", "secret").strip()
     return token, secret
 
 
 def get_servers_for_country(country_code, server_type="traffic"):
     """
-    Query available server instances for a country.
+    Query available server instances for a country if cyberghostvpn is present.
     """
-    cmd = ["cyberghostvpn", f"--{server_type}", "--country-code", country_code.upper()]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        cmd = ["cyberghostvpn", f"--{server_type}", "--country-code", country_code.upper()]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
 
-    servers = []
-    if res.returncode == 0:
-        for line in res.stdout.splitlines():
-            m = re.match(r"\|\s*\d+\s*\|\s*([A-Za-z\s]+)\s*\|\s*(\d+)\s*\|\s*(\d+)%", line)
-            if m:
-                city = m.group(1).strip()
-                instance = m.group(2).strip()
-                load = int(m.group(3))
-                servers.append({"city": city, "instance": instance, "load": load})
-    return servers
+        servers = []
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                m = re.match(r"\|\s*\d+\s*\|\s*([A-Za-z\s]+)\s*\|\s*(\d+)\s*\|\s*(\d+)%", line)
+                if m:
+                    city = m.group(1).strip()
+                    instance = m.group(2).strip()
+                    load = int(m.group(3))
+                    servers.append({"city": city, "instance": instance, "load": load})
+        return servers
+    except Exception:
+        return []
 
 
 def generate_wireguard_keys():
-    priv = subprocess.check_output(["wg", "genkey"]).decode().strip()
-    pub = subprocess.check_output(["wg", "pubkey"], input=priv.encode()).decode().strip()
-    return priv, pub
+    try:
+        priv = subprocess.check_output(["wg", "genkey"]).decode().strip()
+        pub = subprocess.check_output(["wg", "pubkey"], input=priv.encode()).decode().strip()
+        return priv, pub
+    except Exception as e:
+        raise RuntimeError(f"Failed to generate WireGuard keys using 'wg': {e}. Ensure wireguard-tools is installed.")
 
 
 def connect(country_code="PT", server_type="traffic", city=None, config_path=None):
     token, secret = get_credentials(config_path)
     priv_key, pub_key = generate_wireguard_keys()
 
-    servers = get_servers_for_country(country_code, server_type)
+    cc = country_code.upper().strip()
+    city_slug = None
 
-    city_slug = "lisbon"
-    cc = country_code.upper()
-    if cc == "PT":
-        city_slug = "lisbon"
-    elif cc == "ES":
-        city_slug = "madrid"
-    elif cc == "DE":
-        city_slug = "frankfurt"
-    elif cc == "GB" or cc == "UK":
-        city_slug = "london"
-    elif cc == "US":
-        city_slug = "newyork"
-    elif cc == "FR":
-        city_slug = "paris"
-    elif cc == "NL":
-        city_slug = "amsterdam"
-    elif cc == "CH":
-        city_slug = "zurich"
-    elif cc == "IT":
-        city_slug = "milan"
-    elif cc == "BR":
-        city_slug = "saopaulo"
-    elif cc == "CA":
-        city_slug = "montreal"
-    elif cc == "SE":
-        city_slug = "stockholm"
-    elif servers:
-        city_slug = servers[0]["city"].lower().replace(" ", "")
+    if city:
+        city_slug = city.lower().replace(" ", "")
+    elif cc in CITY_MAP:
+        city_slug = CITY_MAP[cc]
+    else:
+        servers = get_servers_for_country(cc, server_type)
+        if servers:
+            city_slug = servers[0]["city"].lower().replace(" ", "")
+        else:
+            city_slug = "lisbon"
 
+    # Build server pool candidates with multiple instance numbers and server tiers
     candidates = [
-        f"{city_slug}-s405-i03.cg-dialup.net",
-        f"{city_slug}-s405-i02.cg-dialup.net",
         f"{city_slug}-s405-i01.cg-dialup.net",
+        f"{city_slug}-s405-i02.cg-dialup.net",
+        f"{city_slug}-s405-i03.cg-dialup.net",
         f"{city_slug}-s401-i01.cg-dialup.net",
         f"{city_slug}-s401-i02.cg-dialup.net",
         f"{city_slug}-s401-i03.cg-dialup.net",
+        f"{city_slug}-s406-i01.cg-dialup.net",
+        f"{city_slug}-s407-i01.cg-dialup.net",
     ]
 
     addkey_data = None
     connected_host = None
+    last_error_msg = None
 
     for host in candidates:
         url = f"https://{host}:1337/addKey"
         try:
-            r = requests.get(url, params={"pubkey": pub_key}, auth=(token, secret), verify=False, timeout=4)
+            r = requests.get(url, params={"pubkey": pub_key}, auth=(token, secret), verify=False, timeout=3.5)
             if r.status_code == 200:
                 data = r.json()
                 if data.get("status") == "OK" and data.get("server_key"):
                     addkey_data = data
                     connected_host = host
                     break
-        except Exception:
+                elif "error" in data:
+                    last_error_msg = data.get("error")
+            elif r.status_code == 401 or r.status_code == 403:
+                raise RuntimeError("Authentication failed. Please verify your CyberGhost subscription or run 'cyberghostvpn --setup'.")
+        except requests.exceptions.RequestException as req_err:
+            last_error_msg = str(req_err)
             continue
 
     if not addkey_data:
-        raise RuntimeError(f"Could not negotiate WireGuard key with CyberGhost servers in {country_code.upper()}.")
+        err = f"Could not establish WireGuard key exchange with CyberGhost servers in {cc}."
+        if last_error_msg:
+            err += f" ({last_error_msg})"
+        raise RuntimeError(err)
 
     # Generate WireGuard configuration
-    dns_servers = ", ".join(addkey_data.get("dns_servers", ["10.0.0.243", "10.0.0.242", "1.1.1.1"]))
+    dns_list = addkey_data.get("dns_servers", ["10.0.0.243", "10.0.0.242", "1.1.1.1"])
+    dns_servers = ", ".join(dns_list) if isinstance(dns_list, list) else str(dns_list)
     server_ip = addkey_data.get("server_ip") or connected_host
     server_port = addkey_data.get("server_port", 1337)
     peer_ip = addkey_data.get("peer_ip")
@@ -189,16 +254,33 @@ PersistentKeepalive = 25
         f.write(wg_config)
     os.chmod(WG_CONF_PATH, 0o600)
 
-    # Bring down any existing connection first
+    # Clean up any leftover interface first to avoid collisions
     subprocess.run(["wg-quick", "down", INTERFACE], capture_output=True)
 
-    # Bring up wireguard connection
+    # Bring up WireGuard connection
     up_res = subprocess.run(["wg-quick", "up", INTERFACE], capture_output=True, text=True)
     if up_res.returncode != 0:
-        raise RuntimeError(f"wg-quick up failed: {up_res.stderr.strip() or up_res.stdout.strip()}")
+        # If DNS configuration failed in wg-quick, retry with DNS fallback
+        if "resolvconf" in up_res.stderr or "resolv" in up_res.stderr:
+            no_dns_config = f"""[Interface]
+PrivateKey = {priv_key}
+Address = {peer_ip}/32
+
+[Peer]
+PublicKey = {server_key}
+AllowedIPs = 0.0.0.0/0
+Endpoint = {server_ip}:{server_port}
+PersistentKeepalive = 25
+"""
+            with open(WG_CONF_PATH, "w") as f:
+                f.write(no_dns_config)
+            up_res = subprocess.run(["wg-quick", "up", INTERFACE], capture_output=True, text=True)
+
+        if up_res.returncode != 0:
+            raise RuntimeError(f"wg-quick up failed: {up_res.stderr.strip() or up_res.stdout.strip()}")
 
     print("VPN connection established.")
-    print(f"Connected to {country_code.upper()} via {connected_host} (IP: {server_ip})")
+    print(f"Connected to {cc} via {connected_host} (IP: {server_ip})")
 
 
 def disconnect():
@@ -207,9 +289,27 @@ def disconnect():
     print("VPN connection terminated.")
 
 
-def status(config_path=None):
+def status(config_path=None, as_json=False):
     ip_res = subprocess.run(["ip", "link", "show", INTERFACE], capture_output=True, text=True)
-    if ip_res.returncode == 0 and "cyberghost" in ip_res.stdout:
+    is_connected = (ip_res.returncode == 0 and INTERFACE in ip_res.stdout)
+
+    if as_json:
+        result = {
+            "connected": is_connected,
+            "interface": INTERFACE if is_connected else None
+        }
+        if is_connected:
+            wg_res = subprocess.run(["wg", "show", INTERFACE], capture_output=True, text=True)
+            if wg_res.returncode == 0:
+                for line in wg_res.stdout.splitlines():
+                    if "endpoint:" in line:
+                        result["endpoint"] = line.split(":", 1)[1].strip()
+                    elif "transfer:" in line:
+                        result["transfer"] = line.split(":", 1)[1].strip()
+        print(json.dumps(result))
+        return
+
+    if is_connected:
         wg_res = subprocess.run(["wg", "show", INTERFACE], capture_output=True, text=True)
         print("VPN connection found.")
         print(f"Interface: {INTERFACE}")
@@ -228,15 +328,20 @@ def main():
     parser.add_argument("--server-type", "-t", default="traffic", choices=["traffic", "streaming", "torrent"])
     parser.add_argument("--city", help="Optional city name")
     parser.add_argument("--config", help="Explicit path to ~/.cyberghost/config.ini")
+    parser.add_argument("--json", action="store_true", help="Output status as JSON")
 
     args = parser.parse_args()
 
-    if args.action == "connect":
-        connect(args.country, args.server_type, args.city, args.config)
-    elif args.action == "disconnect":
-        disconnect()
-    elif args.action == "status":
-        status(args.config)
+    try:
+        if args.action == "connect":
+            connect(args.country, args.server_type, args.city, args.config)
+        elif args.action == "disconnect":
+            disconnect()
+        elif args.action == "status":
+            status(args.config, args.json)
+    except Exception as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
