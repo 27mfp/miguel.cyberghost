@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "miguel.cyberghost",
+  "name": "CyberGhost VPN",
+  "version": "1.0.0",
+  "author": "Miguel",
+  "license": "MIT",
+  "description": "CyberGhost VPN status, quick connect, country switching, and server mode controls in the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "CyberGhost VPN",
+    "description": "Toggle CyberGhost VPN, switch countries, choose server type, and view active IP.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 8,
+      "defaultCountry": "PT",
+      "protocol": "wireguard",
+      "serverType": "traffic"
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 5,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 8
+      },
+      {
+        "key": "defaultCountry",
+        "type": "string",
+        "label": "Default Country",
+        "defaultValue": "PT"
+      },
+      {
+        "key": "protocol",
+        "type": "string",
+        "label": "VPN Protocol (wireguard or openvpn)",
+        "defaultValue": "wireguard"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+# OS / Editor artifacts
+.DS_Store
+*~
+*.swp
+*.bak
+.idea/
+.vscode/
+
+# Build / runtime artifacts
+*.log
+*.qslog
+.cache/
+*.ini
+*.conf
+*.key
+__pycache__/
+*.pyc
