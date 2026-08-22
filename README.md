@@ -14,6 +14,7 @@ A native, lightweight status bar widget and popup panel for managing **CyberGhos
 - 🖱️ **Middle-click or right-click** toggles the VPN instantly; **left-click** opens the panel.
 
 ### Popup Panel
+- 🧙 **First-run wizard first**: until dependencies are installed and an account is linked, the panel shows *only* the setup — one-click installs, native account form, optional passwordless toggle. Everything else appears once you're ready.
 - ⚡ **One-click connect/disconnect** via header power switch or action button.
 - 🔍 **Connection details card** — clean stacked view of:
   - **IP** — live public IP with click-to-copy.
