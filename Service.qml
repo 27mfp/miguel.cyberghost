@@ -43,6 +43,12 @@ Item {
   property string applyHint: ""
   property string rawStatusText: ""
 
+  // ---- In-panel setup wizard state ----
+  property bool regBusy: false
+  property string setupMsg: ""
+  readonly property bool depsBusy: depsProcess.running
+  readonly property bool polkitBusy: polkitProcess.running
+
   property real lastIpFetchAt: 0
 
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
@@ -170,6 +176,58 @@ Item {
     }
   }
 
+  // ---- Setup wizard processes ----
+  Process {
+    id: depsProcess
+    command: ["pkexec", "/usr/bin/pacman", "-S", "--needed", "--noconfirm", "wireguard-tools", "python-requests"]
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.setupMsg = "Packages installed."
+        root.sendNotification("CyberGhost VPN", "Dependencies installed.", "normal")
+      } else {
+        root.setupMsg = ""
+      }
+      root.recheck()
+    }
+  }
+
+  Process {
+    id: polkitProcess
+    command: ["pkexec", "/usr/bin/cp", root.runnerPath.replace("/cyberghost_runner.py", "/50-cyberghost.rules"), "/etc/polkit-1/rules.d/"]
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { id: polkitErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.setupMsg = "Passwordless connect enabled."
+        root.sendNotification("CyberGhost VPN", "Polkit rule installed — connects no longer ask for a password.", "normal")
+      } else {
+        var err = String(polkitErr.text || "").trim()
+        root.setupMsg = err.indexOf("Not authorized") !== -1 || err.indexOf("dismissed") !== -1 ? "Polkit install cancelled." : ""
+      }
+    }
+  }
+
+  Process {
+    id: registerProcess
+    command: ["/usr/bin/python3", root.runnerPath, "register", "--config", root.userConfigPath]
+    environment: ({})
+    stdout: StdioCollector { id: regOut; waitForEnd: true }
+    stderr: StdioCollector { id: regErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.regBusy = false
+      if (exitCode === 0) {
+        root.setupMsg = ""
+        root.lastError = ""
+        root.sendNotification("CyberGhost VPN", "Account linked — you're ready to connect.", "normal")
+      } else {
+        var err = String(regErr.text || regOut.text || "").replace(/^Error:\s*/m, "").trim()
+        root.setupMsg = err !== "" ? err : "Could not link account."
+      }
+      root.recheck()
+    }
+  }
+
   // ---- Processes ----
   Process {
     id: checkProcess
@@ -191,6 +249,32 @@ Item {
 
   function recheck() {
     if (!checkProcess.running) checkProcess.running = true
+  }
+
+  function installDeps() {
+    if (depsProcess.running) return
+    setupMsg = "Installing system packages (authorize in the dialog)…"
+    depsProcess.running = true
+  }
+
+  function installPolkitRule() {
+    if (polkitProcess.running) return
+    setupMsg = "Installing Polkit rule (authorize in the dialog)…"
+    polkitProcess.running = true
+  }
+
+  function registerAccount(username, password) {
+    if (regBusy || !username || !password) return
+    regBusy = true
+    setupMsg = "Linking your CyberGhost account…"
+    // Credentials travel via environment variables — never via argv,
+    // so they are invisible to other processes' `ps` listings.
+    registerProcess.environment = ({
+      "CG_USERNAME": username,
+      "CG_PASSWORD": password,
+      "CG_DEVICE_NAME": Quickshell.env("HOSTNAME") || "omarchy"
+    })
+    registerProcess.running = true
   }
 
   Process {

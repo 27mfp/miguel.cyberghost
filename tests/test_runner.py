@@ -3,6 +3,7 @@
 Run with pytest (pytest -q) or directly (python3 tests/test_runner.py).
 """
 
+import configparser
 import importlib.util
 import json
 import os
@@ -93,6 +94,34 @@ def test_check_output_shape():
     assert set(data) == {"wg_tools", "requests", "cli", "credentials"}
     for value in data.values():
         assert isinstance(value, bool)
+
+
+def test_register_payload_shapes():
+    login = runner.build_login_payload("user@example.com", "pw")
+    assert login == {"userName": "user@example.com", "password": "pw"}
+
+    device = runner.build_device_payload("omarchy")
+    assert device["data"]["linuxApp"] is True
+    assert device["data"]["machineName"] == "omarchy"
+
+
+def test_write_user_config():
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, ".cyberghost", "config.ini")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    runner.write_user_config(
+        path, "user@example.com", "pw", "omarchy",
+        {"name": "", "token": "TOK", "tokenSecret": "SEC"},
+    )
+    cfg = configparser.ConfigParser()
+    cfg.read(path)
+    assert cfg.get("account", "username") == "user@example.com"
+    assert cfg.get("account", "password") == "pw"
+    assert cfg.get("device", "name") == "omarchy"          # falls back to device_name
+    assert cfg.get("device", "token") == "TOK"
+    assert cfg.get("device", "secret") == "SEC"            # tokenSecret -> secret
+    assert not (os.stat(path).st_mode & 0o077)             # owner-only permissions
 
 
 if __name__ == "__main__":

@@ -13,11 +13,19 @@ import os
 import pwd
 import re
 import shutil
+import socket
 import subprocess
 import sys
 
 WG_CONF_PATH = "/etc/wireguard/cyberghost.conf"
 INTERFACE = "cyberghost"
+
+# CyberGhost account/device API — endpoints and the app key below are the same
+# ones embedded in the official cyberghostvpn CLI (verified against its 1.4.1 build).
+API_BASE = "https://v2-api.cyberghostvpn.com/v2"
+API_KEY = "QzgDsDNUXlgF9jehkTHHtBJwwI4RyInkZQDRJfLyz"
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36")
 
 # Country Code -> Primary CyberGhost city slug.
 # Mirrors the country list in Countries.js — keep both in sync
@@ -445,6 +453,86 @@ def disconnect():
         print("No VPN connections found.")
 
 
+def build_login_payload(username, password):
+    return {"userName": username, "password": password}
+
+
+def build_device_payload(machine_name):
+    return {"data": {"linuxApp": True, "machineName": machine_name}}
+
+
+def api_request(method, path, payload=None, jwt=None):
+    """Authenticated JSON request against the CyberGhost account API."""
+    requests = load_requests()
+    headers = {
+        "Content-Type": "application/json",
+        "x-app-key": API_KEY,
+        "User-Agent": USER_AGENT,
+    }
+    if jwt:
+        headers["Authorization"] = f"Bearer {jwt}"
+    return requests.request(method, API_BASE + path, json=payload, headers=headers, timeout=12)
+
+
+def write_user_config(path, username, password, device_name, device):
+    cfg = configparser.ConfigParser()
+    cfg["account"] = {"username": username, "password": password}
+    cfg["device"] = {
+        "name": device.get("name") or device_name,
+        "token": str(device.get("token") or ""),
+        # The API returns the secret as `tokenSecret`; the CLI stores it as `secret`.
+        "secret": str(device.get("tokenSecret") or device.get("secret") or ""),
+    }
+    with open(path, "w") as f:
+        cfg.write(f)
+    os.chmod(path, 0o600)
+
+
+def register(config_path=None):
+    """Link a CyberGhost account natively — no cyberghostvpn CLI required.
+
+    Credentials come from CG_USERNAME/CG_PASSWORD (used by the GUI so they
+    never appear in argv) or from interactive prompts.
+    """
+    import getpass
+
+    username = os.environ.get("CG_USERNAME", "").strip()
+    password = os.environ.get("CG_PASSWORD", "")
+    if not username or not password:
+        username = username or input("CyberGhost username: ").strip()
+        password = password or getpass.getpass("CyberGhost password: ")
+    if not username or not password:
+        raise RuntimeError("Username and password are required.")
+    device_name = (os.environ.get("CG_DEVICE_NAME") or socket.gethostname() or "linux-app").strip()
+
+    print("Authenticating ...")
+    res = api_request("POST", "/my/account/jwt?language=en", build_login_payload(username, password))
+    if res.status_code != 200:
+        raise RuntimeError(f"Authentication failed (HTTP {res.status_code}). Check your CyberGhost account credentials.")
+    jwt = res.json().get("jwt")
+    if not jwt:
+        raise RuntimeError("Authentication response did not contain a session token.")
+
+    print(f"Registering device '{device_name}' ...")
+    res = api_request("POST", "/my/devices", build_device_payload(device_name), jwt=jwt)
+    if res.status_code != 201:
+        detail = ""
+        try:
+            body = res.json()
+            detail = body.get("errorMessage") or body.get("errorCode") or ""
+        except Exception:
+            pass
+        raise RuntimeError(f"Device registration failed (HTTP {res.status_code}). {detail}".strip())
+    device = res.json()
+    if not device.get("token"):
+        raise RuntimeError("Device registration response missing token.")
+
+    target = config_path or os.path.expanduser("~/.cyberghost/config.ini")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    write_user_config(target, username, password, device_name, device)
+    print(f"Account linked. Device credentials stored in {target}")
+
+
 def check():
     """Report onboarding readiness as JSON (fast, no heavy imports)."""
     result = {
@@ -495,7 +583,7 @@ def status(config_path=None, as_json=False):
 
 def main():
     parser = argparse.ArgumentParser(description="CyberGhost WireGuard Controller")
-    parser.add_argument("action", choices=["connect", "disconnect", "status", "check"], help="Action to perform")
+    parser.add_argument("action", choices=["connect", "disconnect", "status", "check", "register"], help="Action to perform")
     parser.add_argument("--country", "-c", default="PT", help="Country code (e.g. PT, ES, US, DE)")
     parser.add_argument("--server-type", "-t", default="traffic", choices=["traffic", "streaming", "torrent"])
     parser.add_argument("--protocol", default="wireguard", choices=["wireguard", "openvpn", "openvpn_tcp"])
@@ -519,6 +607,8 @@ def main():
             status(args.config, args.json)
         elif args.action == "check":
             check()
+        elif args.action == "register":
+            register(args.config)
     except Exception as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)

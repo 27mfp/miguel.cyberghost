@@ -54,15 +54,12 @@ Panel.qml (UI) ──> Service.qml (state machine) ──> pkexec ──> cyberg
 ## 📦 Requirements
 
 1. **WireGuard tools**: `sudo pacman -S wireguard-tools`
-2. **Python requests** (native key exchange): `sudo pacman -S python-requests`
-3. **CyberGhost account config** (one-time, via the official CLI):
-   ```bash
-   yay -S cyberghostvpn
-   sudo cyberghostvpn --setup
-   ```
-4. *(Optional)* Polkit rule for passwordless connect/disconnect.
+2. **Python requests** (native key exchange + account registration): `sudo pacman -S python-requests`
+3. A CyberGhost subscription — account linking happens **in the widget** (native API, no CLI).
+4. *(Optional)* `cyberghostvpn` CLI — only needed at runtime for OpenVPN / torrent / streaming modes.
+5. *(Optional)* Polkit rule for passwordless connect/disconnect.
 
-> The widget itself runs without any of these and shows a **setup checklist** in its panel until everything is ready — nothing breaks if you install the plugin first and configure later. The `cyberghostvpn` CLI is only needed once for account setup (and at runtime for OpenVPN/torrent/streaming modes).
+> The widget runs without any of this and shows a **setup wizard in its panel** — install dependencies with one click (polkit dialog), link your CyberGhost account with a native API form, done. Nothing breaks if you install the plugin first and configure later.
 
 ---
 
@@ -75,7 +72,7 @@ omarchy plugin add https://github.com/27mfp/miguel.cyberghost.git --enable
 bash ~/.config/omarchy/plugins/miguel.cyberghost/install.sh
 ```
 
-The first command installs and places the widget on your bar (Omarchy asks which section; it defaults to *right*). The second checks dependencies, offers to install what's missing (`wireguard-tools`, `python-requests`, `cyberghostvpn` CLI), links your CyberGhost account and optionally installs the Polkit rule — every step asks before changing anything, and it's safe to re-run.
+The first command installs and places the widget on your bar (Omarchy asks which section; it defaults to *right*). The second checks dependencies and offers to install what's missing — every step asks before changing anything, and it's safe to re-run. Or skip the script entirely: open the widget and follow the **FIRST-RUN SETUP** panel.
 
 Or clone manually:
 
@@ -163,6 +160,7 @@ pytest -q            # or: python3 tests/test_runner.py
 | "Configuration file not found" | Run `sudo cyberghostvpn --setup`, or place credentials in `~/.cyberghost/config.ini` under `[device]` (`token`, `secret`) |
 | Authentication failed on connect | Check your CyberGhost subscription / re-run setup |
 | Connect works, but no internet | Try the DNS fallback path (runner retries automatically), or switch protocol to WireGuard if on OpenVPN |
+| Account link fails in the wizard | Check username/password; the CLI is NOT required for this step — it talks to CyberGhost's API natively |
 | OpenVPN/Torrent/Streaming fails | Ensure the `cyberghostvpn` CLI is installed and logged in — those modes are delegated to it |
 | IP shows "Unavailable" | ipinfo.io may be unreachable/rate-limited; hit **Refresh Status** |
 

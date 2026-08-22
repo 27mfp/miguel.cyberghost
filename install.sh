@@ -42,14 +42,16 @@ install_cyberghost_cli() {
   local helper=""
   command -v yay >/dev/null 2>&1 && helper="yay"
   command -v paru >/dev/null 2>&1 && helper="paru"
+  echo "→ The cyberghostvpn CLI is OPTIONAL (only for OpenVPN / torrent / streaming modes —"
+  echo "  WireGuard traffic mode and account linking are fully native)."
   if [[ -z $helper ]]; then
-    say "${YELLOW}⚠${NC} no AUR helper found (yay/paru) — install the cyberghostvpn CLI manually"
+    say "${DIM}- no AUR helper found (yay/paru) — skip or install the CLI manually later"
     return 1
   fi
-  if confirm "Install 'cyberghostvpn' via $helper? (needed once for account setup; required for OpenVPN/torrent/streaming)"; then
+  if confirm "Install 'cyberghostvpn' via $helper?"; then
     "$helper" -S --needed cyberghostvpn
   else
-    say "${YELLOW}⚠${NC} skipped cyberghostvpn CLI"
+    say "${DIM}- skipped cyberghostvpn CLI (not required for WireGuard traffic mode)"
     return 1
   fi
 }
@@ -68,11 +70,11 @@ setup_account() {
     say "${GREEN}✓${NC} CyberGhost credentials found (~/.cyberghost/config.ini)"
     return 0
   fi
-  say "→ No CyberGhost credentials found. One-time account link:"
-  if confirm "Run 'sudo cyberghostvpn --setup' now?"; then
-    sudo cyberghostvpn --setup && return 0
+  say "→ No CyberGhost credentials found."
+  if confirm "Link your CyberGhost account now (native, no CLI needed)?"; then
+    python3 "$DIR/cyberghost_runner.py" register && return 0
   fi
-  say "${YELLOW}⚠${NC} run ${DIM}sudo cyberghostvpn --setup${NC} later, or place token/secret in ~/.cyberghost/config.ini"
+  say "${YELLOW}⚠${NC} link later from the widget's setup panel, or run: ${DIM}python3 $DIR/cyberghost_runner.py register${NC}"
   return 1
 }
 
