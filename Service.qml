@@ -35,6 +35,8 @@ Item {
   property string lastError: ""
   property string rawStatusText: ""
 
+  property real lastIpFetchAt: 0
+
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME") || ""
   readonly property bool busy: whichProcess.running || statusProcess.running || actionProcess.running || connecting || disconnecting
@@ -63,18 +65,21 @@ Item {
 
   function refresh() {
     if (!statusProcess.running) {
-      statusProcess.command = ["/usr/bin/python3", root.runnerPath, "status"]
+      statusProcess.command = ["/usr/bin/python3", root.runnerPath, "status", "--json"]
       statusProcess.running = true
     }
-    refreshIpInfo()
+    // Only hit the GeoIP API while connected (and throttled); the panel
+    // forces a fresh lookup when it opens so the exposed IP stays current.
+    if (connected) refreshIpInfo(false)
   }
 
-  function refreshIpInfo() {
-    if (!ipInfoProcess.running) {
-      fetchingIp = true
-      ipInfoProcess.command = ["curl", "-s", "--max-time", "4", "https://ipinfo.io/json"]
-      ipInfoProcess.running = true
-    }
+  function refreshIpInfo(force) {
+    if (ipInfoProcess.running) return
+    if (!force && Date.now() - lastIpFetchAt < 20000) return
+    lastIpFetchAt = Date.now()
+    fetchingIp = true
+    ipInfoProcess.command = ["curl", "-s", "--max-time", "4", "https://ipinfo.io/json"]
+    ipInfoProcess.running = true
   }
 
   readonly property string runnerPath: String(Qt.resolvedUrl("cyberghost_runner.py")).replace(/^file:\/\//, "")
@@ -102,6 +107,8 @@ Item {
       "connect",
       "--country",
       country,
+      "--protocol",
+      protocol,
       "--server-type",
       serverType,
       "--config",
@@ -213,6 +220,7 @@ Item {
     }
     onExited: function(exitCode) {
       actionTimeoutTimer.stop()
+      var wasDisconnecting = root.disconnecting
       root.connecting = false
       root.disconnecting = false
       root._desired = -1
@@ -229,11 +237,13 @@ Item {
           root.actionStatus = ""
           root.lastError = ""
           root.sendNotification("CyberGhost VPN Connected", "Protected & Encrypted • " + root.countryName + " " + root.countryFlag, "normal")
-        } else if (out.indexOf("No VPN connection") !== -1 || out.indexOf("Terminated") !== -1 || out.indexOf("terminated") !== -1 || root.disconnecting) {
+        } else if (out.indexOf("No VPN connection") !== -1 || out.indexOf("Terminated") !== -1 || out.indexOf("terminated") !== -1 || wasDisconnecting) {
           root.connected = false
           root.actionStatus = ""
           root.lastError = ""
           root.sendNotification("CyberGhost VPN Disconnected", "VPN tunnel disconnected. Public IP exposed.", "normal")
+          // Re-check the public IP right away so the panel shows the real exposed address.
+          root.refreshIpInfo(true)
         } else if (hasError) {
           root.lastError = extractCleanError(out || err)
           root.actionStatus = ""
@@ -271,22 +281,27 @@ Item {
   // ---- Output Parsers ----
   function parseStatus(output) {
     rawStatusText = output.trim()
-    var lower = rawStatusText.toLowerCase()
+    var isConnected = false
 
-    if (lower.indexOf("vpn connection found") !== -1 ||
-        lower.indexOf("wireguard connection found") !== -1 ||
-        lower.indexOf("connection established") !== -1 ||
-        lower.indexOf("interface: cyberghost") !== -1) {
+    // Preferred: structured JSON from the runner's `status --json`.
+    try {
+      var data = JSON.parse(rawStatusText)
+      isConnected = !!data.connected
+    } catch (e) {
+      // Fallback: human-readable output (older runner or error text).
+      var lower = rawStatusText.toLowerCase()
+      isConnected = lower.indexOf("vpn connection found") !== -1 ||
+                    lower.indexOf("wireguard connection found") !== -1 ||
+                    lower.indexOf("connection established") !== -1 ||
+                    lower.indexOf("interface: cyberghost") !== -1
+    }
+
+    if (isConnected) {
       connected = true
       lastError = ""
       actionStatus = ""
     } else {
       connected = false
-    }
-
-    var countryMatch = rawStatusText.match(/country[:\s]+([A-Z]{2})/i)
-    if (countryMatch && countryMatch[1]) {
-      setCountry(countryMatch[1])
     }
   }
 
@@ -312,7 +327,9 @@ Item {
   // ---- Timers ----
   Timer {
     id: actionTimeoutTimer
-    interval: 30000 // 30s timeout
+    // Generous timeout: the cyberghostvpn CLI path (OpenVPN/torrent/streaming)
+    // and a pkexec password prompt can legitimately take a while.
+    interval: 150000
     repeat: false
     onTriggered: {
       if (root.connecting || root.disconnecting) {

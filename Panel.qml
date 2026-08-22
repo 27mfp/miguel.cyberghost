@@ -40,7 +40,8 @@ Panel {
   }
 
   function copyIp() {
-    var ipToCopy = (cyberghost.publicIp && cyberghost.publicIp !== "") ? cyberghost.publicIp : "146.70.59.132"
+    var ipToCopy = cyberghost.publicIp
+    if (!ipToCopy) return
     clipboardProcess.command = ["wl-copy", ipToCopy]
     clipboardProcess.running = true
     root.ipCopied = true
@@ -50,6 +51,8 @@ Panel {
   onOpenedChanged: {
     if (root.opened) {
       cyberghost.refresh()
+      // Force a GeoIP lookup so the exposed/VPN IP is never stale.
+      cyberghost.refreshIpInfo(true)
     }
   }
 
@@ -383,77 +386,105 @@ Panel {
                 color: Util.alpha(Color.popups.border, 0.35)
               }
 
-              // IP details with Click-to-Copy
+              // Connection details: IP / Location / Provider (click to copy IP)
               Item {
                 width: parent.width
-                implicitHeight: ipRow.implicitHeight
+                implicitHeight: detailGrid.implicitHeight
 
-                Row {
-                  id: ipRow
-                  spacing: Style.space(6)
+                Grid {
+                  id: detailGrid
                   anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.right: parent.right
+                  columns: 2
+                  columnSpacing: Style.space(8)
+                  rowSpacing: Style.space(5)
 
+                  // Labels share the widest label's width so values align
                   Text {
-                    text: "IP Address:"
+                    width: lblProvider.implicitWidth
+                    text: "IP:"
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     color: root.dim
-                    anchors.verticalCenter: parent.verticalCenter
                   }
 
                   Text {
-                    text: cyberghost.publicIp !== "" ? cyberghost.publicIp : (cyberghost.fetchingIp ? "Checking IP…" : "146.70.59.132")
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
-                    color: root.foreground
-                    anchors.verticalCenter: parent.verticalCenter
-                  }
-
-                  Text {
-                    text: root.ipCopied ? "✓ Copied!" : "󰅍"
+                    text: cyberghost.publicIp !== "" ? cyberghost.publicIp : (cyberghost.fetchingIp ? "Checking…" : "Unavailable")
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    font.bold: root.ipCopied
-                    color: root.ipCopied ? root.successGreen : root.dim
-                    anchors.verticalCenter: parent.verticalCenter
+                    font.bold: true
+                    color: root.foreground
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, detailGrid.width - lblProvider.implicitWidth - detailGrid.columnSpacing)
+                  }
+
+                  Text {
+                    width: lblProvider.implicitWidth
+                    text: "Location:"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.dim
+                  }
+
+                  Text {
+                    text: {
+                      var parts = []
+                      if (cyberghost.publicCity) parts.push(cyberghost.publicCity)
+                      if (cyberghost.publicCountry) parts.push(Countries.countryName(cyberghost.publicCountry) + " " + Countries.countryFlag(cyberghost.publicCountry))
+                      else if (cyberghost.countryName) parts.push(cyberghost.countryName + " " + cyberghost.countryFlag)
+                      return parts.join(", ") || "Unknown"
+                    }
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.foreground
+                    elide: Text.ElideRight
+                    width: detailGrid.width - lblProvider.implicitWidth - detailGrid.columnSpacing
+                  }
+
+                  Text {
+                    id: lblProvider
+                    text: "Provider:"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.dim
+                  }
+
+                  Text {
+                    text: cyberghost.publicOrg !== "" ? cyberghost.publicOrg : "Unknown"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.foreground
+                    elide: Text.ElideRight
+                    width: detailGrid.width - lblProvider.implicitWidth - detailGrid.columnSpacing
                   }
                 }
 
+                // Copy affordance / copied feedback (top-right corner)
+                Text {
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  text: root.ipCopied ? "✓ Copied!" : "󰅍"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: root.ipCopied
+                  color: root.ipCopied ? root.successGreen : root.dim
+                }
+
                 MouseArea {
+                  id: ipMouseArea
                   anchors.fill: parent
+                  hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.copyIp()
                 }
 
                 PanelToolTip {
-                  visible: parent.containsMouse
+                  visible: ipMouseArea.containsMouse && cyberghost.publicIp !== ""
                   text: root.ipCopied ? "Copied to clipboard!" : "Click to copy public IP"
                   fontFamily: root.fontFamily
                 }
               }
 
-              // Location and ISP clean summary
-              Text {
-                width: parent.width
-                text: {
-                  var loc = []
-                  if (cyberghost.publicCity) loc.push(cyberghost.publicCity)
-                  if (cyberghost.publicCountry) loc.push(Countries.countryName(cyberghost.publicCountry) + " " + Countries.countryFlag(cyberghost.publicCountry))
-                  else if (cyberghost.countryName) loc.push(cyberghost.countryName + " " + cyberghost.countryFlag)
-
-                  var locStr = loc.join(", ")
-                  if (cyberghost.publicOrg) {
-                    return locStr !== "" ? (locStr + "  •  " + cyberghost.publicOrg) : cyberghost.publicOrg
-                  }
-                  return locStr || "Connected"
-                }
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                color: root.dim
-                elide: Text.ElideRight
-              }
             }
           }
 

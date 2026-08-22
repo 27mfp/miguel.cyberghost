@@ -27,7 +27,7 @@ var allCountries = [
   { "code": "DE", "name": "Germany", "flag": "🇩🇪", "popular": true },
   { "code": "DK", "name": "Denmark", "flag": "🇩🇰", "popular": false },
   { "code": "DO", "name": "Dominican Republic", "flag": "🇩🇴", "popular": false },
-  { "code": "DZ", "name": "Algeria", "flag": "DZ", "popular": false },
+  { "code": "DZ", "name": "Algeria", "flag": "🇩🇿", "popular": false },
   { "code": "EC", "name": "Ecuador", "flag": "🇪🇨", "popular": false },
   { "code": "EE", "name": "Estonia", "flag": "🇪🇪", "popular": false },
   { "code": "EG", "name": "Egypt", "flag": "🇪🇬", "popular": false },

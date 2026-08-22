@@ -45,6 +45,12 @@
         "type": "string",
         "label": "VPN Protocol (wireguard or openvpn)",
         "defaultValue": "wireguard"
+      },
+      {
+        "key": "serverType",
+        "type": "string",
+        "label": "Server type (traffic, torrent or streaming)",
+        "defaultValue": "traffic"
       }
     ]
   }

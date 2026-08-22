@@ -13,18 +13,11 @@ import subprocess
 import re
 import glob
 import pwd
-import urllib3
-
-urllib3.disable_warnings()
 
 try:
     import requests
 except ImportError:
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "--break-system-packages"])
-        import requests
-    except Exception:
-        sys.exit("Error: 'requests' library is required. Please install python-requests.")
+    sys.exit("Error: the 'requests' library is required. Please install python-requests (e.g. 'sudo pacman -S python-requests').")
 
 WG_CONF_PATH = "/etc/wireguard/cyberghost.conf"
 INTERFACE = "cyberghost"
@@ -85,6 +78,53 @@ CITY_MAP = {
     "SI": "ljubljana",
     "LU": "luxembourg",
 }
+
+
+def api_get(url, params, token, secret):
+    """Authenticated GET with TLS verification, degrading gracefully."""
+    try:
+        return requests.get(url, params=params, auth=(token, secret), timeout=3.5)
+    except requests.exceptions.SSLError:
+        # Some dialup hosts ship incomplete certificate chains. Retry unverified,
+        # but tell the user their credentials were sent without host validation.
+        print("Warning: TLS verification failed for %s, retrying WITHOUT certificate check." % url.split("/")[2], file=sys.stderr)
+        return requests.get(url, params=params, auth=(token, secret), verify=False, timeout=3.5)
+
+
+def connect_via_cli(country_code, server_type, protocol):
+    """
+    Delegate to the official cyberghostvpn CLI for combinations the native
+    dialup API cannot serve (OpenVPN, torrent/streaming server pools).
+    """
+    cc = country_code.upper().strip()
+    cmd = ["cyberghostvpn"]
+    if server_type == "torrent":
+        cmd.append("--torrent")
+    elif server_type == "streaming":
+        cmd.append("--streaming")
+    if protocol == "wireguard":
+        cmd.append("--wireguard")
+    else:
+        cmd.append("--openvpn")
+        cmd.append("--tcp" if protocol == "openvpn_tcp" else "--udp")
+    cmd += ["--country-code", cc, "--connect"]
+
+    print("Connecting to %s (%s / %s) via cyberghostvpn CLI..." % (cc, protocol, server_type))
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except FileNotFoundError:
+        raise RuntimeError("'cyberghostvpn' CLI is not installed (required for OpenVPN / torrent / streaming modes). Install it or use WireGuard traffic mode.")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("cyberghostvpn CLI timed out.")
+
+    out = ((res.stdout or "") + (res.stderr or "")).strip()
+    if res.returncode != 0:
+        raise RuntimeError(out or ("cyberghostvpn exited with code %d" % res.returncode))
+    if re.search(r"connected|established", out, re.I):
+        print("VPN connection established.")
+        print("Connected to %s via %s (%s)." % (cc, protocol, server_type))
+    else:
+        print(out)
 
 
 def find_config_path(override_path=None):
@@ -208,7 +248,7 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
     for host in candidates:
         url = f"https://{host}:1337/addKey"
         try:
-            r = requests.get(url, params={"pubkey": pub_key}, auth=(token, secret), verify=False, timeout=3.5)
+            r = api_get(url, {"pubkey": pub_key}, token, secret)
             if r.status_code == 200:
                 data = r.json()
                 if data.get("status") == "OK" and data.get("server_key"):
@@ -277,6 +317,8 @@ PersistentKeepalive = 25
             up_res = subprocess.run(["wg-quick", "up", INTERFACE], capture_output=True, text=True)
 
         if up_res.returncode != 0:
+            # Best-effort cleanup of a half-created interface/config
+            subprocess.run(["wg-quick", "down", INTERFACE], capture_output=True)
             raise RuntimeError(f"wg-quick up failed: {up_res.stderr.strip() or up_res.stdout.strip()}")
 
     print("VPN connection established.")
@@ -284,9 +326,14 @@ PersistentKeepalive = 25
 
 
 def disconnect():
+    ip_res = subprocess.run(["ip", "link", "show", INTERFACE], capture_output=True, text=True)
+    was_up = (ip_res.returncode == 0 and INTERFACE in ip_res.stdout)
     subprocess.run(["wg-quick", "down", INTERFACE], capture_output=True)
     subprocess.run(["cyberghostvpn", "--stop"], capture_output=True)
-    print("VPN connection terminated.")
+    if was_up:
+        print("VPN connection terminated.")
+    else:
+        print("No VPN connections found.")
 
 
 def status(config_path=None, as_json=False):
@@ -326,6 +373,7 @@ def main():
     parser.add_argument("action", choices=["connect", "disconnect", "status"], help="Action to perform")
     parser.add_argument("--country", "-c", default="PT", help="Country code (e.g. PT, ES, US, DE)")
     parser.add_argument("--server-type", "-t", default="traffic", choices=["traffic", "streaming", "torrent"])
+    parser.add_argument("--protocol", default="wireguard", choices=["wireguard", "openvpn", "openvpn_tcp"])
     parser.add_argument("--city", help="Optional city name")
     parser.add_argument("--config", help="Explicit path to ~/.cyberghost/config.ini")
     parser.add_argument("--json", action="store_true", help="Output status as JSON")
@@ -334,7 +382,12 @@ def main():
 
     try:
         if args.action == "connect":
-            connect(args.country, args.server_type, args.city, args.config)
+            if args.protocol != "wireguard" or args.server_type != "traffic":
+                # Native dialup API only serves plain WireGuard traffic servers;
+                # everything else goes through the official CLI.
+                connect_via_cli(args.country, args.server_type, args.protocol)
+            else:
+                connect(args.country, args.server_type, args.city, args.config)
         elif args.action == "disconnect":
             disconnect()
         elif args.action == "status":
