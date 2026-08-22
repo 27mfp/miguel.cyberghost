@@ -13,6 +13,45 @@ Panel {
   ipcTarget: "miguel.cyberghost"
   manageIpc: false
 
+  // One-line text input styled with the panel's theme (no Controls dependency).
+  component SetupField: Rectangle {
+    id: fieldRoot
+    property alias text: input.text
+    property string placeholder: ""
+    property bool passwordField: false
+    signal accepted()
+
+    height: Style.space(26)
+    radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+    color: Util.alpha(Color.popups.text, 0.06)
+    border.width: 1
+    border.color: input.activeFocus ? root.brandYellow : Util.alpha(Color.popups.text, 0.25)
+
+    TextInput {
+      id: input
+      anchors.fill: parent
+      anchors.margins: Style.space(6)
+      verticalAlignment: TextInput.AlignVCenter
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      echoMode: fieldRoot.passwordField ? TextInput.Password : TextInput.Normal
+      clip: true
+      onAccepted: fieldRoot.accepted()
+    }
+
+    Text {
+      visible: input.text === ""
+      anchors.fill: parent
+      anchors.margins: Style.space(6)
+      verticalAlignment: Text.AlignVCenter
+      text: fieldRoot.placeholder
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -325,7 +364,7 @@ Panel {
           }
 
           // -------------------------------------------------------------
-          // 3. FIRST-RUN SETUP CHECKLIST (only while something is missing)
+          // 3. FIRST-RUN SETUP WIZARD (only while something is missing)
           // -------------------------------------------------------------
           Rectangle {
             id: setupCard
@@ -343,7 +382,7 @@ Panel {
               anchors.right: parent.right
               anchors.top: parent.top
               anchors.margins: Style.space(12)
-              spacing: Style.space(6)
+              spacing: Style.space(8)
 
               Text {
                 text: "FIRST-RUN SETUP"
@@ -353,45 +392,145 @@ Panel {
                 color: Color.urgent
               }
 
+              // -- Dependency rows with one-click install --
               Repeater {
                 model: [
-                  { ok: cyberghost.readyWg, label: "WireGuard tools", hint: "sudo pacman -S wireguard-tools" },
-                  { ok: cyberghost.readyRequests, label: "Python requests", hint: "sudo pacman -S python-requests" },
-                  { ok: cyberghost.readyCreds, label: "CyberGhost account link", hint: "sudo cyberghostvpn --setup" }
+                  { ok: cyberghost.readyWg, label: "WireGuard tools" },
+                  { ok: cyberghost.readyRequests, label: "Python requests" }
                 ]
 
-                delegate: Row {
+                delegate: Item {
                   required property var modelData
                   width: setupColumn.width
-                  spacing: Style.space(6)
+                  implicitHeight: Math.max(setupDot.height, depLabel.implicitHeight)
 
-                  Rectangle {
-                    width: Style.space(7)
-                    height: width
-                    radius: width / 2
+                  Row {
+                    spacing: Style.space(6)
                     anchors.verticalCenter: parent.verticalCenter
-                    color: modelData.ok ? root.successGreen : root.urgent
+
+                    Rectangle {
+                      id: setupDot
+                      width: Style.space(7)
+                      height: width
+                      radius: width / 2
+                      anchors.verticalCenter: parent.verticalCenter
+                      color: modelData.ok ? root.successGreen : root.urgent
+                    }
+
+                    Text {
+                      id: depLabel
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.label + (modelData.ok ? "" : "  ·  missing")
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      color: modelData.ok ? root.successGreen : root.foreground
+                    }
                   }
 
-                  Text {
+                  Button {
+                    visible: !modelData.ok
+                    enabled: !cyberghost.busy && !cyberghost.regBusy
+                    anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    text: modelData.label + (modelData.ok ? "" : "  ·  " + modelData.hint)
+                    text: cyberghost.depsBusy ? "…" : "Install"
+                    bordered: true
+                    foreground: root.foreground
+                    tooltipText: "Installs wireguard-tools and python-requests via pacman (asks for authorization)"
+                    onClicked: cyberghost.installDeps()
+                  }
+                }
+              }
+              // (dependency install state lives in Service: depsBusy)
+
+              // -- Account linking form --
+              Item {
+                width: parent.width
+                implicitHeight: accRow.implicitHeight
+                visible: !cyberghost.readyCreds
+
+                Column {
+                  id: accRow
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Text {
+                    text: "CyberGhost account" + (cyberghost.readyCreds ? "" : "  ·  not linked")
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    color: modelData.ok ? root.successGreen : root.foreground
-                    elide: Text.ElideRight
-                    width: parent.width - Style.space(13)
+                    color: cyberghost.readyCreds ? root.successGreen : root.foreground
+                  }
+
+                  SetupField {
+                    id: regUser
+                    width: parent.width
+                    placeholder: "Account username or email"
+                    enabled: !cyberghost.regBusy
+                  }
+
+                  SetupField {
+                    id: regPass
+                    width: parent.width
+                    placeholder: "Account password"
+                    passwordField: true
+                    enabled: !cyberghost.regBusy
+                    onAccepted: cyberghost.registerAccount(regUser.text, regPass.text)
+                  }
+
+                  Row {
+                    width: parent.width
+                    spacing: Style.space(8)
+
+                    Button {
+                      enabled: regUser.text !== "" && regPass.text !== "" && !cyberghost.regBusy
+                      text: cyberghost.regBusy ? "Linking…" : "Link account"
+                      bordered: true
+                      foreground: root.brandYellow
+                      onClicked: cyberghost.registerAccount(regUser.text, regPass.text)
+                    }
+
+                    Text {
+                      anchors.verticalCenter: parent.verticalCenter
+                      visible: cyberghost.regBusy || cyberghost.setupMsg !== ""
+                      text: cyberghost.regBusy ? "Contacting CyberGhost…" : cyberghost.setupMsg
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      color: root.dim
+                      elide: Text.ElideRight
+                      width: Math.max(10, parent.width - x - Style.space(2))
+                    }
                   }
                 }
               }
 
-              Text {
-                text: "Tip: bash install.sh inside the plugin folder does all of this for you."
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                color: root.dim
-                wrapMode: Text.WordWrap
+              // -- Optional passwordless connect --
+              Item {
                 width: parent.width
+                implicitHeight: polkitRow.implicitHeight
+
+                Row {
+                  id: polkitRow
+                  spacing: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Optional: connect without password prompts"
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.dim
+                  }
+                }
+
+                Button {
+                  enabled: !cyberghost.busy && !cyberghost.regBusy
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: cyberghost.polkitBusy ? "…" : "Enable"
+                  bordered: true
+                  foreground: root.foreground
+                  tooltipText: "Installs the bundled Polkit rule (asks for authorization once)"
+                  onClicked: cyberghost.installPolkitRule()
+                }
               }
             }
           }
