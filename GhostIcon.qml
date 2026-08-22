@@ -24,10 +24,8 @@ Item {
   readonly property real h: height
 
   opacity: connecting ? 0.6 : (active ? 1.0 : 0.65)
-  Behavior on opacity {
-    NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
-  }
 
+  // Pulse while connecting/disconnecting (sole owner of `opacity` while running)
   SequentialAnimation on opacity {
     running: root.connecting
     loops: Animation.Infinite
