@@ -116,6 +116,13 @@ Item {
 
   function connectTo(targetCountry, targetProtocol, targetServerType, targetStreaming) {
     if (actionProcess.running) return
+    if (!setupDone) {
+      // Scripts may hit the IPC endpoint before onboarding completes.
+      lastError = ""
+      actionStatus = ""
+      sendNotification("CyberGhost VPN", "Finish the first-run setup first — open the widget.", "normal")
+      return
+    }
 
     if (targetCountry) setCountry(targetCountry)
     if (targetProtocol) setProtocol(targetProtocol)

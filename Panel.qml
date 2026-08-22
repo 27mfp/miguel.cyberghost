@@ -195,10 +195,13 @@ Panel {
     }
 
     onPressed: function(buttonCode) {
+      // Until setup completes, every click just opens the wizard.
+      if (!cyberghost.setupDone || buttonCode === Qt.LeftButton) {
+        root.toggle()
+        return
+      }
       if (buttonCode === Qt.MiddleButton) {
         cyberghost.toggle()
-      } else if (buttonCode === Qt.LeftButton) {
-        root.toggle()
       } else if (buttonCode === Qt.RightButton) {
         // Quick toggle without opening the panel (common VPN tray pattern)
         cyberghost.toggle()
@@ -282,6 +285,7 @@ Panel {
           // -------------------------------------------------------------
           Item {
             id: header
+            visible: cyberghost.setupDone
             width: parent.width
             implicitHeight: hero.implicitHeight
 
@@ -337,7 +341,7 @@ Panel {
           Rectangle {
             id: statusBanner
             readonly property bool isError: cyberghost.lastError !== "" || cyberghost.tunnelStale
-            visible: cyberghost.lastError !== "" || cyberghost.actionStatus !== "" || cyberghost.applyHint !== "" || cyberghost.tunnelStale
+            visible: cyberghost.setupDone && (cyberghost.lastError !== "" || cyberghost.actionStatus !== "" || cyberghost.applyHint !== "" || cyberghost.tunnelStale)
             width: parent.width
             implicitHeight: bannerText.implicitHeight + Style.space(12)
             radius: Style.cornerRadius > 0 ? Style.space(6) : 0
@@ -540,6 +544,7 @@ Panel {
           // -------------------------------------------------------------
           Rectangle {
             id: infoCard
+            visible: cyberghost.setupDone
             width: parent.width
             implicitHeight: infoColumn.implicitHeight + Style.space(24)
             radius: Style.cornerRadius > 0 ? Style.space(6) : 0
@@ -781,6 +786,12 @@ Panel {
             }
           }
 
+          Column {
+            id: mainControls
+            visible: cyberghost.setupDone
+            width: parent.width
+            spacing: Style.space(10)
+
           PanelSeparator {
             foreground: root.foreground
           }
@@ -983,6 +994,8 @@ Panel {
             width: parent.width
             height: Style.space(4)
           }
+
+          } // end mainControls
         }
       }
     }
