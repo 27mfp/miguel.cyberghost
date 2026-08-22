@@ -10,7 +10,6 @@ Item {
   property var settings: null
 
   // ---- Public State ----
-  property bool installed: true
   property bool connected: false
   property bool connecting: false
   property bool disconnecting: false
@@ -31,20 +30,41 @@ Item {
   property string publicOrg: ""
   property bool fetchingIp: false
 
+  // Live session details from `status --json`
+  property string endpoint: ""
+  property string transferText: ""
+  property int handshakeAgeSec: -1
+  readonly property bool tunnelStale: connected && handshakeAgeSec >= 180
+  property bool staleNotified: false
+  property real connectedSince: 0
+
   property string actionStatus: ""
   property string lastError: ""
+  property string applyHint: ""
   property string rawStatusText: ""
 
   property real lastIpFetchAt: 0
 
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME") || ""
-  readonly property bool busy: whichProcess.running || statusProcess.running || actionProcess.running || connecting || disconnecting
+  readonly property bool busy: statusProcess.running || actionProcess.running || connecting || disconnecting
+
+  // ---- Onboarding readiness (from runner `check --json`) ----
+  property bool readyWg: false
+  property bool readyRequests: false
+  property bool readyCli: false
+  property bool readyCreds: false
+  readonly property bool setupDone: readyWg && readyRequests && readyCreds
 
   // ---- Helper Methods ----
   function setting(key, fallback) {
     if (settings && settings[key] !== undefined) return settings[key]
     return fallback
+  }
+
+  function persistSetting(key, value) {
+    if (!settings) return
+    try { settings[key] = value } catch (e) {}
   }
 
   function setCountry(code) {
@@ -53,14 +73,17 @@ Item {
     country = c.code
     countryName = c.name
     countryFlag = c.flag
+    persistSetting("defaultCountry", c.code)
   }
 
   function setProtocol(p) {
     protocol = (p === "openvpn" || p === "openvpn_tcp") ? p : "wireguard"
+    persistSetting("protocol", protocol)
   }
 
   function setServerType(t) {
     serverType = (t === "torrent" || t === "streaming") ? t : "traffic"
+    persistSetting("serverType", serverType)
   }
 
   function refresh() {
@@ -94,6 +117,7 @@ Item {
     if (targetStreaming !== undefined) streamingService = targetStreaming
 
     lastError = ""
+    applyHint = ""
     actionStatus = "Connecting to " + countryName + " (" + country + ")…"
     connecting = true
     disconnecting = false
@@ -121,6 +145,7 @@ Item {
     if (actionProcess.running) return
 
     lastError = ""
+    applyHint = ""
     actionStatus = "Disconnecting CyberGhost VPN…"
     disconnecting = true
     connecting = false
@@ -147,16 +172,25 @@ Item {
 
   // ---- Processes ----
   Process {
-    id: whichProcess
-    command: ["which", "wg-quick"]
-    onExited: function(exitCode) {
-      root.installed = (exitCode === 0)
-      if (root.installed) {
-        root.refresh()
-      } else {
-        root.lastError = "wireguard-tools (wg-quick) is not installed."
-      }
+    id: checkProcess
+    command: ["/usr/bin/python3", root.runnerPath, "check", "--json"]
+    stdout: StdioCollector {
+      id: checkOut
+      waitForEnd: true
     }
+    onExited: function(exitCode) {
+      var d = {}
+      try { d = JSON.parse(String(checkOut.text || "{}")) } catch (e) {}
+      root.readyWg = !!d.wg_tools
+      root.readyRequests = !!d.requests
+      root.readyCli = !!d.cli
+      root.readyCreds = !!d.credentials
+      root.refresh()
+    }
+  }
+
+  function recheck() {
+    if (!checkProcess.running) checkProcess.running = true
   }
 
   Process {
@@ -287,6 +321,15 @@ Item {
     try {
       var data = JSON.parse(rawStatusText)
       isConnected = !!data.connected
+      if (isConnected) {
+        endpoint = String(data.endpoint || "")
+        transferText = String(data.transfer || "")
+        handshakeAgeSec = (typeof data.handshake_sec === "number" && data.handshake_sec >= 0) ? data.handshake_sec : -1
+      } else {
+        endpoint = ""
+        transferText = ""
+        handshakeAgeSec = -1
+      }
     } catch (e) {
       // Fallback: human-readable output (older runner or error text).
       var lower = rawStatusText.toLowerCase()
@@ -294,14 +337,40 @@ Item {
                     lower.indexOf("wireguard connection found") !== -1 ||
                     lower.indexOf("connection established") !== -1 ||
                     lower.indexOf("interface: cyberghost") !== -1
+      if (!isConnected) {
+        endpoint = ""
+        transferText = ""
+        handshakeAgeSec = -1
+      }
+    }
+
+    var wasConnected = connected
+    connected = isConnected
+
+    if (isConnected && !wasConnected) {
+      connectedSince = Date.now()
+      staleNotified = false
+    }
+
+    // Handshake watchdog: warn once when the tunnel looks dead.
+    if (isConnected && handshakeAgeSec >= 0) {
+      if (handshakeAgeSec > 180) {
+        if (!staleNotified) {
+          staleNotified = true
+          sendNotification(
+            "CyberGhost VPN tunnel may be down",
+            "No handshake for " + Math.round(handshakeAgeSec / 60) + " min. Reconnect recommended.",
+            "critical"
+          )
+        }
+      } else {
+        staleNotified = false
+      }
     }
 
     if (isConnected) {
-      connected = true
       lastError = ""
       actionStatus = ""
-    } else {
-      connected = false
     }
   }
 
@@ -366,6 +435,6 @@ Item {
     var defType = setting("serverType", "traffic")
     setServerType(defType)
 
-    whichProcess.running = true
+    checkProcess.running = true
   }
 }
