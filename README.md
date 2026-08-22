@@ -9,8 +9,9 @@ A native, lightweight status bar widget and popup panel for managing **CyberGhos
 ### Status Bar Widget
 - 👻 Custom CyberGhost vector icon (brand yellow `#FFCE00` when connected).
 - 🟢 Active indicator dot; pulsing dot during connect/disconnect handshakes.
+- ⚠️ Warning badge if the tunnel's WireGuard handshake goes stale (>3 min) plus a desktop notification.
 - 📎 Informative tooltips: connection state, country, flag and public IP.
-- 🖱️ **Middle-click** to toggle the VPN instantly; **left/right-click** opens the panel.
+- 🖱️ **Middle-click or right-click** toggles the VPN instantly; **left-click** opens the panel.
 
 ### Popup Panel
 - ⚡ **One-click connect/disconnect** via header power switch or action button.
@@ -18,21 +19,29 @@ A native, lightweight status bar widget and popup panel for managing **CyberGhos
   - **IP** — live public IP with click-to-copy.
   - **Location** — city + country resolved from GeoIP.
   - **Provider** — ISP/network organization.
+  - **Session** — transfer totals, handshake freshness and VPN endpoint while connected.
   - Status badge (`PROTECTED & ENCRYPTED` / `PUBLIC IP EXPOSED`) and active protocol pill.
 - 🌍 **Country switching:**
-  - Quick-connect grid with 12 popular locations.
-  - Searchable dropdown covering all 100+ CyberGhost countries.
+  - Quick-connect grid with 12 popular locations (instant connect).
+  - Searchable dropdown covering all 100+ CyberGhost countries (selects a target; connect explicitly).
 - 🛡️ **Server modes:** ⚡ Traffic · 🔒 Torrent (P2P) · 🎬 Streaming.
 - 🔒 **Protocols:** WireGuard · OpenVPN UDP · OpenVPN TCP.
-- 🔔 Desktop notifications on connect, disconnect and errors.
+  - Changing mode or protocol while connected never tears down the live tunnel — it applies on the next connect.
+- 🔔 Desktop notifications on connect, disconnect, errors and stale-handshake warnings.
 - ℹ️ Error/status banner with human-readable messages.
+- 💾 Last country / protocol / server mode are remembered across restarts.
 
 ## 🧠 How It Works
 
 | Mode | Backend |
 |---|---|
-| WireGuard + Traffic | **Native**: generates WireGuard keys locally and negotiates them directly with CyberGhost's dialer API (`*.cg-dialup.net`) — no CLI needed. Falls back through multiple server instances automatically. |
+| WireGuard + Traffic | **Native**: generates WireGuard keys locally and negotiates them directly with CyberGhost's dialer API (`*.cg-dialup.net`) — no CLI needed. Falls back through multiple server instances automatically. The tunnel covers **IPv4 and IPv6** (`0.0.0.0/0, ::/0`), so there is no v6 leak. |
 | OpenVPN UDP/TCP, Torrent, Streaming | **Delegated** to the official `cyberghostvpn` CLI. |
+
+Security posture:
+- Key-exchange requests use **strict TLS verification** — if the certificate chain fails, credentials are never sent.
+- A **handshake watchdog** warns you (notification + bar badge) when the tunnel stops handshaking, instead of silently leaking traffic.
+- The optional Polkit rule is **pinned to the plugin's install path**, so unrelated scripts cannot reuse it to run as root.
 
 The widget polls VPN status using the runner's JSON output and checks your public IP/GeoIP via ipinfo.io — throttled to at most one request per 20s while connected (plus a forced refresh when the panel opens or you disconnect), well within free API limits.
 
@@ -44,42 +53,35 @@ Panel.qml (UI) ──> Service.qml (state machine) ──> pkexec ──> cyberg
 
 ## 📦 Requirements
 
-1. **WireGuard tools**:
-   ```bash
-   sudo pacman -S wireguard-tools
-   ```
-2. **Python requests** (used by the native key exchange):
-   ```bash
-   sudo pacman -S python-requests
-   ```
-3. **CyberGhost account config** (one-time setup, generates the device token):
+1. **WireGuard tools**: `sudo pacman -S wireguard-tools`
+2. **Python requests** (native key exchange): `sudo pacman -S python-requests`
+3. **CyberGhost account config** (one-time, via the official CLI):
    ```bash
    yay -S cyberghostvpn
    sudo cyberghostvpn --setup
    ```
-   > Only needed for credential setup — WireGuard traffic mode does not use the CLI at runtime.
+4. *(Optional)* Polkit rule for passwordless connect/disconnect.
+
+> The widget itself runs without any of these and shows a **setup checklist** in its panel until everything is ready — nothing breaks if you install the plugin first and configure later. The `cyberghostvpn` CLI is only needed once for account setup (and at runtime for OpenVPN/torrent/streaming modes).
 
 ---
 
 ## 🚀 Installation
 
-Install directly with the Omarchy plugin CLI:
+**Quick start (2 commands):**
 
 ```bash
 omarchy plugin add https://github.com/27mfp/miguel.cyberghost.git --enable
+bash ~/.config/omarchy/plugins/miguel.cyberghost/install.sh
 ```
+
+The first command installs and places the widget on your bar (Omarchy asks which section; it defaults to *right*). The second checks dependencies, offers to install what's missing (`wireguard-tools`, `python-requests`, `cyberghostvpn` CLI), links your CyberGhost account and optionally installs the Polkit rule — every step asks before changing anything, and it's safe to re-run.
 
 Or clone manually:
 
 ```bash
 git clone https://github.com/27mfp/miguel.cyberghost.git ~/.config/omarchy/plugins/miguel.cyberghost
-omarchy restart shell
-```
-
-Then make sure it is included in your `~/.config/omarchy/shell.json` under `bar.layout.right`:
-
-```json
-{ "id": "miguel.cyberghost" }
+omarchy plugin enable miguel.cyberghost right
 ```
 
 ---
@@ -119,7 +121,7 @@ bind = SUPER, V, exec, qs ipc call miguel.cyberghost connect
 
 ## 🔐 Passwordless Connection via Polkit (Optional)
 
-By default `pkexec` asks for your password on every connect/disconnect. To skip the prompt, copy the included Polkit rule (allows members of the `wheel` group to run this plugin's runner without a password):
+By default `pkexec` asks for your password on every connect/disconnect. To skip the prompt, copy the included Polkit rule (allows members of the `wheel` group to run **this plugin's runner, from its installed path**, without a password):
 
 ```bash
 sudo cp 50-cyberghost.rules /etc/polkit-1/rules.d/
@@ -127,7 +129,7 @@ sudo cp 50-cyberghost.rules /etc/polkit-1/rules.d/
 
 ---
 
-## 🛠️ Development
+## 🧪 Development
 
 The recommended workflow is to keep the repo anywhere (e.g. `~/Code/miguel.cyberghost`) and symlink it into the plugins directory, so edits take effect without re-copying files:
 
@@ -144,13 +146,20 @@ sudo python3 cyberghost_runner.py connect --country PT --protocol wireguard --se
 python3 cyberghost_runner.py --help
 ```
 
+Lint and tests (also enforced by CI):
+
+```bash
+ruff check .
+pytest -q            # or: python3 tests/test_runner.py
+```
+
 ---
 
 ## 🧯 Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| "wireguard-tools not installed" banner | `sudo pacman -S wireguard-tools` |
+| "FIRST-RUN SETUP" checklist in panel | Run `bash ~/.config/omarchy/plugins/miguel.cyberghost/install.sh` or follow the hints next to each unchecked item |
 | "Configuration file not found" | Run `sudo cyberghostvpn --setup`, or place credentials in `~/.cyberghost/config.ini` under `[device]` (`token`, `secret`) |
 | Authentication failed on connect | Check your CyberGhost subscription / re-run setup |
 | Connect works, but no internet | Try the DNS fallback path (runner retries automatically), or switch protocol to WireGuard if on OpenVPN |

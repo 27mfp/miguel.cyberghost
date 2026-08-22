@@ -4,91 +4,154 @@ CyberGhost VPN WireGuard Native Backend & CLI
 Directly negotiates WireGuard keys with CyberGhost dialup servers and manages wg-quick.
 """
 
-import sys
-import os
 import argparse
 import configparser
-import json
-import subprocess
-import re
 import glob
+import importlib.util
+import json
+import os
 import pwd
-
-try:
-    import requests
-except ImportError:
-    sys.exit("Error: the 'requests' library is required. Please install python-requests (e.g. 'sudo pacman -S python-requests').")
+import re
+import shutil
+import subprocess
+import sys
 
 WG_CONF_PATH = "/etc/wireguard/cyberghost.conf"
 INTERFACE = "cyberghost"
 
-# Comprehensive mapping of Country Code -> Primary CyberGhost city slug
+# Country Code -> Primary CyberGhost city slug.
+# Mirrors the country list in Countries.js — keep both in sync
+# (tests/test_runner.py enforces coverage). A wrong/unknown slug fails
+# cleanly with a connection error, it can never connect somewhere else.
 CITY_MAP = {
-    "PT": "lisbon",
-    "ES": "madrid",
-    "DE": "frankfurt",
-    "GB": "london",
-    "UK": "london",
-    "US": "newyork",
-    "FR": "paris",
-    "NL": "amsterdam",
-    "CH": "zurich",
-    "IT": "milan",
-    "BR": "saopaulo",
-    "CA": "montreal",
-    "SE": "stockholm",
-    "JP": "tokyo",
-    "AU": "sydney",
-    "AT": "vienna",
-    "BE": "brussels",
-    "PL": "warsaw",
-    "RO": "bucharest",
-    "NO": "oslo",
-    "DK": "copenhagen",
-    "FI": "helsinki",
-    "IE": "dublin",
-    "SG": "singapore",
-    "MX": "mexicocity",
-    "IN": "mumbai",
-    "ZA": "johannesburg",
-    "NZ": "auckland",
-    "CZ": "prague",
-    "GR": "athens",
-    "TR": "istanbul",
-    "HU": "budapest",
-    "BG": "sofia",
-    "HR": "zagreb",
-    "IS": "reykjavik",
-    "IL": "telaviv",
-    "KR": "seoul",
-    "AR": "buenosaires",
-    "CL": "santiago",
-    "CO": "bogota",
+    "AD": "andorra",
     "AE": "dubai",
+    "AL": "tirana",
+    "AM": "yerevan",
+    "AR": "buenosaires",
+    "AT": "vienna",
+    "AU": "sydney",
+    "BA": "sarajevo",
+    "BD": "dhaka",
+    "BE": "brussels",
+    "BG": "sofia",
+    "BO": "lapaz",
+    "BR": "saopaulo",
+    "BS": "nassau",
+    "BY": "minsk",
+    "CA": "montreal",
+    "CH": "zurich",
+    "CL": "santiago",
+    "CN": "hongkong",
+    "CO": "bogota",
+    "CR": "sanjose",
+    "CY": "nicosia",
+    "CZ": "prague",
+    "DE": "frankfurt",
+    "DK": "copenhagen",
+    "DO": "santodomingo",
+    "DZ": "algiers",
+    "EC": "quito",
+    "EE": "tallinn",
+    "EG": "cairo",
+    "ES": "madrid",
+    "FI": "helsinki",
+    "FR": "paris",
+    "GB": "london",
+    "UK": "london",  # legacy alias
+    "GE": "tbilisi",
+    "GL": "nuuk",
+    "GR": "athens",
+    "GT": "guatemalacity",
     "HK": "hongkong",
-    "TW": "taipei",
-    "MY": "kualalumpur",
-    "TH": "bangkok",
+    "HR": "zagreb",
+    "HU": "budapest",
     "ID": "jakarta",
-    "PH": "manila",
-    "VN": "hanoi",
-    "UA": "kyiv",
-    "RS": "belgrade",
-    "SK": "bratislava",
-    "SI": "ljubljana",
+    "IE": "dublin",
+    "IL": "telaviv",
+    "IM": "douglas",
+    "IN": "mumbai",
+    "IR": "tehran",
+    "IS": "reykjavik",
+    "IT": "milan",
+    "JP": "tokyo",
+    "KE": "nairobi",
+    "KH": "phnompenh",
+    "KR": "seoul",
+    "KZ": "almaty",
+    "LA": "vientiane",
+    "LI": "vaduz",
+    "LK": "colombo",
+    "LT": "vilnius",
     "LU": "luxembourg",
+    "LV": "riga",
+    "MA": "casablanca",
+    "MC": "monaco",
+    "MD": "chisinau",
+    "ME": "podgorica",
+    "MK": "skopje",
+    "MT": "valletta",
+    "MX": "mexicocity",
+    "MY": "kualalumpur",
+    "NG": "lagos",
+    "NL": "amsterdam",
+    "NO": "oslo",
+    "NZ": "auckland",
+    "PA": "panamacity",
+    "PH": "manila",
+    "PK": "karachi",
+    "PL": "warsaw",
+    "PT": "lisbon",
+    "QA": "doha",
+    "RO": "bucharest",
+    "RS": "belgrade",
+    "SA": "riyadh",
+    "SE": "stockholm",
+    "SG": "singapore",
+    "SI": "ljubljana",
+    "SK": "bratislava",
+    "TH": "bangkok",
+    "TR": "istanbul",
+    "TW": "taipei",
+    "UA": "kyiv",
+    "US": "newyork",
+    "UY": "montevideo",
+    "VE": "caracas",
+    "VN": "hanoi",
+    "ZA": "johannesburg",
 }
+
+_HANDSHAKE_UNITS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
+
+
+def load_requests():
+    """Import requests lazily so lightweight `status` polls skip the cost."""
+    try:
+        import requests
+    except ImportError:
+        sys.exit(
+            "Error: the 'requests' library is required for the native WireGuard path. "
+            "Please install python-requests (e.g. 'sudo pacman -S python-requests')."
+        )
+    return requests
 
 
 def api_get(url, params, token, secret):
-    """Authenticated GET with TLS verification, degrading gracefully."""
+    """Authenticated GET with strict TLS verification — fail closed."""
+    requests = load_requests()
     try:
         return requests.get(url, params=params, auth=(token, secret), timeout=3.5)
-    except requests.exceptions.SSLError:
-        # Some dialup hosts ship incomplete certificate chains. Retry unverified,
-        # but tell the user their credentials were sent without host validation.
-        print("Warning: TLS verification failed for %s, retrying WITHOUT certificate check." % url.split("/")[2], file=sys.stderr)
-        return requests.get(url, params=params, auth=(token, secret), verify=False, timeout=3.5)
+    except requests.exceptions.SSLError as ssl_err:
+        # Never resend credentials over an unverified channel; a MITM here
+        # would capture the account token/secret.
+        raise RuntimeError(
+            "TLS certificate verification failed for %s. Refusing to send credentials "
+            "over an unverified connection (check system CA certificates / proxy)." % url.split("/")[2]
+        ) from ssl_err
+
+
+def _slug(name):
+    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 def connect_via_cli(country_code, server_type, protocol):
@@ -120,11 +183,15 @@ def connect_via_cli(country_code, server_type, protocol):
     out = ((res.stdout or "") + (res.stderr or "")).strip()
     if res.returncode != 0:
         raise RuntimeError(out or ("cyberghostvpn exited with code %d" % res.returncode))
-    if re.search(r"connected|established", out, re.I):
+
+    if re.search(r"\berror\b|failed|unable|could not|not found", out, re.I):
+        raise RuntimeError(out)
+    if not re.search(r"connected|established", out, re.I):
+        # Exit code 0 without failure markers: trust the CLI and normalise output.
         print("VPN connection established.")
-        print("Connected to %s via %s (%s)." % (cc, protocol, server_type))
     else:
         print(out)
+    print("Connected to %s via %s (%s)." % (cc, protocol, server_type))
 
 
 def find_config_path(override_path=None):
@@ -183,6 +250,7 @@ def get_credentials(config_path=None):
 def get_servers_for_country(country_code, server_type="traffic"):
     """
     Query available server instances for a country if cyberghostvpn is present.
+    Returns [] when the CLI is unavailable or output cannot be parsed.
     """
     try:
         cmd = ["cyberghostvpn", f"--{server_type}", "--country-code", country_code.upper()]
@@ -191,11 +259,11 @@ def get_servers_for_country(country_code, server_type="traffic"):
         servers = []
         if res.returncode == 0:
             for line in res.stdout.splitlines():
-                m = re.match(r"\|\s*\d+\s*\|\s*([A-Za-z\s]+)\s*\|\s*(\d+)\s*\|\s*(\d+)%", line)
+                m = re.match(r"[|\s]*(\d+)[\s|]+([A-Za-z\s]+?)[\s|]+(\d+)[\s|]+(\d+)%[|\s]*$", line)
                 if m:
-                    city = m.group(1).strip()
-                    instance = m.group(2).strip()
-                    load = int(m.group(3))
+                    city = m.group(2).strip()
+                    instance = m.group(3).strip()
+                    load = int(m.group(4))
                     servers.append({"city": city, "instance": instance, "load": load})
         return servers
     except Exception:
@@ -211,39 +279,97 @@ def generate_wireguard_keys():
         raise RuntimeError(f"Failed to generate WireGuard keys using 'wg': {e}. Ensure wireguard-tools is installed.")
 
 
+def build_wg_config(private_key, peer_ip, server_key, server_ip, server_port, dns_servers=None):
+    """Render a wg-quick config that tunnels IPv4 AND IPv6 (no v6 leak)."""
+    lines = [
+        "[Interface]",
+        f"PrivateKey = {private_key}",
+        f"Address = {peer_ip}/32",
+    ]
+    if dns_servers:
+        lines.append(f"DNS = {dns_servers}")
+    lines += [
+        "",
+        "[Peer]",
+        f"PublicKey = {server_key}",
+        "AllowedIPs = 0.0.0.0/0, ::/0",
+        f"Endpoint = {server_ip}:{server_port}",
+        "PersistentKeepalive = 25",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def parse_handshake_seconds(text):
+    """'latest handshake: 2 minutes, 34 seconds ago' -> 154. None if unparsable."""
+    if not text:
+        return None
+    total = 0
+    found = False
+    for amount, unit in re.findall(r"(\d+)\s*(second|minute|hour|day)", text, re.I):
+        total += int(amount) * _HANDSHAKE_UNITS[unit.lower().rstrip("s")]
+        found = True
+    return total if found else None
+
+
+def parse_wg_show(output):
+    """Extract endpoint / transfer / handshake age from `wg show <iface>` output."""
+    info = {}
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "endpoint":
+            info["endpoint"] = value
+        elif key == "transfer":
+            info["transfer"] = value
+        elif key == "latest handshake":
+            secs = parse_handshake_seconds(value)
+            if secs is not None:
+                info["handshake_sec"] = secs
+    return info
+
+
 def connect(country_code="PT", server_type="traffic", city=None, config_path=None):
     token, secret = get_credentials(config_path)
     priv_key, pub_key = generate_wireguard_keys()
 
     cc = country_code.upper().strip()
-    city_slug = None
+
+    cli_servers = [] if city else get_servers_for_country(cc, server_type)
 
     if city:
-        city_slug = city.lower().replace(" ", "")
+        city_slug = _slug(city)
     elif cc in CITY_MAP:
         city_slug = CITY_MAP[cc]
+    elif cli_servers:
+        city_slug = _slug(cli_servers[0]["city"])
     else:
-        servers = get_servers_for_country(cc, server_type)
-        if servers:
-            city_slug = servers[0]["city"].lower().replace(" ", "")
-        else:
-            city_slug = "lisbon"
+        raise RuntimeError(
+            f"No known WireGuard city for country '{cc}'. "
+            "Install the cyberghostvpn CLI for full country coverage."
+        )
 
-    # Build server pool candidates with multiple instance numbers and server tiers
-    candidates = [
-        f"{city_slug}-s405-i01.cg-dialup.net",
-        f"{city_slug}-s405-i02.cg-dialup.net",
-        f"{city_slug}-s405-i03.cg-dialup.net",
-        f"{city_slug}-s401-i01.cg-dialup.net",
-        f"{city_slug}-s401-i02.cg-dialup.net",
-        f"{city_slug}-s401-i03.cg-dialup.net",
-        f"{city_slug}-s406-i01.cg-dialup.net",
-        f"{city_slug}-s407-i01.cg-dialup.net",
-    ]
+    # Prefer live server instances reported by the CLI, then static fallbacks.
+    candidates = []
+    for s in cli_servers[:4]:
+        instance = re.sub(r"\D", "", s.get("instance", ""))
+        if instance:
+            for idx in ("01", "02"):
+                candidates.append(f"{_slug(s['city'])}-s{instance}-i{idx}.cg-dialup.net")
+    for instance in ("405", "401", "406", "407"):
+        for idx in ("01", "02", "03"):
+            candidates.append(f"{city_slug}-s{instance}-i{idx}.cg-dialup.net")
+
+    seen = set()
+    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
 
     addkey_data = None
     connected_host = None
     last_error_msg = None
+    requests = load_requests()
 
     for host in candidates:
         url = f"https://{host}:1337/addKey"
@@ -271,49 +397,32 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
 
     # Generate WireGuard configuration
     dns_list = addkey_data.get("dns_servers", ["10.0.0.243", "10.0.0.242", "1.1.1.1"])
-    dns_servers = ", ".join(dns_list) if isinstance(dns_list, list) else str(dns_list)
+    dns_servers_str = ", ".join(dns_list) if isinstance(dns_list, list) else str(dns_list)
     server_ip = addkey_data.get("server_ip") or connected_host
     server_port = addkey_data.get("server_port", 1337)
     peer_ip = addkey_data.get("peer_ip")
     server_key = addkey_data.get("server_key")
 
-    wg_config = f"""[Interface]
-PrivateKey = {priv_key}
-Address = {peer_ip}/32
-DNS = {dns_servers}
-
-[Peer]
-PublicKey = {server_key}
-AllowedIPs = 0.0.0.0/0
-Endpoint = {server_ip}:{server_port}
-PersistentKeepalive = 25
-"""
+    def write_conf(include_dns):
+        cfg = build_wg_config(
+            priv_key, peer_ip, server_key, server_ip, server_port,
+            dns_servers=dns_servers_str if include_dns else None,
+        )
+        with open(WG_CONF_PATH, "w") as f:
+            f.write(cfg)
+        os.chmod(WG_CONF_PATH, 0o600)
 
     os.makedirs("/etc/wireguard", exist_ok=True)
-    with open(WG_CONF_PATH, "w") as f:
-        f.write(wg_config)
-    os.chmod(WG_CONF_PATH, 0o600)
 
     # Clean up any leftover interface first to avoid collisions
     subprocess.run(["wg-quick", "down", INTERFACE], capture_output=True)
 
-    # Bring up WireGuard connection
+    write_conf(True)
     up_res = subprocess.run(["wg-quick", "up", INTERFACE], capture_output=True, text=True)
     if up_res.returncode != 0:
-        # If DNS configuration failed in wg-quick, retry with DNS fallback
+        # If DNS configuration failed in wg-quick, retry without the DNS directive
         if "resolvconf" in up_res.stderr or "resolv" in up_res.stderr:
-            no_dns_config = f"""[Interface]
-PrivateKey = {priv_key}
-Address = {peer_ip}/32
-
-[Peer]
-PublicKey = {server_key}
-AllowedIPs = 0.0.0.0/0
-Endpoint = {server_ip}:{server_port}
-PersistentKeepalive = 25
-"""
-            with open(WG_CONF_PATH, "w") as f:
-                f.write(no_dns_config)
+            write_conf(False)
             up_res = subprocess.run(["wg-quick", "up", INTERFACE], capture_output=True, text=True)
 
         if up_res.returncode != 0:
@@ -336,41 +445,57 @@ def disconnect():
         print("No VPN connections found.")
 
 
+def check():
+    """Report onboarding readiness as JSON (fast, no heavy imports)."""
+    result = {
+        "wg_tools": shutil.which("wg-quick") is not None,
+        "requests": importlib.util.find_spec("requests") is not None,
+        "cli": shutil.which("cyberghostvpn") is not None,
+        "credentials": False,
+    }
+    try:
+        get_credentials(None)
+        result["credentials"] = True
+    except Exception:
+        pass
+    print(json.dumps(result))
+
+
 def status(config_path=None, as_json=False):
     ip_res = subprocess.run(["ip", "link", "show", INTERFACE], capture_output=True, text=True)
     is_connected = (ip_res.returncode == 0 and INTERFACE in ip_res.stdout)
 
+    wg_info = {}
+    if is_connected:
+        wg_res = subprocess.run(["wg", "show", INTERFACE], capture_output=True, text=True)
+        if wg_res.returncode == 0:
+            wg_info = parse_wg_show(wg_res.stdout)
+
     if as_json:
         result = {
             "connected": is_connected,
-            "interface": INTERFACE if is_connected else None
+            "interface": INTERFACE if is_connected else None,
         }
         if is_connected:
-            wg_res = subprocess.run(["wg", "show", INTERFACE], capture_output=True, text=True)
-            if wg_res.returncode == 0:
-                for line in wg_res.stdout.splitlines():
-                    if "endpoint:" in line:
-                        result["endpoint"] = line.split(":", 1)[1].strip()
-                    elif "transfer:" in line:
-                        result["transfer"] = line.split(":", 1)[1].strip()
+            result.update(wg_info)
         print(json.dumps(result))
         return
 
     if is_connected:
-        wg_res = subprocess.run(["wg", "show", INTERFACE], capture_output=True, text=True)
         print("VPN connection found.")
         print(f"Interface: {INTERFACE}")
-        if wg_res.returncode == 0:
-            for line in wg_res.stdout.splitlines():
-                if "endpoint:" in line or "transfer:" in line or "latest handshake:" in line:
-                    print("  " + line.strip())
+        for key in ("endpoint", "transfer"):
+            if key in wg_info:
+                print(f"  {key}: {wg_info[key]}")
+        if "handshake_sec" in wg_info:
+            print(f"  latest handshake: {wg_info['handshake_sec']} seconds ago")
     else:
         print("No VPN connections found.")
 
 
 def main():
     parser = argparse.ArgumentParser(description="CyberGhost WireGuard Controller")
-    parser.add_argument("action", choices=["connect", "disconnect", "status"], help="Action to perform")
+    parser.add_argument("action", choices=["connect", "disconnect", "status", "check"], help="Action to perform")
     parser.add_argument("--country", "-c", default="PT", help="Country code (e.g. PT, ES, US, DE)")
     parser.add_argument("--server-type", "-t", default="traffic", choices=["traffic", "streaming", "torrent"])
     parser.add_argument("--protocol", default="wireguard", choices=["wireguard", "openvpn", "openvpn_tcp"])
@@ -392,6 +517,8 @@ def main():
             disconnect()
         elif args.action == "status":
             status(args.config, args.json)
+        elif args.action == "check":
+            check()
     except Exception as e:
         sys.stderr.write(f"Error: {e}\n")
         sys.exit(1)

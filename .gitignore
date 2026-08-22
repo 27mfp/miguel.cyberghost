@@ -1,4 +1,4 @@
-# OS / Editor artifacts
+# OS / editor artifacts
 .DS_Store
 *~
 *.swp
@@ -6,12 +6,12 @@
 .idea/
 .vscode/
 
-# Build / runtime artifacts
-*.log
-*.qslog
-.cache/
-*.ini
-*.conf
-*.key
+# Python artifacts
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Runtime artifacts
+*.log
+*.qslog
