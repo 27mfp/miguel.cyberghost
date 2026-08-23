@@ -13,7 +13,8 @@ say() { printf "%b\n" "$1"; }
 confirm() {
   local answer=""
   read -rp "$1 [Y/n] " answer
-  [[ ${answer:-y} =~ ^[Nn] ]]
+  # bash 5.3 misparses an =~ regex ending in "]" before "]]"; glob instead
+  [[ ${answer:-y} != [Nn]* ]]
 }
 
 have_pacman_pkg_installed() {
