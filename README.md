@@ -84,6 +84,18 @@ omarchy plugin enable miguel.cyberghost right
 
 ---
 
+## 🗑️ Removal
+
+```bash
+qs ipc call miguel.cyberghost disconnect                 # only if connected
+omarchy plugin disable miguel.cyberghost
+omarchy plugin remove miguel.cyberghost --yes            # removes from bar + plugins dir
+sudo rm -f /etc/polkit-1/rules.d/50-cyberghost.rules     # passwordless rule (if installed)
+rm -rf ~/.cyberghost                                     # account credentials/token (optional)
+```
+
+---
+
 ## ⚙️ Settings
 
 Configurable from the Omarchy plugin settings:
