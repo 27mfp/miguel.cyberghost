@@ -255,7 +255,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(385))
-    contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight + Style.space(12))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -264,21 +264,20 @@ Panel {
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
-      Flickable {
+      // Static layout — no scrolling. The panel height tracks the full
+      // content and is capped to the viewport by fittedContentHeight, so
+      // every control must stay visible without flicking.
+      Item {
         id: scroll
         anchors.fill: parent
-        contentWidth: width
-        contentHeight: mainColumn.implicitHeight + Style.space(16)
         clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        interactive: contentHeight > height
 
         Column {
           id: mainColumn
           x: Style.space(14)
           y: Style.space(8)
           width: scroll.width - Style.space(28)
-          spacing: Style.space(10)
+          spacing: Style.space(8)
 
           // -------------------------------------------------------------
           // 1. HERO HEADER
@@ -861,10 +860,10 @@ Panel {
           }
 
           // -------------------------------------------------------------
-          // 7. SERVER MODE SELECTOR
+          // 7. CONNECTION PREFERENCES (server mode + protocol)
           // -------------------------------------------------------------
           PanelSectionHeader {
-            text: "SERVER MODE"
+            text: "CONNECTION PREFERENCES"
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
@@ -910,14 +909,8 @@ Panel {
           }
 
           // -------------------------------------------------------------
-          // 8. PROTOCOL SELECTOR
+          // 8. PROTOCOL SELECTOR (applies on next connect)
           // -------------------------------------------------------------
-          PanelSectionHeader {
-            text: "PROTOCOL & CONTROLS"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
-
           Row {
             id: protoRow
             width: parent.width
@@ -987,11 +980,6 @@ Panel {
               tooltipText: cyberghost.active ? "Stop VPN connection" : "Start VPN connection"
               onClicked: root.toggleRunning()
             }
-          }
-
-          Item {
-            width: parent.width
-            height: Style.space(4)
           }
 
           } // end mainControls
