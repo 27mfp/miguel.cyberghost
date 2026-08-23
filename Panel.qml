@@ -509,23 +509,22 @@ Panel {
               // -- Optional passwordless connect --
               Item {
                 width: parent.width
-                implicitHeight: polkitRow.implicitHeight
+                implicitHeight: polkitLabel.implicitHeight
 
-                Row {
-                  id: polkitRow
-                  spacing: Style.space(6)
+                Text {
+                  id: polkitLabel
+                  anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Optional: connect without password prompts"
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    color: root.dim
-                  }
+                  width: parent.width - polkitBtn.width - Style.space(10)
+                  text: "Optional: connect without password prompts"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  color: root.dim
+                  elide: Text.ElideRight
                 }
 
                 Button {
+                  id: polkitBtn
                   enabled: !cyberghost.busy && !cyberghost.regBusy
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
