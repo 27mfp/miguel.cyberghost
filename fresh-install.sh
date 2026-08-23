@@ -44,7 +44,8 @@ confirm() {
   (( ASSUME_YES )) && return 0
   local answer=""
   read -rp "$1 [Y/n] " answer
-  [[ ${answer:-y} =~ ^[Nn ]]
+  # bash 5.3 misparses an =~ regex ending in "]" before "]]"; glob instead
+  [[ ${answer:-y} != [Nn]* ]]
 }
 
 confirm "Reset everything and simulate a fresh CyberGhost plugin install?" || {
