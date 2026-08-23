@@ -184,7 +184,10 @@ def connect_via_cli(country_code, server_type, protocol):
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except FileNotFoundError:
-        raise RuntimeError("'cyberghostvpn' CLI is not installed (required for OpenVPN / torrent / streaming modes). Install it or use WireGuard traffic mode.")
+        raise RuntimeError(
+            "'cyberghostvpn' CLI is not installed (required for OpenVPN / torrent / streaming modes)."
+            " Install it or use WireGuard traffic mode."
+        )
     except subprocess.TimeoutExpired:
         raise RuntimeError("cyberghostvpn CLI timed out.")
 
@@ -391,8 +394,10 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
                     break
                 elif "error" in data:
                     last_error_msg = data.get("error")
-            elif r.status_code == 401 or r.status_code == 403:
-                raise RuntimeError("Authentication failed. Please verify your CyberGhost subscription or run 'cyberghostvpn --setup'.")
+            elif r.status_code in (401, 403):
+                raise RuntimeError(
+                    "Authentication failed. Please verify your CyberGhost subscription or run 'cyberghostvpn --setup'."
+                )
         except requests.exceptions.RequestException as req_err:
             last_error_msg = str(req_err)
             continue
@@ -508,7 +513,9 @@ def register(config_path=None):
     print("Authenticating ...")
     res = api_request("POST", "/my/account/jwt?language=en", build_login_payload(username, password))
     if res.status_code != 200:
-        raise RuntimeError(f"Authentication failed (HTTP {res.status_code}). Check your CyberGhost account credentials.")
+        raise RuntimeError(
+            f"Authentication failed (HTTP {res.status_code}). Check your CyberGhost account credentials."
+        )
     jwt = res.json().get("jwt")
     if not jwt:
         raise RuntimeError("Authentication response did not contain a session token.")
@@ -583,7 +590,11 @@ def status(config_path=None, as_json=False):
 
 def main():
     parser = argparse.ArgumentParser(description="CyberGhost WireGuard Controller")
-    parser.add_argument("action", choices=["connect", "disconnect", "status", "check", "register"], help="Action to perform")
+    parser.add_argument(
+        "action",
+        choices=["connect", "disconnect", "status", "check", "register"],
+        help="Action to perform",
+    )
     parser.add_argument("--country", "-c", default="PT", help="Country code (e.g. PT, ES, US, DE)")
     parser.add_argument("--server-type", "-t", default="traffic", choices=["traffic", "streaming", "torrent"])
     parser.add_argument("--protocol", default="wireguard", choices=["wireguard", "openvpn", "openvpn_tcp"])

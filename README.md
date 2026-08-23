@@ -151,6 +151,14 @@ ruff check .
 pytest -q            # or: python3 tests/test_runner.py
 ```
 
+Simulate a brand-new user (wipes plugin, polkit rule and credentials, then reinstalls from GitHub — finish setup entirely through the widget's first-run wizard):
+
+```bash
+bash fresh-install.sh              # reinstall from GitHub like an external user
+bash fresh-install.sh --local      # install the local checkout instead
+bash fresh-install.sh --purge-deps # also remove wireguard-tools/python-requests
+```
+
 ---
 
 ## 🧯 Troubleshooting
