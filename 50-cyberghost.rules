@@ -1,24 +1,21 @@
-/* Polkit rule for the CyberGhost VPN Omarchy plugin.
+/* Polkit rule for CyberGhost VPN Omarchy plugin.
  *
- * Passwordless connect/disconnect for wheel users — pinned to the plugin's
- * canonical install path, so an arbitrary script cannot borrow this rule by
- * merely being named "cyberghost_runner.py" somewhere else.
+ * Allows members of the wheel group to run the root-owned helper without a
+ * password prompt. The helper itself accepts only fixed connect/disconnect
+ * lifecycle operations and derives the caller's config from PKEXEC_UID; it
+ * rejects all other actions and custom paths.
+ *
+ * Pinned strictly to the fixed root-owned binary /usr/local/bin/cyberghost-runner,
+ * preventing arbitrary command or Python script injection.
  *
  * Install:
- *   sudo cp 50-cyberghost.rules /etc/polkit-1/rules.d/
+ *   sudo install -o root -g root -m 755 cyberghost_runner.py /usr/local/bin/cyberghost-runner
+ *   sudo install -D -o root -g root -m 644 50-cyberghost.rules /etc/polkit-1/rules.d/50-cyberghost.rules
  */
 polkit.addRule(function(action, subject) {
-    if (action.id !== "org.freedesktop.policykit.exec") return;
-    if (!subject.isInGroup("wheel")) return;
-
-    var program = action.lookup("program");
-    if (program !== "/usr/bin/python3") return;
-
-    var expected = "/home/" + subject.user +
-                   "/.config/omarchy/plugins/miguel.cyberghost/cyberghost_runner.py";
-    var cmdline = String(action.lookup("command_line") || "");
-
-    if (cmdline.indexOf(expected) !== -1) {
+    if (action.id === "org.freedesktop.policykit.exec" &&
+        action.lookup("program") === "/usr/local/bin/cyberghost-runner" &&
+        subject.isInGroup("wheel")) {
         return polkit.Result.YES;
     }
 });

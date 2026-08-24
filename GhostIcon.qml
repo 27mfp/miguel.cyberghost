@@ -14,6 +14,7 @@ Item {
   property bool connecting: false
   property bool crossed: false
   property bool warning: false
+  property bool reducedMotion: false
 
   width: Math.round(iconSize * 0.95)
   height: Math.round(iconSize)
@@ -27,7 +28,7 @@ Item {
 
   // Pulse while connecting/disconnecting (sole owner of `opacity` while running)
   SequentialAnimation on opacity {
-    running: root.connecting
+    running: root.connecting && !root.reducedMotion
     loops: Animation.Infinite
     NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutSine }
     NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutSine }

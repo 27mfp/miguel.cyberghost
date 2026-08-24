@@ -97,7 +97,9 @@ var allCountries = [
   { "code": "ZA", "name": "South Africa", "flag": "🇿🇦", "popular": false }
 ];
 
-var popularCodes = ["PT", "ES", "GB", "US", "DE", "FR", "NL", "CH", "IT", "BR", "CA", "SE"];
+// Keep the quick-connect area to two rows; the searchable dropdown still
+// exposes every supported country without making the panel taller.
+var popularCodes = ["PT", "ES", "GB", "US", "DE", "FR", "NL", "CH"];
 
 function countryByCode(code) {
   if (!code) return { code: "PT", name: "Portugal", flag: "🇵🇹" };

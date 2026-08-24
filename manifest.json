@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "miguel.cyberghost",
   "name": "CyberGhost VPN",
-  "version": "1.3.0",
+  "version": "1.4.2",
   "author": "Miguel",
   "license": "MIT",
   "description": "CyberGhost VPN status, quick connect, country switching, and server mode controls in the Omarchy bar.",
@@ -21,8 +21,11 @@
     "defaults": {
       "refreshIntervalSec": 8,
       "defaultCountry": "PT",
+      "serverSelection": "fastest",
       "protocol": "wireguard",
-      "serverType": "traffic"
+      "serverType": "traffic",
+      "hideDetails": false,
+      "reduceMotion": false
     },
     "schema": [
       {
@@ -41,6 +44,13 @@
         "defaultValue": "PT"
       },
       {
+        "key": "serverSelection",
+        "type": "string",
+        "label": "Server selection (fastest or exact instance)",
+        "description": "Use the lowest-load server or a specific server returned by CyberGhost.",
+        "defaultValue": "fastest"
+      },
+      {
         "key": "protocol",
         "type": "string",
         "label": "VPN Protocol (wireguard or openvpn)",
@@ -51,6 +61,20 @@
         "type": "string",
         "label": "Server type (traffic, torrent or streaming)",
         "defaultValue": "traffic"
+      },
+      {
+        "key": "hideDetails",
+        "type": "boolean",
+        "label": "Hide IP and connection details",
+        "description": "Mask IP, location, provider and session info in the widget panel.",
+        "defaultValue": false
+      },
+      {
+        "key": "reduceMotion",
+        "type": "boolean",
+        "label": "Reduce connection animations",
+        "description": "Disable pulsing connection indicators.",
+        "defaultValue": false
       }
     ]
   }
