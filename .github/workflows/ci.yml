@@ -23,3 +23,10 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      - name: Validate plugin files
+        run: |
+          python -m py_compile cyberghost_runner.py
+          python -m json.tool manifest.json >/dev/null
+          bash -n install.sh install-helper.sh fresh-install.sh
+          git diff --check

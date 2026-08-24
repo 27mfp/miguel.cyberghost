@@ -4,8 +4,9 @@
 # Wipes every trace of the plugin (widget, polkit rule, account credentials)
 # and reinstalls it from the public GitHub URL exactly like a first-time
 # external user — then it's hands off: ALL configuration (dependencies,
-# account link, optional passwordless rule) is meant to be done through the
-# widget's FIRST-RUN SETUP panel, never via install.sh or the terminal.
+# account link, root-helper installation and optional passwordless rule) is meant
+# to be done through the widget's FIRST-RUN SETUP panel. The helper step opens a
+# visible terminal and asks for sudo explicitly.
 #
 # Usage:
 #   bash fresh-install.sh [--local] [--purge-deps] [-y]
@@ -23,6 +24,7 @@ PLUGIN_URL="https://github.com/27mfp/miguel.cyberghost.git"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGINS_DIR="$HOME/.config/omarchy/plugins"
 POLKIT_RULE="/etc/polkit-1/rules.d/50-cyberghost.rules"
+POLKIT_MARKER="$HOME/.local/state/cyberghost/polkit-rule-installed"
 
 GREEN='\033[0;32m'; BOLD='\033[1m'; NC='\033[0m'
 step() { printf "\n${BOLD}==> %s${NC}\n" "$1"; }
@@ -77,8 +79,9 @@ rm -rf "$PLUGINS_DIR/$PLUGIN_ID" "$PLUGINS_DIR"/."$PLUGIN_ID".bak.*
 ok "widget removed from bar and plugins dir"
 
 # ---------------------------------------------------------------------------
-step "Removing Polkit rule"
-sudo rm -f "$POLKIT_RULE" && ok "polkit rule removed (password prompts return)"
+step "Removing Polkit rule & root helper"
+sudo rm -f "$POLKIT_RULE" /usr/local/bin/cyberghost-runner && ok "polkit rule & root helper removed (widget will ask to reinstall the helper)"
+rm -f "$POLKIT_MARKER"
 
 # ---------------------------------------------------------------------------
 step "Removing CyberGhost account credentials/state"
@@ -117,14 +120,15 @@ omarchy restart shell
 printf '\n%s\n' "${GREEN}Fresh state restored.${NC}"
 cat <<DONE
 
-Now finish as a brand-new user — everything through the WIDGET, no terminal:
+Now finish as a brand-new user through the WIDGET:
 
   1. Click the ghost icon in the bar (${section} section).
   2. The FIRST-RUN SETUP panel appears. Use its buttons:
        - Install        -> wireguard-tools + python-requests (pkexec prompt)
        - Link account   -> your CyberGhost username/password
-       - Enable         -> optional passwordless connect (Polkit rule)
-  3. Once every checklist item is green, the full panel unlocks:
+       - Open installer -> visible terminal with the fixed root helper and optional Polkit rule (sudo)
+       - Recheck setup -> refresh the checklist after the terminal installer finishes
+  3. Once the required dependency, account and helper items are green, the full panel unlocks; Polkit remains optional:
      connect, pick countries, server modes, protocols.
 
 DONE

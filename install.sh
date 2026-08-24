@@ -43,26 +43,27 @@ install_cyberghost_cli() {
   local helper=""
   command -v yay >/dev/null 2>&1 && helper="yay"
   command -v paru >/dev/null 2>&1 && helper="paru"
-  echo "→ The cyberghostvpn CLI is OPTIONAL (only for OpenVPN / torrent / streaming modes —"
-  echo "  WireGuard traffic mode and account linking are fully native)."
+  echo "→ The cyberghostvpn CLI is RECOMMENDED (live server inventory/manual selection and"
+  echo "  required for OpenVPN / torrent / streaming modes — account linking remains native)."
   if [[ -z $helper ]]; then
     say "${DIM}- no AUR helper found (yay/paru) — skip or install the CLI manually later"
     return 1
   fi
+  say "${DIM}- this is an optional third-party AUR package; review its PKGBUILD and trust it before continuing"
   if confirm "Install 'cyberghostvpn' via $helper?"; then
     "$helper" -S --needed cyberghostvpn
   else
-    say "${DIM}- skipped cyberghostvpn CLI (not required for WireGuard traffic mode)"
+    say "${DIM}- skipped cyberghostvpn CLI (native fallback remains available, but the CLI is recommended)"
     return 1
   fi
 }
 
 install_polkit_rule() {
-  if confirm "Install Polkit rule for passwordless connect/disconnect?"; then
-    sudo cp "$DIR/50-cyberghost.rules" /etc/polkit-1/rules.d/
-    say "${GREEN}✓${NC} Polkit rule installed"
+  if confirm "Install root helper and Polkit rule for passwordless connect/disconnect?"; then
+    bash "$DIR/install-helper.sh"
+    say "${GREEN}✓${NC} Root helper and Polkit rule installed"
   else
-    say "${DIM}- skipped Polkit rule (pkexec will ask for your password on connect)${NC}"
+    say "${DIM}- skipped root helper and Polkit rule (connect is disabled until the helper is installed)${NC}"
   fi
 }
 
@@ -82,7 +83,26 @@ setup_account() {
 summary() {
   say ""
   say "── Readiness check ──────────────────────────"
-  python3 "$DIR/cyberghost_runner.py" check --json || true
+  local status_json
+  status_json=$(python3 "$DIR/cyberghost_runner.py" check 2>/dev/null || echo "{}")
+  STATUS_JSON="$status_json" python3 - <<'PY'
+import json
+import os
+
+try:
+    data = json.loads(os.environ.get("STATUS_JSON", "{}"))
+    def tick(key):
+        return "\033[0;32m✓\033[0m" if data.get(key) else "\033[1;33m✗\033[0m"
+    print(f" {tick('wg_tools')} WireGuard tools (wg-quick)")
+    print(f" {tick('requests')} Python requests (key negotiation)")
+    print(f" {tick('credentials')} CyberGhost account credentials")
+    print(f" {tick('helper_installed')} Root helper binary (/usr/local/bin/cyberghost-runner)")
+    print(f" {tick('polkit_rule_installed')} Polkit rule (50-cyberghost.rules)")
+    cli_status = "\033[0;32m✓\033[0m" if data.get("cli") else "\033[2m- (recommended, WireGuard/OpenVPN/streaming)\033[0m"
+    print(f" {cli_status} cyberghostvpn CLI")
+except Exception:
+    print(" Check status unavailable")
+PY
   say "─────────────────────────────────────────────"
   say ""
   say "Done. The bar widget is managed by Omarchy (${DIM}omarchy plugin enable miguel.cyberghost${NC} if needed)."

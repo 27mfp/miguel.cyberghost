@@ -14,40 +14,57 @@ A native, lightweight status bar widget and popup panel for managing **CyberGhos
 - 🖱️ **Middle-click or right-click** toggles the VPN instantly; **left-click** opens the panel.
 
 ### Popup Panel
-- 🧙 **First-run wizard first**: until dependencies are installed and an account is linked, the panel shows *only* the setup — one-click installs, native account form, optional passwordless toggle. Everything else appears once you're ready.
+- 🧙 **First-run wizard first**: until dependencies, an account and the fixed root helper are ready, the panel shows *only* setup — one-click installs, native account form and an optional passwordless-rule toggle. Everything else appears once you're ready.
 - ⚡ **One-click connect/disconnect** via header power switch or action button.
 - 🔍 **Connection details card** — clean stacked view of:
   - **IP** — live public IP with click-to-copy.
   - **Location** — city + country resolved from GeoIP.
   - **Provider** — ISP/network organization.
   - **Session** — transfer totals, handshake freshness and VPN endpoint while connected.
-  - Status badge (`PROTECTED & ENCRYPTED` / `PUBLIC IP EXPOSED`) and active protocol pill.
+   - Compact status badge (`PROTECTED` / `IP EXPOSED`) and active protocol pill; the hero and details card provide the full context.
+ - 🙈 **Privacy mode** — one click on the 👁 Hide button (in the details card) masks the IP, location, provider and session info; also hides the IP from the bar tooltip. Persists across restarts.
 - 🌍 **Country switching:**
-  - Quick-connect grid with 12 popular locations (instant connect).
-  - Searchable dropdown covering all 100+ CyberGhost countries (selects a target; connect explicitly).
+  - Compact quick-connect grid with 8 popular locations (instant connect).
+  - Searchable country dropdown covering all 100+ CyberGhost countries (the long list is only loaded inside the popup).
+  - Live server selector with **Fastest available** (lowest reported load) or an exact manual server instance.
+  - The manual list is loaded only for the selected country, so opening the panel does not enumerate every server globally.
 - 🛡️ **Server modes:** ⚡ Traffic · 🔒 Torrent (P2P) · 🎬 Streaming.
+- Streaming mode loads the available service profiles for the selected country from the official CLI before connecting.
 - 🔒 **Protocols:** WireGuard · OpenVPN UDP · OpenVPN TCP.
   - Changing mode or protocol while connected never tears down the live tunnel — it applies on the next connect.
 - 🔔 Desktop notifications on connect, disconnect, errors and stale-handshake warnings.
 - ℹ️ Error/status banner with human-readable messages.
+- ⌨️ Keyboard-tabbable controls, labelled account fields, responsive wrapping and a scrollable panel for small screens.
+- ♿ Reduced-motion setting disables the connection pulses without changing status feedback.
 - 💾 Last country / protocol / server mode are remembered across restarts.
+
+### Screenshots
+
+The panel in connected and disconnected states. Public IP details are masked in these captures.
+
+![Connected CyberGhost panel](docs/screenshots/screenshot_connected.png)
+
+![Disconnected CyberGhost panel](docs/screenshots/screenshot-disconnected.png)
 
 ## 🧠 How It Works
 
 | Mode | Backend |
 |---|---|
-| WireGuard + Traffic | **Native**: generates WireGuard keys locally and negotiates them directly with CyberGhost's dialer API (`*.cg-dialup.net`) — no CLI needed. Falls back through multiple server instances automatically. The tunnel covers **IPv4 and IPv6** (`0.0.0.0/0, ::/0`), so there is no v6 leak. |
+| WireGuard + Traffic | **Native API + `wg-quick`**: uses strict-TLS key exchange and the current per-country server inventory when `cyberghostvpn` is installed; it selects the lowest-load instance by default and accepts an exact manual instance. Static city fallbacks remain available without the CLI. The tunnel covers **IPv4 and IPv6** (`0.0.0.0/0, ::/0`), so there is no v6 leak. |
 | OpenVPN UDP/TCP, Torrent, Streaming | **Delegated** to the official `cyberghostvpn` CLI. |
 
 Security posture:
-- Key-exchange requests use **strict TLS verification** — if the certificate chain fails, credentials are never sent.
+- Key-exchange requests use **strict TLS verification** — if the certificate chain or hostname fails, credentials are never sent. The official CLI is used for server inventory and for CLI-only modes; the actual WireGuard tunnel is created by the native `wg-quick` path.
+- Strict validation of all WireGuard configuration fields (keys, IP addresses, ports, hostnames, DNS) prevents newline or directive injection (`PreUp`/`PostUp`).
 - A **handshake watchdog** warns you (notification + bar badge) when the tunnel stops handshaking, instead of silently leaking traffic.
-- The optional Polkit rule is **pinned to the plugin's install path**, so unrelated scripts cannot reuse it to run as root.
+- The widget never executes mutable plugin code through `pkexec`: the installed helper is root-owned, capability-versioned and accepts only `connect`/`disconnect` with fixed paths. The optional Polkit rule is pinned to that helper.
+- Account passwords are used only for registration and are **never written to the config file**; only the account identifier and device token/secret are stored with owner-only permissions.
+- Subprocess, HTTP, CLI and UI output is bounded and time-limited so a stalled or unexpectedly large response cannot hang the panel or consume unbounded memory.
 
-The widget polls VPN status using the runner's JSON output and checks your public IP/GeoIP via ipinfo.io — throttled to at most one request per 20s while connected (plus a forced refresh when the panel opens or you disconnect), well within free API limits.
+The widget polls VPN status using the runner's JSON output and checks your public IP/GeoIP via ipwho.is — throttled to at most one request per 20s while connected (plus a forced refresh when the panel opens or you disconnect), well within free API limits. The panel keeps the selected CyberGhost target separate from the public IP's GeoIP result because commercial IP ranges can be registered differently by different databases.
 
 ```
-Panel.qml (UI) ──> Service.qml (state machine) ──> pkexec ──> cyberghost_runner.py (backend)
+Panel.qml (UI) ──> Service.qml (state machine) ──> pkexec ──> /usr/local/bin/cyberghost-runner (root helper)
 ```
 
 ---
@@ -57,10 +74,12 @@ Panel.qml (UI) ──> Service.qml (state machine) ──> pkexec ──> cyberg
 1. **WireGuard tools**: `sudo pacman -S wireguard-tools`
 2. **Python requests** (native key exchange + account registration): `sudo pacman -S python-requests`
 3. A CyberGhost subscription — account linking happens **in the widget** (native API, no CLI).
-4. *(Optional)* `cyberghostvpn` CLI — only needed at runtime for OpenVPN / torrent / streaming modes.
-5. *(Optional)* Polkit rule for passwordless connect/disconnect.
+4. *(Recommended)* `cyberghostvpn` CLI — used for live server inventory and exact server selection, and required at runtime for OpenVPN / torrent / streaming modes; Streaming also uses it to load service profiles.
+5. A root-owned helper installed at `/usr/local/bin/cyberghost-runner` — required by the widget for safe connect/disconnect. The bundled Polkit rule is optional and only removes repeated password prompts.
 
-> The widget runs without any of this and shows a **setup wizard in its panel** — install dependencies with one click (polkit dialog), link your CyberGhost account with a native API form, done. Nothing breaks if you install the plugin first and configure later.
+> CLI-backed modes use the official CLI's own setup. If you enable OpenVPN, Torrent or Streaming, install and configure it separately with the vendor's setup flow (for example `sudo cyberghostvpn --setup`); linking the native account in this widget does not configure that CLI. The optional AUR package is a separate supply-chain choice—review and trust its PKGBUILD first.
+
+> The widget can be installed before it is configured and shows a **setup wizard in its panel**. Use the setup actions to install dependencies and link the account. The helper step opens a visible terminal and asks for sudo explicitly; the optional Polkit rule then enables passwordless lifecycle actions.
 
 ---
 
@@ -90,8 +109,9 @@ omarchy plugin enable miguel.cyberghost right
 qs ipc call miguel.cyberghost disconnect                 # only if connected
 omarchy plugin disable miguel.cyberghost
 omarchy plugin remove miguel.cyberghost --yes            # removes from bar + plugins dir
-sudo rm -f /etc/polkit-1/rules.d/50-cyberghost.rules     # passwordless rule (if installed)
-rm -rf ~/.cyberghost                                     # account credentials/token (optional)
+sudo rm -f /etc/polkit-1/rules.d/50-cyberghost.rules /usr/local/bin/cyberghost-runner  # helper/rule
+sudo rm -f /etc/wireguard/cyberghost.conf                 # any native config left after an interrupted removal
+rm -rf ~/.cyberghost                                       # account identifier/device token (optional)
 ```
 
 ---
@@ -104,8 +124,11 @@ Configurable from the Omarchy plugin settings:
 |---|---|---|---|
 | `refreshIntervalSec` | int (5–60) | `8` | Status polling interval in seconds |
 | `defaultCountry` | string | `PT` | Country code used on first connect (e.g. `PT`, `US`, `DE`) |
+| `serverSelection` | string | `fastest` | Lowest-load server or an exact live instance name |
 | `protocol` | string | `wireguard` | `wireguard`, `openvpn` (UDP) or `openvpn_tcp` |
 | `serverType` | string | `traffic` | `traffic`, `torrent` or `streaming` |
+| `hideDetails` | bool | `false` | Mask IP / location / provider / session in the panel and bar tooltip |
+| `reduceMotion` | bool | `false` | Disable pulsing connection indicators |
 
 ---
 
@@ -129,13 +152,23 @@ bind = SUPER, V, exec, qs ipc call miguel.cyberghost connect
 
 ---
 
-## 🔐 Passwordless Connection via Polkit (Optional)
+## 🔐 Root helper and passwordless connection via Polkit
 
-By default `pkexec` asks for your password on every connect/disconnect. To skip the prompt, copy the included Polkit rule (allows members of the `wheel` group to run **this plugin's runner, from its installed path**, without a password):
+The widget requires a fixed root-owned helper for connect/disconnect. Without the optional rule, `pkexec` asks for authorization when the helper is used. Install both files from a visible terminal:
 
 ```bash
-sudo cp 50-cyberghost.rules /etc/polkit-1/rules.d/
+bash ./install-helper.sh
 ```
+
+The rule grants only members of `wheel` passwordless access to the exact helper path. The helper rejects `register`, `status`, `check`, custom config paths and arbitrary command arguments. From the widget, choose **Open installer**, complete the visible terminal step, then choose **Recheck setup**. The panel never passes a user-editable plugin path to `pkexec` for a root install operation.
+
+For the helper-only step from a terminal:
+
+```bash
+bash ~/.config/omarchy/plugins/miguel.cyberghost/install-helper.sh
+```
+
+The account password is not saved. Registration sends it once over the setup process's stdin; subsequent native WireGuard connections use the device token and secret.
 
 ---
 
@@ -156,6 +189,8 @@ sudo python3 cyberghost_runner.py connect --country PT --protocol wireguard --se
 python3 cyberghost_runner.py --help
 ```
 
+The direct `sudo` command is a developer diagnostic path. The installed widget uses `pkexec /usr/local/bin/cyberghost-runner`; do not expose the development runner through a broad Polkit rule.
+
 Lint and tests (also enforced by CI):
 
 ```bash
@@ -163,7 +198,7 @@ ruff check .
 pytest -q            # or: python3 tests/test_runner.py
 ```
 
-Simulate a brand-new user (wipes plugin, polkit rule and credentials, then reinstalls from GitHub — finish setup entirely through the widget's first-run wizard):
+Simulate a brand-new user (destructive: disconnects the tunnel and removes the plugin, helper/rule and credentials, then reinstalls from GitHub — finish setup through the widget's first-run wizard):
 
 ```bash
 bash fresh-install.sh              # reinstall from GitHub like an external user
@@ -178,12 +213,13 @@ bash fresh-install.sh --purge-deps # also remove wireguard-tools/python-requests
 | Symptom | Fix |
 |---|---|
 | "FIRST-RUN SETUP" checklist in panel | Run `bash ~/.config/omarchy/plugins/miguel.cyberghost/install.sh` or follow the hints next to each unchecked item |
-| "Configuration file not found" | Run `sudo cyberghostvpn --setup`, or place credentials in `~/.cyberghost/config.ini` under `[device]` (`token`, `secret`) |
+| "Configuration file not found" | Link the account in the widget, or place owner-only device credentials in `~/.cyberghost/config.ini` under `[device]` (`token`, `secret`) |
 | Authentication failed on connect | Check your CyberGhost subscription / re-run setup |
+| WireGuard reports a certificate/endpoint error | Check the account link and TLS/network access; the widget uses the native WireGuard path and the CLI only for current server inventory |
 | Connect works, but no internet | Try the DNS fallback path (runner retries automatically), or switch protocol to WireGuard if on OpenVPN |
 | Account link fails in the wizard | Check username/password; the CLI is NOT required for this step — it talks to CyberGhost's API natively |
-| OpenVPN/Torrent/Streaming fails | Ensure the `cyberghostvpn` CLI is installed and logged in — those modes are delegated to it |
-| IP shows "Unavailable" | ipinfo.io may be unreachable/rate-limited; hit **Refresh Status** |
+| OpenVPN/Torrent/Streaming fails | Ensure the `cyberghostvpn` CLI is installed and configured with `sudo cyberghostvpn --setup` — those modes are delegated to it |
+| IP shows "Unavailable" | ipwho.is may be unreachable/rate-limited; hit **Refresh Status** |
 
 ---
 
