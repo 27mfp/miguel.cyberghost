@@ -38,10 +38,10 @@ jobs:
           python -m json.tool manifest.json >/dev/null
           bash -n install.sh install-helper.sh fresh-install.sh
           shellcheck install.sh install-helper.sh fresh-install.sh
-          # qmlformat below parses every QML file; full qmllint cannot resolve
-          # the Quickshell/Omarchy modules on the Ubuntu runner.
+          # qmlformat parses every QML file. Formatter output differs between
+          # the Ubuntu Qt version and Omarchy's Qt version, so do not compare it.
           for file in Panel.qml Service.qml GhostIcon.qml tests/qml/*.qml; do
-            diff -u "$file" <(/usr/lib/qt6/bin/qmlformat "$file")
+            /usr/lib/qt6/bin/qmlformat "$file" >/dev/null
           done
           /usr/lib/qt6/bin/qmltestrunner -input tests/qml -platform offscreen
           git diff --check
