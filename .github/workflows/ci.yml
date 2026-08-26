@@ -41,7 +41,7 @@ jobs:
           # qmlformat below parses every QML file; full qmllint cannot resolve
           # the Quickshell/Omarchy modules on the Ubuntu runner.
           for file in Panel.qml Service.qml GhostIcon.qml tests/qml/*.qml; do
-            diff -u "$file" <(/usr/lib/qt6/bin/qmlformat -s .qmlformat.ini "$file")
+            diff -u "$file" <(/usr/lib/qt6/bin/qmlformat "$file")
           done
           /usr/lib/qt6/bin/qmltestrunner -input tests/qml -platform offscreen
           git diff --check
