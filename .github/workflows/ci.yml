@@ -40,7 +40,7 @@ jobs:
           shellcheck install.sh install-helper.sh fresh-install.sh
           # Quickshell/Omarchy modules are unavailable on Ubuntu; ignore the
           # resulting import/type diagnostics while keeping syntax checking.
-          /usr/lib/qt6/bin/qmllint --ignore-settings --disable-plugins --max-warnings=-1 --import=disable --unresolved-type=disable --missing-type=disable --missing-property=disable Panel.qml Service.qml GhostIcon.qml
+          /usr/lib/qt6/bin/qmllint --ignore-settings --disable-plugins --max-warnings=-1 --import=disable Panel.qml Service.qml GhostIcon.qml
           for file in Panel.qml Service.qml GhostIcon.qml tests/qml/*.qml; do
             diff -u "$file" <(/usr/lib/qt6/bin/qmlformat --settings .qmlformat.ini "$file")
           done
