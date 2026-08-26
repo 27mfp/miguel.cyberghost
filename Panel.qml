@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls as QQC
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -20,7 +19,7 @@ Panel {
     property string label: ""
     property string placeholder: ""
     property bool passwordField: false
-    signal accepted()
+    signal accepted
 
     implicitHeight: (fieldLabel.visible ? fieldLabel.implicitHeight + Style.space(4) : 0) + Style.space(30)
     height: implicitHeight
@@ -101,23 +100,47 @@ Panel {
     onTriggered: root.ipCopied = false
   }
 
+  Timer {
+    id: copyTimeoutTimer
+    interval: 3000
+    repeat: false
+    onTriggered: {
+      if (clipboardProcess.running) {
+        clipboardProcess.running = false
+        root.ipCopied = false
+        cyberghost.lastError = "Clipboard copy timed out."
+      }
+    }
+  }
+
   Process {
     id: clipboardProcess
+    onExited: function (exitCode) {
+      copyTimeoutTimer.stop()
+      if (exitCode !== 0) {
+        root.ipCopied = false
+        cyberghost.lastError = "Could not copy the public IP to the clipboard."
+      }
+    }
   }
 
   function copyIp() {
-    if (cyberghost.hideDetails) return
+    if (cyberghost.hideDetails)
+      return
     var ipToCopy = cyberghost.publicIp
-    if (!ipToCopy) return
-    clipboardProcess.command = ["wl-copy", ipToCopy]
+    if (!ipToCopy || clipboardProcess.running)
+      return
+    clipboardProcess.command = ["/usr/bin/wl-copy", ipToCopy]
     clipboardProcess.running = true
+    copyTimeoutTimer.restart()
     root.ipCopied = true
     copyResetTimer.restart()
   }
 
   onOpenedChanged: {
     if (root.opened) {
-      cyberghost.refresh()
+      // Recheck's completion handler refreshes status; avoiding a second
+      // immediate poll keeps opening the panel cheap.
       cyberghost.recheck()
       cyberghost.refreshServers()
       // Force a GeoIP lookup so the exposed/VPN IP is never stale.
@@ -138,7 +161,11 @@ Panel {
   function setServerType(type) {
     cyberghost.setServerType(type)
     if (cyberghost.connected) {
-      var labels = { "traffic": "Traffic", "torrent": "Torrent", "streaming": "Streaming" }
+      var labels = {
+        "traffic": "Traffic",
+        "torrent": "Torrent",
+        "streaming": "Streaming"
+      }
       cyberghost.applyHint = "Server mode set to " + (labels[type] || type) + " — reconnect to apply."
     }
   }
@@ -146,7 +173,11 @@ Panel {
   function setProtocol(proto) {
     cyberghost.setProtocol(proto)
     if (cyberghost.connected) {
-      var names = { "wireguard": "WireGuard", "openvpn": "OpenVPN UDP", "openvpn_tcp": "OpenVPN TCP" }
+      var names = {
+        "wireguard": "WireGuard",
+        "openvpn": "OpenVPN UDP",
+        "openvpn_tcp": "OpenVPN TCP"
+      }
       cyberghost.applyHint = "Protocol set to " + (names[proto] || proto) + " — reconnect to apply."
     }
   }
@@ -169,15 +200,19 @@ Panel {
   function firstMissingDependencyTarget() {
     for (var i = 0; i < dependencyRepeater.count; i++) {
       var item = dependencyRepeater.itemAt(i)
-      if (item && item.keyboardTarget && item.keyboardTarget.visible) return item.keyboardTarget
+      if (item && item.keyboardTarget && item.keyboardTarget.visible)
+        return item.keyboardTarget
     }
     return polkitBtn
   }
 
   function fmtHandshake(sec) {
-    if (sec < 0) return ""
-    if (sec < 90) return sec + "s"
-    if (sec < 3600) return Math.round(sec / 60) + " min"
+    if (sec < 0)
+      return ""
+    if (sec < 90)
+      return sec + "s"
+    if (sec < 3600)
+      return Math.round(sec / 60) + " min"
     return Math.round(sec / 3600 * 10) / 10 + " h"
   }
 
@@ -189,12 +224,24 @@ Panel {
   IpcHandler {
     target: root.ipcTarget
 
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function refresh(): void { root.refresh() }
+    function open(): void {
+      root.open()
+    }
+    function close(): void {
+      root.close()
+    }
+    function show(): void {
+      root.open()
+    }
+    function hide(): void {
+      root.close()
+    }
+    function toggle(): void {
+      root.toggle()
+    }
+    function refresh(): void {
+      root.refresh()
+    }
     function connect(countryCode: string): void {
       if (countryCode && typeof countryCode === "string" && countryCode.trim() !== "") {
         root.connectToCountry(countryCode.trim().toUpperCase())
@@ -217,9 +264,12 @@ Panel {
     active: root.opened
     Accessible.name: tooltipText
     tooltipText: {
-      if (!cyberghost.setupDone) return "CyberGhost VPN: setup incomplete — click for steps"
-      if (cyberghost.connecting) return "CyberGhost VPN: Connecting to " + cyberghost.countryName + " (" + cyberghost.country + ")…"
-      if (cyberghost.disconnecting) return "CyberGhost VPN: Disconnecting…"
+      if (!cyberghost.setupDone)
+        return "CyberGhost VPN: setup incomplete — click for steps"
+      if (cyberghost.connecting)
+        return "CyberGhost VPN: Connecting to " + cyberghost.countryName + " (" + cyberghost.country + ")…"
+      if (cyberghost.disconnecting)
+        return "CyberGhost VPN: Disconnecting…"
       if (cyberghost.connected) {
         var ipPart = (!cyberghost.hideDetails && cyberghost.publicIp !== "") ? (" • " + cyberghost.publicIp) : ""
         return "CyberGhost VPN: Connected (" + cyberghost.countryName + " " + cyberghost.countryFlag + ")" + ipPart
@@ -244,7 +294,7 @@ Panel {
       }
     }
 
-    onPressed: function(buttonCode) {
+    onPressed: function (buttonCode) {
       // Until setup completes, every click just opens the wizard.
       if (!cyberghost.setupDone || buttonCode === Qt.LeftButton) {
         root.toggle()
@@ -261,7 +311,6 @@ Panel {
 
   // Active connected indicator dot (Green)
   Rectangle {
-    id: activeDot
     visible: cyberghost.active && !cyberghost.connecting && !cyberghost.disconnecting
     anchors.bottom: parent.bottom
     anchors.right: parent.right
@@ -276,7 +325,6 @@ Panel {
 
   // Pulsing dot during connection / disconnection (Brand Yellow)
   Rectangle {
-    id: connectingDot
     visible: cyberghost.connecting || cyberghost.disconnecting
     anchors.bottom: parent.bottom
     anchors.right: parent.right
@@ -289,8 +337,16 @@ Panel {
     SequentialAnimation on opacity {
       running: (cyberghost.connecting || cyberghost.disconnecting) && !root.reduceMotion
       loops: Animation.Infinite
-      NumberAnimation { to: 0.25; duration: 500; easing.type: Easing.InOutSine }
-      NumberAnimation { to: 1.0; duration: 500; easing.type: Easing.InOutSine }
+      NumberAnimation {
+        to: 0.25
+        duration: 500
+        easing.type: Easing.InOutSine
+      }
+      NumberAnimation {
+        to: 1.0
+        duration: 500
+        easing.type: Easing.InOutSine
+      }
     }
   }
 
@@ -303,13 +359,7 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: cyberghost.setupDone
-      ? (cyberghost.readyPolkit ? refreshStatusButton : polkitBtn)
-      : (!cyberghost.readyCreds
-        ? regUser
-        : ((!cyberghost.readyWg || !cyberghost.readyRequests) && dependencyRepeater.count > 0
-          ? root.firstMissingDependencyTarget()
-          : polkitBtn))
+    focusTarget: cyberghost.setupDone ? (cyberghost.readyPolkit ? refreshStatusButton : polkitBtn) : (!cyberghost.readyCreds ? regUser : ((!cyberghost.readyWg || !cyberghost.readyRequests) && dependencyRepeater.count > 0 ? root.firstMissingDependencyTarget() : polkitBtn))
     // Keep the same sizing contract as the official Omarchy panels: the
     // KeyboardPanel owns the popup padding, while the content column fills
     // the available inner width without a second manual inset.
@@ -317,7 +367,6 @@ Panel {
     contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight)
 
     PanelKeyCatcher {
-      id: keyCatcher
       anchors.fill: parent
       focus: false
       blocked: true
@@ -332,14 +381,17 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
-        QQC.ScrollBar.vertical: QQC.ScrollBar { policy: QQC.ScrollBar.AsNeeded }
+        QQC.ScrollBar.vertical: QQC.ScrollBar {
+          policy: QQC.ScrollBar.AsNeeded
+        }
 
         // KeyboardPanel is a window, so keep the Escape handler on this
         // descendant Item. This mirrors the official panels and avoids an
         // invalid Keys attachment while native buttons retain Tab/Enter.
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (countryDropdown.popupOpen || serverDropdown.popupOpen || streamingDropdown.popupOpen) return
+        Keys.onPressed: function (event) {
+          if (countryDropdown.popupOpen || serverDropdown.popupOpen || streamingDropdown.popupOpen)
+            return
           if (event.key === Qt.Key_Escape) {
             root.close()
             event.accepted = true
@@ -355,7 +407,6 @@ Panel {
           // 1. HERO HEADER
           // -------------------------------------------------------------
           Item {
-            id: header
             visible: cyberghost.setupDone
             width: parent.width
             implicitHeight: hero.implicitHeight
@@ -365,9 +416,12 @@ Panel {
               width: parent.width
               title: "CyberGhost VPN"
               meta: {
-                if (cyberghost.connecting) return "Connecting to " + cyberghost.countryName + "…"
-                if (cyberghost.disconnecting) return "Disconnecting tunnel…"
-                if (cyberghost.connected && cyberghost.tunnelStale) return "Connected · handshake stale ⚠"
+                if (cyberghost.connecting)
+                  return "Connecting to " + cyberghost.countryName + "…"
+                if (cyberghost.disconnecting)
+                  return "Disconnecting tunnel…"
+                if (cyberghost.connected && cyberghost.tunnelStale)
+                  return "Connected · handshake stale ⚠"
                 if (cyberghost.connected) {
                   return "Connected · " + cyberghost.countryName + " " + cyberghost.countryFlag
                 }
@@ -397,9 +451,12 @@ Panel {
                   accent: root.brandYellow
                   activeFocusOnTab: true
                   Accessible.name: cyberghost.active ? "Disconnect VPN" : "Connect to CyberGhost"
-                  Keys.onReturnPressed: if (!cyberghost.busy) root.toggleRunning()
-                  Keys.onEnterPressed: if (!cyberghost.busy) root.toggleRunning()
-                  Keys.onSpacePressed: if (!cyberghost.busy) root.toggleRunning()
+                  Keys.onReturnPressed: if (!cyberghost.busy)
+                    root.toggleRunning()
+                  Keys.onEnterPressed: if (!cyberghost.busy)
+                    root.toggleRunning()
+                  Keys.onSpacePressed: if (!cyberghost.busy)
+                    root.toggleRunning()
                   onToggled: root.toggleRunning()
 
                   PanelToolTip {
@@ -432,9 +489,12 @@ Panel {
               anchors.fill: parent
               anchors.margins: Style.space(6)
               text: {
-                if (cyberghost.lastError !== "") return cyberghost.lastError
-                if (cyberghost.actionStatus !== "") return cyberghost.actionStatus
-                if (cyberghost.tunnelStale) return "Handshake stale (" + Math.round(cyberghost.handshakeAgeSec / 60) + " min) — tunnel may be down. Reconnect recommended."
+                if (cyberghost.lastError !== "")
+                  return cyberghost.lastError
+                if (cyberghost.actionStatus !== "")
+                  return cyberghost.actionStatus
+                if (cyberghost.tunnelStale)
+                  return "Handshake stale (" + Math.round(cyberghost.handshakeAgeSec / 60) + " min) — tunnel may be down. Reconnect recommended."
                 return cyberghost.applyHint
               }
               color: statusBanner.isError ? Color.urgent : Color.accent
@@ -449,7 +509,6 @@ Panel {
           // 3. FIRST-RUN SETUP WIZARD (only while something is missing)
           // -------------------------------------------------------------
           Rectangle {
-            id: setupCard
             visible: !cyberghost.setupDone || !cyberghost.readyPolkit
             width: parent.width
             implicitHeight: setupColumn.implicitHeight + Style.space(24)
@@ -476,7 +535,6 @@ Panel {
               }
 
               Text {
-                id: setupStatusText
                 visible: cyberghost.setupMsg !== ""
                 width: parent.width
                 textFormat: Text.PlainText
@@ -491,8 +549,14 @@ Panel {
               Repeater {
                 id: dependencyRepeater
                 model: [
-                  { ok: cyberghost.readyWg, label: "WireGuard tools" },
-                  { ok: cyberghost.readyRequests, label: "Python requests" }
+                  {
+                    ok: cyberghost.readyWg,
+                    label: "WireGuard tools"
+                  },
+                  {
+                    ok: cyberghost.readyRequests,
+                    label: "Python requests"
+                  }
                 ]
 
                 delegate: Item {
@@ -585,7 +649,6 @@ Panel {
                     spacing: Style.space(8)
 
                     Button {
-                      id: linkAccountButton
                       focusable: true
                       Accessible.name: cyberghost.regBusy ? "Linking CyberGhost account" : "Link CyberGhost account"
                       enabled: regUser.text !== "" && regPass.text !== "" && !cyberghost.regBusy
@@ -621,11 +684,7 @@ Panel {
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
                   width: parent.width - (polkitBtn.visible ? polkitBtn.width + Style.space(10) : 0)
-                  text: cyberghost.readyCreds && cyberghost.polkitStatus !== ""
-                    ? cyberghost.polkitStatus
-                    : (cyberghost.readyPolkit
-                    ? "Passwordless connect enabled"
-                    : (cyberghost.helperInstalled ? "Optional: enable passwordless connect" : "Required: install the root helper"))
+                  text: cyberghost.readyCreds && cyberghost.polkitStatus !== "" ? cyberghost.polkitStatus : (cyberghost.readyPolkit ? "Passwordless connect enabled" : (cyberghost.helperInstalled ? "Optional: enable passwordless connect" : (cyberghost.helperVersion !== "" && cyberghost.pluginVersion !== "" && cyberghost.helperVersion !== cyberghost.pluginVersion ? "Required: update root helper (installed v" + cyberghost.helperVersion + ", current v" + cyberghost.pluginVersion + ")" : "Required: install the root helper")))
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   color: cyberghost.readyCreds && cyberghost.polkitStatus !== "" && !cyberghost.readyPolkit ? root.urgent : (cyberghost.readyPolkit ? root.successGreen : root.foreground)
@@ -649,7 +708,6 @@ Panel {
               }
 
               Button {
-                id: recheckSetupButton
                 visible: true
                 enabled: !cyberghost.busy && !cyberghost.regBusy
                 focusable: true
@@ -667,7 +725,6 @@ Panel {
           // 4. LIVE CONNECTION & IP CARD (CLICK-TO-COPY)
           // -------------------------------------------------------------
           Rectangle {
-            id: infoCard
             visible: cyberghost.setupDone
             width: parent.width
             implicitHeight: infoColumn.implicitHeight + Style.space(20)
@@ -700,75 +757,73 @@ Panel {
                   rowSpacing: Style.space(6)
                   readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
 
-                Row {
-                  id: statusBadgeRow
-                  width: statusBadgeGrid.cellW
-                  spacing: Style.space(6)
+                  Row {
+                    id: statusBadgeRow
+                    width: statusBadgeGrid.cellW
+                    spacing: Style.space(6)
 
+                    Rectangle {
+                      width: Style.space(8)
+                      height: width
+                      radius: width / 2
+                      anchors.verticalCenter: parent.verticalCenter
+                      color: cyberghost.connected ? root.successGreen : (cyberghost.connecting ? root.brandYellow : root.urgent)
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: statusBadgeRow.width - Style.space(14)
+                      // Keep the badge short enough for the three-column layout;
+                      // the hero and detail card carry the full connection context.
+                      text: cyberghost.connected ? "PROTECTED" : (cyberghost.connecting ? "CONNECTING…" : "IP EXPOSED")
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      wrapMode: Text.WordWrap
+                      color: cyberghost.connected ? root.successGreen : (cyberghost.connecting ? root.brandYellow : root.dim)
+                    }
+                  }
+
+                  // Protocol pill
                   Rectangle {
-                    width: Style.space(8)
-                    height: width
-                    radius: width / 2
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: cyberghost.connected ? root.successGreen : (cyberghost.connecting ? root.brandYellow : root.urgent)
+                    width: statusBadgeGrid.cellW
+                    implicitWidth: protoText.implicitWidth + Style.space(14)
+                    implicitHeight: protoText.implicitHeight + Style.space(6)
+                    radius: Style.cornerRadius > 0 ? Style.space(4) : 0
+                    color: cyberghost.connected ? Util.alpha(root.successGreen, 0.15) : Util.alpha(Color.popups.text, 0.12)
+                    border.width: 1
+                    border.color: cyberghost.connected ? Util.alpha(root.successGreen, 0.4) : Util.alpha(Color.popups.text, 0.25)
+
+                    Text {
+                      id: protoText
+                      textFormat: Text.PlainText
+                      anchors.centerIn: parent
+                      text: cyberghost.protocol === "wireguard" ? "WireGuard" : "OpenVPN"
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      color: cyberghost.connected ? root.successGreen : root.dim
+                    }
                   }
 
-                  Text {
-                    textFormat: Text.PlainText
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: statusBadgeRow.width - Style.space(14)
-                    // Keep the badge short enough for the three-column layout;
-                    // the hero and detail card carry the full connection context.
-                    text: cyberghost.connected ? "PROTECTED" : (cyberghost.connecting ? "CONNECTING…" : "IP EXPOSED")
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                    wrapMode: Text.WordWrap
-                    color: cyberghost.connected ? root.successGreen : (cyberghost.connecting ? root.brandYellow : root.dim)
+                  // Privacy toggle — masks IP / location / provider / session
+                  Button {
+                    width: statusBadgeGrid.cellW
+                    iconText: cyberghost.hideDetails ? "\uf070" : "\uf06e"
+                    text: cyberghost.hideDetails ? "Show" : "Hide"
+                    bordered: true
+                    foreground: root.foreground
+                    focusable: true
+                    Accessible.name: cyberghost.hideDetails ? "Show connection details" : "Hide connection details"
+                    horizontalPadding: Style.space(6)
+                    verticalPadding: Style.space(2)
+                    iconSize: Style.font.caption
+                    fontSize: Style.font.caption
+                    tooltipText: cyberghost.hideDetails ? "Reveal IP & connection details" : "Hide IP & connection details"
+                    onClicked: cyberghost.setHideDetails(!cyberghost.hideDetails)
                   }
                 }
-
-                // Protocol pill
-                Rectangle {
-                  id: protoPill
-                  width: statusBadgeGrid.cellW
-                  implicitWidth: protoText.implicitWidth + Style.space(14)
-                  implicitHeight: protoText.implicitHeight + Style.space(6)
-                  radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-                  color: cyberghost.connected ? Util.alpha(root.successGreen, 0.15) : Util.alpha(Color.popups.text, 0.12)
-                  border.width: 1
-                  border.color: cyberghost.connected ? Util.alpha(root.successGreen, 0.4) : Util.alpha(Color.popups.text, 0.25)
-
-                  Text {
-                    id: protoText
-                    textFormat: Text.PlainText
-                    anchors.centerIn: parent
-                    text: cyberghost.protocol === "wireguard" ? "WireGuard" : "OpenVPN"
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                    color: cyberghost.connected ? root.successGreen : root.dim
-                  }
-                }
-
-                // Privacy toggle — masks IP / location / provider / session
-                Button {
-                  id: privacyBtn
-                  width: statusBadgeGrid.cellW
-                  iconText: cyberghost.hideDetails ? "\uf070" : "\uf06e"
-                  text: cyberghost.hideDetails ? "Show" : "Hide"
-                  bordered: true
-                  foreground: root.foreground
-                  focusable: true
-                  Accessible.name: cyberghost.hideDetails ? "Show connection details" : "Hide connection details"
-                  horizontalPadding: Style.space(6)
-                  verticalPadding: Style.space(2)
-                  iconSize: Style.font.caption
-                  fontSize: Style.font.caption
-                  tooltipText: cyberghost.hideDetails ? "Reveal IP & connection details" : "Hide IP & connection details"
-                  onClicked: cyberghost.setHideDetails(!cyberghost.hideDetails)
-                }
-              }
               }
 
               // Divider
@@ -822,11 +877,15 @@ Panel {
                   Text {
                     textFormat: Text.PlainText
                     text: {
-                      if (cyberghost.hideDetails) return "Hidden"
+                      if (cyberghost.hideDetails)
+                        return "Hidden"
                       var parts = []
-                      if (cyberghost.publicCity) parts.push(cyberghost.publicCity)
-                      if (cyberghost.publicCountry) parts.push(Countries.countryName(cyberghost.publicCountry) + " " + Countries.countryFlag(cyberghost.publicCountry))
-                      else if (cyberghost.countryName) parts.push(cyberghost.countryName + " " + cyberghost.countryFlag)
+                      if (cyberghost.publicCity)
+                        parts.push(cyberghost.publicCity)
+                      if (cyberghost.publicCountry)
+                        parts.push(Countries.countryName(cyberghost.publicCountry) + " " + Countries.countryFlag(cyberghost.publicCountry))
+                      else if (cyberghost.countryName)
+                        parts.push(cyberghost.countryName + " " + cyberghost.countryFlag)
                       return parts.join(", ") || "Unknown"
                     }
                     font.family: root.fontFamily
@@ -869,11 +928,15 @@ Panel {
                     textFormat: Text.PlainText
                     visible: cyberghost.connected && (cyberghost.transferText !== "" || cyberghost.endpoint !== "")
                     text: {
-                      if (cyberghost.hideDetails) return "Hidden"
+                      if (cyberghost.hideDetails)
+                        return "Hidden"
                       var parts = []
-                      if (cyberghost.transferText !== "") parts.push(cyberghost.transferText)
-                      if (cyberghost.handshakeAgeSec >= 0) parts.push("handshake " + root.fmtHandshake(cyberghost.handshakeAgeSec))
-                      if (cyberghost.endpoint !== "") parts.push(cyberghost.endpoint)
+                      if (cyberghost.transferText !== "")
+                        parts.push(cyberghost.transferText)
+                      if (cyberghost.handshakeAgeSec >= 0)
+                        parts.push("handshake " + root.fmtHandshake(cyberghost.handshakeAgeSec))
+                      if (cyberghost.endpoint !== "")
+                        parts.push(cyberghost.endpoint)
                       return parts.join(" · ")
                     }
                     font.family: root.fontFamily
@@ -891,7 +954,6 @@ Panel {
                   spacing: Style.space(8)
 
                   Button {
-                    id: copyIpButton
                     focusable: true
                     enabled: !cyberghost.hideDetails && cyberghost.publicIp !== ""
                     iconText: "\uf0c5"
@@ -920,16 +982,13 @@ Panel {
                   visible: cyberghost.connected && cyberghost.publicCountry !== "" && cyberghost.publicCountry !== cyberghost.country
                   width: parent.width
                   textFormat: Text.PlainText
-                  text: visible
-                    ? "IP geolocation: " + Countries.countryName(cyberghost.publicCountry) + " · target: " + cyberghost.countryName + " (" + cyberghost.country + ")"
-                    : ""
+                  text: visible ? "IP geolocation: " + Countries.countryName(cyberghost.publicCountry) + " · target: " + cyberghost.countryName + " (" + cyberghost.country + ")" : ""
                   color: root.brandYellow
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   wrapMode: Text.WordWrap
                 }
               }
-
             }
           }
 
@@ -939,315 +998,317 @@ Panel {
             width: parent.width
             spacing: Style.space(10)
 
-          PanelSeparator {
-            foreground: root.foreground
-          }
+            PanelSeparator {
+              foreground: root.foreground
+            }
 
-          // -------------------------------------------------------------
-          // 5. POPULAR LOCATIONS (COMPACT UNIFORM GRID)
-          // -------------------------------------------------------------
-          PanelSectionHeader {
-            text: "POPULAR LOCATIONS"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
+            // -------------------------------------------------------------
+            // 5. POPULAR LOCATIONS (COMPACT UNIFORM GRID)
+            // -------------------------------------------------------------
+            PanelSectionHeader {
+              text: "POPULAR LOCATIONS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
 
-          Grid {
-            id: popularGrid
-            width: parent.width
-            // Four short code tiles fit comfortably at the official 380px
-            // panel width, matching the horizontal choice rows used by the
-            // network and power panels. Fall back to three on narrow layouts.
-            columns: width < Style.space(300) ? 3 : 4
-            columnSpacing: Style.space(6)
-            rowSpacing: Style.space(6)
-            readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+            Grid {
+              id: popularGrid
+              width: parent.width
+              // Four short code tiles fit comfortably at the official 380px
+              // panel width, matching the horizontal choice rows used by the
+              // network and power panels. Fall back to three on narrow layouts.
+              columns: width < Style.space(300) ? 3 : 4
+              columnSpacing: Style.space(6)
+              rowSpacing: Style.space(6)
+              readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
 
-            Repeater {
-              model: root.popularList
+              Repeater {
+                model: root.popularList
 
-              delegate: Button {
-                required property var modelData
-                required property int index
-                width: popularGrid.cellW
+                delegate: Button {
+                  required property var modelData
+                  required property int index
+                  width: popularGrid.cellW
+                  enabled: !cyberghost.busy
+                  focusable: true
+                  Accessible.name: "Connect to " + modelData.name
+
+                  text: modelData.flag + " " + modelData.code
+                  selected: (cyberghost.country === modelData.code)
+                  bordered: true
+                  foreground: root.foreground
+                  tooltipText: modelData.name + " (" + modelData.code + ")"
+                  onClicked: root.connectToCountry(modelData.code)
+                }
+              }
+            }
+
+            // -------------------------------------------------------------
+            // 6. COUNTRY SELECTION (the long list stays inside the popup)
+            // -------------------------------------------------------------
+            PanelSectionHeader {
+              text: "COUNTRY"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            SearchableDropdown {
+              id: countryDropdown
+              width: parent.width
+              enabled: !cyberghost.busy
+              label: "Search country"
+              placeholderText: "Search 90+ countries…"
+              Accessible.name: "Search country"
+              value: cyberghost.country
+              options: root.dropdownOptionsList
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              // Selecting a country only updates the target; use quick-connect
+              // tiles, the power switch or Connect to actually dial.
+              onChanged: function (val) {
+                cyberghost.setCountry(val)
+              }
+            }
+
+            // -------------------------------------------------------------
+            // 7. SERVER SELECTION (fastest by live load or exact instance)
+            // -------------------------------------------------------------
+            Item {
+              visible: cyberghost.protocol === "wireguard" && cyberghost.serverType === "traffic"
+              width: parent.width
+              implicitHeight: serverSelectionColumn.implicitHeight
+
+              Column {
+                id: serverSelectionColumn
+                width: parent.width
+                spacing: Style.space(5)
+
+                PanelSectionHeader {
+                  text: "SERVER SELECTION"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                }
+
+                SearchableDropdown {
+                  id: serverDropdown
+                  width: parent.width
+                  enabled: !cyberghost.busy
+                  label: "Server"
+                  placeholderText: "Fastest in this country or choose manually…"
+                  Accessible.name: "Choose VPN server"
+                  value: cyberghost.serverSelection
+                  options: cyberghost.serverOptions
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onChanged: function (val) {
+                    cyberghost.setServerSelection(val)
+                  }
+                }
+
+                Text {
+                  visible: cyberghost.loadingServers || cyberghost.serverError !== ""
+                  textFormat: Text.PlainText
+                  text: cyberghost.loadingServers ? "Loading live server list…" : cyberghost.serverError
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                  width: parent.width
+                }
+              }
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+            }
+
+            // -------------------------------------------------------------
+            // 8. CONNECTION PREFERENCES (server mode + protocol)
+            // -------------------------------------------------------------
+            PanelSectionHeader {
+              text: "CONNECTION PREFERENCES"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Grid {
+              id: modeRow
+              width: parent.width
+              columns: width < Style.space(300) ? 1 : 3
+              columnSpacing: Style.space(6)
+              rowSpacing: Style.space(6)
+              readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+
+              Button {
+                width: modeRow.cellW
                 enabled: !cyberghost.busy
                 focusable: true
-                Accessible.name: "Connect to " + modelData.name
-
-                text: modelData.flag + " " + modelData.code
-                selected: (cyberghost.country === modelData.code)
+                Accessible.name: "Use Traffic servers"
+                text: "⚡ Traffic"
+                selected: cyberghost.serverType === "traffic"
                 bordered: true
                 foreground: root.foreground
-                tooltipText: modelData.name + " (" + modelData.code + ")"
-                onClicked: root.connectToCountry(modelData.code)
-              }
-            }
-          }
-
-          // -------------------------------------------------------------
-          // 6. COUNTRY SELECTION (the long list stays inside the popup)
-          // -------------------------------------------------------------
-          PanelSectionHeader {
-            text: "COUNTRY"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
-
-          SearchableDropdown {
-            id: countryDropdown
-            width: parent.width
-            enabled: !cyberghost.busy
-            label: "Search country"
-            placeholderText: "Search 100+ countries…"
-            Accessible.name: "Search country"
-            value: cyberghost.country
-            options: root.dropdownOptionsList
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            // Selecting a country only updates the target; use quick-connect
-            // tiles, the power switch or Connect to actually dial.
-            onChanged: function(val) {
-              cyberghost.setCountry(val)
-            }
-          }
-
-          // -------------------------------------------------------------
-          // 7. SERVER SELECTION (fastest by live load or exact instance)
-          // -------------------------------------------------------------
-          Item {
-            visible: cyberghost.protocol === "wireguard" && cyberghost.serverType === "traffic"
-            width: parent.width
-            implicitHeight: serverSelectionColumn.implicitHeight
-
-            Column {
-              id: serverSelectionColumn
-              width: parent.width
-              spacing: Style.space(5)
-
-              PanelSectionHeader {
-                text: "SERVER SELECTION"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
+                tooltipText: "Fastest standard routing for web browsing"
+                onClicked: root.setServerType("traffic")
               }
 
-              SearchableDropdown {
-                id: serverDropdown
-                width: parent.width
+              Button {
+                width: modeRow.cellW
                 enabled: !cyberghost.busy
-                label: "Server"
-                placeholderText: "Fastest in this country or choose manually…"
-                Accessible.name: "Choose VPN server"
-                value: cyberghost.serverSelection
-                options: cyberghost.serverOptions
+                focusable: true
+                Accessible.name: "Use Torrent servers"
+                text: "🔒 Torrent"
+                selected: cyberghost.serverType === "torrent"
+                bordered: true
                 foreground: root.foreground
-                fontFamily: root.fontFamily
-                onChanged: function(val) { cyberghost.setServerSelection(val) }
+                tooltipText: "Servers optimized for P2P and torrenting"
+                onClicked: root.setServerType("torrent")
               }
 
-              Text {
-                visible: cyberghost.loadingServers || cyberghost.serverError !== ""
-                textFormat: Text.PlainText
-                text: cyberghost.loadingServers ? "Loading live server list…" : cyberghost.serverError
-                color: cyberghost.serverError !== "" ? root.dim : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-                width: parent.width
+              Button {
+                width: modeRow.cellW
+                enabled: !cyberghost.busy
+                focusable: true
+                Accessible.name: "Use Streaming servers"
+                text: "🎬 Streaming"
+                selected: cyberghost.serverType === "streaming"
+                bordered: true
+                foreground: root.foreground
+                tooltipText: "Servers optimized for streaming media"
+                onClicked: root.setServerType("streaming")
               }
             }
-          }
 
-          PanelSeparator {
-            foreground: root.foreground
-          }
-
-          // -------------------------------------------------------------
-          // 8. CONNECTION PREFERENCES (server mode + protocol)
-          // -------------------------------------------------------------
-          PanelSectionHeader {
-            text: "CONNECTION PREFERENCES"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
-
-          Grid {
-            id: modeRow
-            width: parent.width
-            columns: width < Style.space(300) ? 1 : 3
-            columnSpacing: Style.space(6)
-            rowSpacing: Style.space(6)
-            readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
-
-            Button {
-              width: modeRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Use Traffic servers"
-              text: "⚡ Traffic"
-              selected: cyberghost.serverType === "traffic"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "Fastest standard routing for web browsing"
-              onClicked: root.setServerType("traffic")
-            }
-
-            Button {
-              width: modeRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Use Torrent servers"
-              text: "🔒 Torrent"
-              selected: cyberghost.serverType === "torrent"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "Servers optimized for P2P and torrenting"
-              onClicked: root.setServerType("torrent")
-            }
-
-            Button {
-              width: modeRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Use Streaming servers"
-              text: "🎬 Streaming"
-              selected: cyberghost.serverType === "streaming"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "Servers optimized for streaming media"
-              onClicked: root.setServerType("streaming")
-            }
-          }
-
-          Item {
-            visible: cyberghost.serverType === "streaming"
-            width: parent.width
-            implicitHeight: streamingColumn.implicitHeight
-
-            Column {
-              id: streamingColumn
+            Item {
+              visible: cyberghost.serverType === "streaming"
               width: parent.width
-              spacing: Style.space(5)
+              implicitHeight: streamingColumn.implicitHeight
 
-              SearchableDropdown {
-                id: streamingDropdown
+              Column {
+                id: streamingColumn
                 width: parent.width
-                label: "Streaming service"
-                Accessible.name: "Choose streaming service"
-                placeholderText: "Choose a service for this country…"
-                emptyText: "No streaming services"
-                options: cyberghost.streamingOptions
-                value: cyberghost.streamingService
-                enabled: !cyberghost.busy && cyberghost.streamingOptions.length > 0
+                spacing: Style.space(5)
+
+                SearchableDropdown {
+                  id: streamingDropdown
+                  width: parent.width
+                  label: "Streaming service"
+                  Accessible.name: "Choose streaming service"
+                  placeholderText: "Choose a service for this country…"
+                  emptyText: "No streaming services"
+                  options: cyberghost.streamingOptions
+                  value: cyberghost.streamingService
+                  enabled: !cyberghost.busy && cyberghost.streamingOptions.length > 0
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onChanged: function (val) {
+                    cyberghost.setStreamingService(val)
+                  }
+                }
+
+                Text {
+                  visible: cyberghost.streamingBusy || cyberghost.streamingError !== ""
+                  textFormat: Text.PlainText
+                  text: cyberghost.streamingBusy ? "Loading streaming services…" : cyberghost.streamingError
+                  color: cyberghost.streamingError !== "" ? root.urgent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                  width: parent.width
+                }
+              }
+            }
+
+            // -------------------------------------------------------------
+            // 9. PROTOCOL SELECTOR (applies on next connect)
+            // -------------------------------------------------------------
+            Grid {
+              id: protoRow
+              width: parent.width
+              columns: width < Style.space(300) ? 1 : 3
+              columnSpacing: Style.space(6)
+              rowSpacing: Style.space(6)
+              readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+
+              Button {
+                width: protoRow.cellW
+                enabled: !cyberghost.busy
+                focusable: true
+                Accessible.name: "Use WireGuard protocol"
+                text: "WireGuard"
+                selected: cyberghost.protocol === "wireguard"
+                bordered: true
                 foreground: root.foreground
-                fontFamily: root.fontFamily
-                onChanged: function(val) { cyberghost.setStreamingService(val) }
+                tooltipText: "WireGuard protocol (Fastest and modern)"
+                onClicked: root.setProtocol("wireguard")
               }
 
-              Text {
-                visible: cyberghost.streamingBusy || cyberghost.streamingError !== ""
-                textFormat: Text.PlainText
-                text: cyberghost.streamingBusy ? "Loading streaming services…" : cyberghost.streamingError
-                color: cyberghost.streamingError !== "" ? root.urgent : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-                width: parent.width
+              Button {
+                width: protoRow.cellW
+                enabled: !cyberghost.busy
+                focusable: true
+                Accessible.name: "Use OpenVPN UDP protocol"
+                text: "OpenVPN UDP"
+                selected: cyberghost.protocol === "openvpn"
+                bordered: true
+                foreground: root.foreground
+                tooltipText: "OpenVPN over UDP"
+                onClicked: root.setProtocol("openvpn")
+              }
+
+              Button {
+                width: protoRow.cellW
+                enabled: !cyberghost.busy
+                focusable: true
+                Accessible.name: "Use OpenVPN TCP protocol"
+                text: "OpenVPN TCP"
+                selected: cyberghost.protocol === "openvpn_tcp"
+                bordered: true
+                foreground: root.foreground
+                tooltipText: "OpenVPN over TCP"
+                onClicked: root.setProtocol("openvpn_tcp")
               }
             }
-          }
 
-          // -------------------------------------------------------------
-          // 9. PROTOCOL SELECTOR (applies on next connect)
-          // -------------------------------------------------------------
-          Grid {
-            id: protoRow
-            width: parent.width
-            columns: width < Style.space(300) ? 1 : 3
-            columnSpacing: Style.space(6)
-            rowSpacing: Style.space(6)
-            readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+            // -------------------------------------------------------------
+            // 10. ACTIONS ROW
+            // -------------------------------------------------------------
+            Grid {
+              id: actionsRow
+              width: parent.width
+              columns: width < Style.space(300) ? 1 : 2
+              columnSpacing: Style.space(8)
+              rowSpacing: Style.space(8)
+              readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
 
-            Button {
-              width: protoRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Use WireGuard protocol"
-              text: "WireGuard"
-              selected: cyberghost.protocol === "wireguard"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "WireGuard protocol (Fastest and modern)"
-              onClicked: root.setProtocol("wireguard")
+              Button {
+                id: refreshStatusButton
+                width: actionsRow.cellW
+                enabled: !cyberghost.busy
+                focusable: true
+                Accessible.name: "Refresh VPN status"
+                iconText: "\uf021"
+                text: "Refresh Status"
+                bordered: true
+                foreground: root.foreground
+                tooltipText: "Check VPN status and reload IP information"
+                onClicked: root.refresh()
+              }
+
+              Button {
+                width: actionsRow.cellW
+                enabled: !cyberghost.busy
+                focusable: true
+                Accessible.name: cyberghost.active ? "Disconnect VPN" : "Connect VPN"
+                iconText: cyberghost.active ? "\uf00d" : "\uf00c"
+                text: cyberghost.active ? "Disconnect" : "Connect"
+                selected: cyberghost.active
+                bordered: true
+                foreground: cyberghost.active ? Color.urgent : root.brandYellow
+                tooltipText: cyberghost.active ? "Stop VPN connection" : "Start VPN connection"
+                onClicked: root.toggleRunning()
+              }
             }
-
-            Button {
-              width: protoRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Use OpenVPN UDP protocol"
-              text: "OpenVPN UDP"
-              selected: cyberghost.protocol === "openvpn"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "OpenVPN over UDP"
-              onClicked: root.setProtocol("openvpn")
-            }
-
-            Button {
-              width: protoRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Use OpenVPN TCP protocol"
-              text: "OpenVPN TCP"
-              selected: cyberghost.protocol === "openvpn_tcp"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "OpenVPN over TCP"
-              onClicked: root.setProtocol("openvpn_tcp")
-            }
-          }
-
-          // -------------------------------------------------------------
-          // 10. ACTIONS ROW
-          // -------------------------------------------------------------
-          Grid {
-            id: actionsRow
-            width: parent.width
-            columns: width < Style.space(300) ? 1 : 2
-            columnSpacing: Style.space(8)
-            rowSpacing: Style.space(8)
-            readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
-
-            Button {
-              id: refreshStatusButton
-              width: actionsRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: "Refresh VPN status"
-              iconText: "\uf021"
-              text: "Refresh Status"
-              bordered: true
-              foreground: root.foreground
-              tooltipText: "Check VPN status and reload IP information"
-              onClicked: root.refresh()
-            }
-
-            Button {
-              width: actionsRow.cellW
-              enabled: !cyberghost.busy
-              focusable: true
-              Accessible.name: cyberghost.active ? "Disconnect VPN" : "Connect VPN"
-              iconText: cyberghost.active ? "\uf00d" : "\uf00c"
-              text: cyberghost.active ? "Disconnect" : "Connect"
-              selected: cyberghost.active
-              bordered: true
-              foreground: cyberghost.active ? Color.urgent : root.brandYellow
-              tooltipText: cyberghost.active ? "Stop VPN connection" : "Start VPN connection"
-              onClicked: root.toggleRunning()
-            }
-
-          }
-
           } // end mainControls
         }
       }

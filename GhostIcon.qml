@@ -12,7 +12,6 @@ Item {
   property color badgeColor: Color.urgent
   property bool active: false
   property bool connecting: false
-  property bool crossed: false
   property bool warning: false
   property bool reducedMotion: false
 
@@ -30,12 +29,19 @@ Item {
   SequentialAnimation on opacity {
     running: root.connecting && !root.reducedMotion
     loops: Animation.Infinite
-    NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutSine }
-    NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutSine }
+    NumberAnimation {
+      to: 0.35
+      duration: 650
+      easing.type: Easing.InOutSine
+    }
+    NumberAnimation {
+      to: 1.0
+      duration: 650
+      easing.type: Easing.InOutSine
+    }
   }
 
   Shape {
-    id: ghostShape
     anchors.fill: parent
     antialiasing: true
     layer.enabled: true
@@ -107,7 +113,6 @@ Item {
 
   // Sunglasses / Visor - CyberGhost signature feature
   Item {
-    id: glasses
     anchors.fill: parent
 
     // Left lens
@@ -151,17 +156,6 @@ Item {
       color: root.innerColor
       rotation: 4
     }
-  }
-
-  // Crossed-out slash when disconnected/disabled
-  Rectangle {
-    visible: root.crossed
-    anchors.centerIn: parent
-    width: parent.width * 1.25
-    height: Math.max(2, parent.height * 0.12)
-    radius: height / 2
-    color: root.color
-    rotation: -45
   }
 
   // Warning badge

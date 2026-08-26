@@ -18,7 +18,7 @@ confirm() {
 }
 
 have_pacman_pkg_installed() {
-  pacman -Qq "$1" >/dev/null 2>&1
+  /usr/bin/pacman -Qq "$1" >/dev/null 2>&1
 }
 
 install_pacman() {
@@ -28,7 +28,7 @@ install_pacman() {
     return 0
   fi
   if confirm "Install '$pkg' via pacman?"; then
-    sudo pacman -S --needed "$pkg"
+    /usr/bin/sudo /usr/bin/pacman -S --needed "$pkg"
   else
     say "${YELLOW}⚠${NC} skipped $pkg"
     return 1
@@ -59,11 +59,17 @@ install_cyberghost_cli() {
 }
 
 install_polkit_rule() {
-  if confirm "Install root helper and Polkit rule for passwordless connect/disconnect?"; then
+  if ! confirm "Install the required root helper?"; then
+    say "${DIM}- skipped root helper (connect is disabled until the helper is installed)${NC}"
+    return 0
+  fi
+
+  if confirm "Also install the optional Polkit rule for passwordless connect/disconnect?"; then
     bash "$DIR/install-helper.sh"
-    say "${GREEN}✓${NC} Root helper and Polkit rule installed"
+    say "${GREEN}✓${NC} Root helper and optional Polkit rule installed"
   else
-    say "${DIM}- skipped root helper and Polkit rule (connect is disabled until the helper is installed)${NC}"
+    bash "$DIR/install-helper.sh" --no-polkit-rule
+    say "${GREEN}✓${NC} Root helper installed; Polkit authorization remains enabled"
   fi
 }
 
@@ -74,7 +80,7 @@ setup_account() {
   fi
   say "→ No CyberGhost credentials found."
   if confirm "Link your CyberGhost account now (native, no CLI needed)?"; then
-    python3 "$DIR/cyberghost_runner.py" register && return 0
+    /usr/bin/python3 "$DIR/cyberghost_runner.py" register && return 0
   fi
   say "${YELLOW}⚠${NC} link later from the widget's setup panel, or run: ${DIM}python3 $DIR/cyberghost_runner.py register${NC}"
   return 1
@@ -84,8 +90,8 @@ summary() {
   say ""
   say "── Readiness check ──────────────────────────"
   local status_json
-  status_json=$(python3 "$DIR/cyberghost_runner.py" check 2>/dev/null || echo "{}")
-  STATUS_JSON="$status_json" python3 - <<'PY'
+  status_json=$(/usr/bin/python3 "$DIR/cyberghost_runner.py" check 2>/dev/null || echo "{}")
+  STATUS_JSON="$status_json" /usr/bin/python3 - <<'PY'
 import json
 import os
 
@@ -112,7 +118,7 @@ say "CyberGhost VPN plugin — setup"
 
 # 1. System packages
 install_pacman wireguard-tools || true
-if python3 -c 'import requests' >/dev/null 2>&1; then
+if /usr/bin/python3 -c 'import requests' >/dev/null 2>&1; then
   say "${GREEN}✓${NC} python-requests already installed"
 else
   install_pacman python-requests || true

@@ -12,9 +12,11 @@ import pathlib
 import re
 import sys
 import tempfile
+import time
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 
 def load_runner():
     spec = importlib.util.spec_from_file_location("cyberghost_runner", ROOT / "cyberghost_runner.py")
@@ -55,7 +57,7 @@ def test_validate_wireguard_key():
     for ik in invalid_keys:
         try:
             runner.validate_wireguard_key(ik)
-            assert False, f"Expected ValueError for invalid key: {ik!r}"
+            raise AssertionError(f"Expected ValueError for invalid key: {ik!r}")
         except (ValueError, TypeError):
             pass
 
@@ -77,7 +79,7 @@ def test_validate_ip():
     for ip in invalid_ips:
         try:
             runner.validate_ip(ip)
-            assert False, f"Expected ValueError for invalid IP: {ip!r}"
+            raise AssertionError(f"Expected ValueError for invalid IP: {ip!r}")
         except (ValueError, TypeError):
             pass
 
@@ -92,7 +94,7 @@ def test_validate_port():
     for p in invalid_ports:
         try:
             runner.validate_port(p)
-            assert False, f"Expected ValueError for invalid port: {p!r}"
+            raise AssertionError(f"Expected ValueError for invalid port: {p!r}")
         except (ValueError, TypeError):
             pass
 
@@ -103,7 +105,7 @@ def test_validate_country_code():
     for code in ("P!", "PT1", "P", "", None):
         try:
             runner.validate_country_code(code)
-            assert False, f"Expected ValueError for invalid country code: {code!r}"
+            raise AssertionError(f"Expected ValueError for invalid country code: {code!r}")
         except (ValueError, TypeError):
             pass
 
@@ -113,7 +115,7 @@ def test_validate_server_selector():
     for server in ("50", "lisbon-s50", "lisbon-s405-i19.cg-dialup.net", "lisbon s405 i19", "", None):
         try:
             runner.validate_server_selector(server)
-            assert False, f"Expected ValueError for invalid server: {server!r}"
+            raise AssertionError(f"Expected ValueError for invalid server: {server!r}")
         except (ValueError, TypeError):
             pass
 
@@ -145,7 +147,7 @@ def test_validate_streaming_service():
     for service in ("", "x\n--connect", "x" * 129, None):
         try:
             runner.validate_streaming_service(service)
-            assert False, f"Expected ValueError for invalid streaming service: {service!r}"
+            raise AssertionError(f"Expected ValueError for invalid streaming service: {service!r}")
         except (ValueError, TypeError):
             pass
 
@@ -164,7 +166,7 @@ def test_validate_endpoint_host():
     for h in invalid_hosts:
         try:
             runner.validate_endpoint_host(h)
-            assert False, f"Expected ValueError for invalid host: {h!r}"
+            raise AssertionError(f"Expected ValueError for invalid host: {h!r}")
         except (ValueError, TypeError):
             pass
 
@@ -178,7 +180,7 @@ def test_validate_dns_servers():
     # Newline injection attempt in DNS
     try:
         runner.validate_dns_servers(["10.0.0.243\nPostUp = id", "1.1.1.1"])
-        assert False, "Expected ValueError for injected DNS"
+        raise AssertionError("Expected ValueError for injected DNS")
     except ValueError:
         pass
 
@@ -198,7 +200,7 @@ def test_build_wg_config_blocks_ipv6_leak_and_injection():
     # Test that directive injection is strictly rejected
     try:
         runner.build_wg_config(SAMPLE_PRIV + "\nPreUp = touch /tmp/pwned", "10.2.0.2", SAMPLE_PUB, "1.2.3.4", 1337)
-        assert False, "Expected ValueError for injected private key"
+        raise AssertionError("Expected ValueError for injected private key")
     except ValueError:
         pass
 
@@ -210,7 +212,7 @@ def test_build_wg_config_blocks_ipv6_leak_and_injection():
 
     try:
         runner.build_wg_config(SAMPLE_PRIV, "10.2.0.2\nPreUp = touch /tmp/pwned", SAMPLE_PUB, "1.2.3.4", 1337)
-        assert False, "Expected ValueError for injected peer IP"
+        raise AssertionError("Expected ValueError for injected peer IP")
     except ValueError:
         pass
 
@@ -264,11 +266,9 @@ def test_reject_symlink_config():
     # get_credentials must raise RuntimeError if pointed to a symlink
     try:
         runner.get_credentials(symlink_path)
-        assert False, "Expected RuntimeError when loading config from symlink"
+        raise AssertionError("Expected RuntimeError when loading config from symlink")
     except RuntimeError as e:
         assert "symlink" in str(e).lower()
-
-
 
 
 def test_check_output_shape():
@@ -276,13 +276,61 @@ def test_check_output_shape():
     from contextlib import redirect_stdout
 
     buf = io.StringIO()
-    with redirect_stdout(buf):
-        runner.check()
+    with mock.patch.object(runner, "system_binary_available", return_value=False):
+        with mock.patch.object(runner.importlib.util, "find_spec", return_value=object()):
+            with mock.patch.object(runner, "get_credentials", side_effect=RuntimeError("not configured")):
+                with mock.patch.object(runner, "secure_helper_installed", return_value=False):
+                    with mock.patch.object(runner, "installed_helper_version", return_value=""):
+                        with mock.patch.object(runner, "secure_system_file", return_value=False):
+                            with mock.patch.object(runner, "user_polkit_marker_installed", return_value=False):
+                                with redirect_stdout(buf):
+                                    runner.check()
     data = json.loads(buf.getvalue())
-    expected_keys = {"wg_tools", "requests", "cli", "credentials", "helper_installed", "polkit_rule_installed"}
+    expected_keys = {
+        "wg_tools",
+        "requests",
+        "cli",
+        "credentials",
+        "helper_installed",
+        "helper_version",
+        "plugin_version",
+        "polkit_rule_installed",
+    }
     assert set(data) == expected_keys
-    for value in data.values():
-        assert isinstance(value, bool)
+    for key, value in data.items():
+        if key in {"helper_version", "plugin_version"}:
+            assert isinstance(value, str)
+        else:
+            assert isinstance(value, bool)
+
+
+def test_api_app_key_allows_safe_vendor_rotation_override():
+    with mock.patch.dict(os.environ, {"CG_APP_KEY": "rotated-public-key"}, clear=False):
+        assert runner.api_app_key() == "rotated-public-key"
+    with mock.patch.dict(os.environ, {"CG_APP_KEY": "bad\nheader"}, clear=False):
+        try:
+            runner.api_app_key()
+            raise AssertionError("Expected control characters to be rejected")
+        except RuntimeError as exc:
+            assert "application key" in str(exc)
+
+
+def test_api_request_uses_direct_verified_session():
+    response = mock.Mock()
+    response.headers = {}
+    response.iter_content.return_value = []
+    response._cyberghost_body = b"{}"
+    session = mock.Mock()
+    session.request.return_value = response
+    requests_stub = mock.Mock()
+    requests_stub.Session.return_value = session
+    with mock.patch.object(runner, "load_requests", return_value=requests_stub):
+        assert runner.api_request("POST", "/test", payload={"ok": True}) is response
+
+    assert session.trust_env is False
+    session.request.assert_called_once()
+    assert session.request.call_args.kwargs["verify"] is True
+    assert session.request.call_args.kwargs["allow_redirects"] is False
 
 
 def test_register_payload_shapes():
@@ -300,17 +348,20 @@ def test_write_user_config():
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     runner.write_user_config(
-        path, "user@example.com", "pw", "omarchy",
+        path,
+        "user@example.com",
+        "omarchy",
         {"name": "", "token": "TOK", "tokenSecret": "SEC"},
     )
     cfg = configparser.ConfigParser()
     cfg.read(path)
     assert cfg.get("account", "username") == "user@example.com"
     assert not cfg.has_option("account", "password")
-    assert cfg.get("device", "name") == "omarchy"          # falls back to device_name
+    assert cfg.get("device", "name") == "omarchy"  # falls back to device_name
     assert cfg.get("device", "token") == "TOK"
-    assert cfg.get("device", "secret") == "SEC"            # tokenSecret -> secret
-    assert not (os.stat(path).st_mode & 0o077)             # owner-only permissions
+    assert cfg.get("device", "secret") == "SEC"  # tokenSecret -> secret
+    assert not (os.stat(path).st_mode & 0o077)  # owner-only permissions
+    assert not (os.stat(os.path.dirname(path)).st_mode & 0o077)
 
 
 def test_run_bounded_rejects_excessive_output():
@@ -320,7 +371,7 @@ def test_run_bounded_rejects_excessive_output():
             timeout=5,
             max_output_bytes=64,
         )
-        assert False, "Expected output limit to terminate the command"
+        raise AssertionError("Expected output limit to terminate the command")
     except RuntimeError as exc:
         assert "output exceeded" in str(exc)
 
@@ -328,13 +379,40 @@ def test_run_bounded_rejects_excessive_output():
 def test_cli_environment_uses_pkexec_initiating_user_home():
     initiating_user = mock.Mock(pw_dir="/home/miguel", pw_name="miguel")
     with mock.patch.object(runner.os, "geteuid", return_value=0):
-        with mock.patch.dict(runner.os.environ, {"PKEXEC_UID": "1000"}, clear=False):
+        with mock.patch.dict(
+            runner.os.environ,
+            {
+                "PKEXEC_UID": "1000",
+                "PYTHONPATH": "/tmp",
+                "LD_PRELOAD": "evil.so",
+                "BASH_ENV": "/tmp/evil.sh",
+                "XDG_CONFIG_HOME": "/tmp/config",
+            },
+            clear=False,
+        ):
             with mock.patch.object(runner, "invoking_user", return_value=initiating_user):
                 env = runner.cyberghost_cli_environment()
 
     assert env["HOME"] == "/home/miguel"
     assert env["USER"] == "miguel"
     assert env["LOGNAME"] == "miguel"
+    assert env["PATH"] == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    assert "PYTHONPATH" not in env
+    assert "LD_PRELOAD" not in env
+    assert "BASH_ENV" not in env
+    assert "XDG_CONFIG_HOME" not in env
+
+
+def test_server_inventory_reports_expected_failures_to_stderr():
+    import io
+    from contextlib import redirect_stderr
+
+    error = io.StringIO()
+    with mock.patch.object(runner, "system_binary", side_effect=RuntimeError("CLI unavailable")):
+        with redirect_stderr(error):
+            assert runner.get_servers_for_country("PT") == []
+    assert "Server inventory unavailable for PT" in error.getvalue()
+    assert "CLI unavailable" in error.getvalue()
 
 
 def test_streaming_service_discovery_and_cli_arguments():
@@ -351,7 +429,7 @@ def test_streaming_service_discovery_and_cli_arguments():
             services = runner.get_streaming_services("US")
             assert services == [{"value": "Netflix US", "label": "Netflix US"}]
 
-        completed_empty = runner.subprocess.CompletedProcess([], 0, "", "")
+        completed_empty = runner.subprocess.CompletedProcess([], 0, "Server not found in cache\n", "")
         with mock.patch.object(runner, "run_bounded", return_value=completed_empty) as run_mock:
             runner.connect_via_cli("US", "streaming", "wireguard", "Netflix US")
             command = run_mock.call_args.args[0]
@@ -378,7 +456,7 @@ def test_native_api_runtime_errors_are_returned_without_traceback():
                     ):
                         try:
                             runner.connect("PT", "traffic")
-                            assert False, "Expected the native API failure to be reported"
+                            raise AssertionError("Expected the native API failure to be reported")
                         except RuntimeError as exc:
                             message = str(exc)
                             assert "TLS certificate hostname mismatch" in message
@@ -463,7 +541,7 @@ def test_validate_user_config_size_limit():
         f.write("#" * 70000)
     try:
         runner.get_credentials(oversized)
-        assert False, "Expected RuntimeError for oversized config"
+        raise AssertionError("Expected RuntimeError for oversized config")
     except RuntimeError as e:
         assert "exceeds maximum size" in str(e)
 
@@ -474,6 +552,7 @@ def test_manifest_schema_and_validity():
     data = json.loads(manifest_path.read_text())
 
     assert data.get("id") == "miguel.cyberghost"
+    assert data.get("version") == runner.PLUGIN_VERSION
     assert data.get("entryPoints", {}).get("barWidget") == "Panel.qml"
     assert "barWidget" in data
 
@@ -507,18 +586,37 @@ def test_countries_js_consistency():
     assert popular_codes == ["PT", "ES", "GB", "US", "DE", "FR", "NL", "CH"]
 
 
-
 def test_status_json_structure():
     import io
     from contextlib import redirect_stdout
 
     buf = io.StringIO()
-    with redirect_stdout(buf):
-        runner.status(as_json=True)
+    ip_down = runner.subprocess.CompletedProcess(["ip"], 1, "", "")
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/ip"):
+        with mock.patch.object(runner, "system_binary_available", return_value=False):
+            with mock.patch.object(runner, "run_bounded", return_value=ip_down):
+                with redirect_stdout(buf):
+                    runner.status(as_json=True)
     out = json.loads(buf.getvalue())
     assert "connected" in out
     assert isinstance(out["connected"], bool)
     assert "interface" in out
+
+
+def test_status_no_cli_skips_vendor_probe():
+    import io
+    from contextlib import redirect_stdout
+
+    buf = io.StringIO()
+    ip_down = runner.subprocess.CompletedProcess(["ip"], 1, "", "")
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/ip"):
+        with mock.patch.object(
+            runner, "system_binary_available", side_effect=AssertionError("CLI probe was not expected")
+        ):
+            with mock.patch.object(runner, "run_bounded", return_value=ip_down):
+                with redirect_stdout(buf):
+                    runner.status(as_json=True, check_cli=False)
+    assert json.loads(buf.getvalue())["connected"] is False
 
 
 def test_root_helper_rejects_non_lifecycle_actions():
@@ -529,7 +627,7 @@ def test_root_helper_rejects_non_lifecycle_actions():
             args = mock.Mock(action="register", config=None, city=None, json=False)
             try:
                 runner.validate_helper_request(args)
-                assert False, "Expected the installed helper to reject register"
+                raise AssertionError("Expected the installed helper to reject register")
             except RuntimeError as exc:
                 assert "only supports connect and disconnect" in str(exc)
     finally:
@@ -541,18 +639,18 @@ def test_root_helper_rejects_custom_config():
         args = mock.Mock(action="connect", config="/tmp/other.ini", city=None, json=False)
         try:
             runner.validate_helper_request(args)
-            assert False, "Expected the installed helper to reject a custom config"
+            raise AssertionError("Expected the installed helper to reject a custom config")
         except RuntimeError as exc:
             assert "custom paths" in str(exc)
 
 
 def test_ui_privilege_boundary_contract():
     service = (ROOT / "Service.qml").read_text()
-    assert '["pkexec", root.helperPath]' in service
+    assert '["/usr/bin/pkexec", root.helperPath]' in service
     assert '"pkexec", "/usr/bin/install"' not in service
     assert "install-helper.sh" in service
-    assert "pkexec\", \"/usr/bin/python3\"" not in service
-    assert "pkexec\", \"sh\"" not in service
+    assert 'pkexec", "/usr/bin/python3"' not in service
+    assert 'pkexec", "sh"' not in service
     assert "StdioCollector" not in service
     assert '"CG_PASSWORD"' not in service
     assert '"servers"' in service
@@ -572,6 +670,388 @@ def test_polkit_marker_is_user_owned_ui_state():
     with mock.patch.object(runner, "invoking_user", return_value=fake_user):
         with mock.patch.object(runner, "POLKIT_MARKER_RELATIVE_PATH", "polkit-rule-installed"):
             assert runner.user_polkit_marker_installed() is True
+
+
+def test_helper_installer_binds_a_pre_authentication_snapshot():
+    installer = (ROOT / "install-helper.sh").read_text()
+    privileged_install_lines = [
+        line for line in installer.splitlines() if "/usr/bin/sudo" in line and "/usr/bin/install" in line
+    ]
+
+    assert "SNAPSHOT_DIR" in installer
+    assert "sha256sum" in installer
+    assert "copy_to_root_stage" in installer
+    assert "verify_root_stage" in installer
+    assert "0400" in installer
+    assert privileged_install_lines
+    assert all("$DIR/" not in line for line in privileged_install_lines)
+    assert '"$ROOT_STAGE_DIR/cyberghost_runner.py"' in installer
+    assert '"$ROOT_STAGE_DIR/50-cyberghost.rules"' in installer
+
+
+def test_dialup_tls_target_maps_hostname_and_preserves_request():
+    addresses = [(runner.socket.AF_INET, runner.socket.SOCK_STREAM, 6, "", ("198.51.100.10", 1337))]
+    with mock.patch.object(runner.socket, "getaddrinfo", return_value=addresses) as resolve:
+        canonical, connect_host = runner.dialup_tls_target(
+            "https://lisbon-s405-i19.cg-dialup.net:1337/addKey?pubkey=test"
+        )
+
+    assert canonical == "https://lisbon-rack405.nodes.gen4.ninja:1337/addKey?pubkey=test"
+    assert connect_host == "198.51.100.10"
+    resolve.assert_called_once_with("lisbon-s405-i19.cg-dialup.net", 1337, type=runner.socket.SOCK_STREAM)
+
+    passthrough = "https://example.com/path"
+    assert runner.dialup_tls_target(passthrough) == (passthrough, None)
+    try:
+        runner.dialup_tls_target("http://lisbon-s405-i19.cg-dialup.net:1337/addKey")
+        raise AssertionError("Expected HTTPS-only endpoint validation")
+    except RuntimeError as exc:
+        assert "HTTPS" in str(exc)
+
+
+def test_dialup_tls_target_reports_resolution_failure():
+    with mock.patch.object(runner.socket, "getaddrinfo", side_effect=OSError("no DNS")):
+        try:
+            runner.dialup_tls_target("https://lisbon-s405-i19.cg-dialup.net:1337/addKey")
+            raise AssertionError("Expected endpoint resolution failure")
+        except RuntimeError as exc:
+            assert "Could not resolve CyberGhost endpoint" in str(exc)
+
+
+def test_dialup_tls_target_bounds_dns_resolution():
+    def slow_resolution(*args, **kwargs):
+        time.sleep(1)
+        return []
+
+    with mock.patch.object(runner.socket, "getaddrinfo", side_effect=slow_resolution):
+        started = time.monotonic()
+        try:
+            runner.dialup_tls_target("https://lisbon-s405-i19.cg-dialup.net:1337/addKey", timeout=0.01)
+            raise AssertionError("Expected DNS timeout")
+        except RuntimeError as exc:
+            assert "DNS timed out" in str(exc)
+    assert time.monotonic() - started < 0.5
+
+
+def test_mapped_https_get_uses_pinned_session_without_proxy():
+    try:
+        import requests
+    except ImportError:
+        # requests is installed in CI; the local setup wizard intentionally
+        # supports running before this optional runtime dependency is present.
+        return
+
+    response = object()
+    session = requests.Session()
+    with mock.patch.object(
+        runner,
+        "dialup_tls_target",
+        return_value=("https://lisbon-rack405.nodes.gen4.ninja:1337/addKey", "198.51.100.10"),
+    ):
+        with mock.patch.object(requests, "Session", return_value=session):
+            with mock.patch.object(session, "get", return_value=response) as get_mock:
+                assert (
+                    runner.mapped_https_get(
+                        requests,
+                        "https://lisbon-s405-i19.cg-dialup.net:1337/addKey",
+                        timeout=(1, 1),
+                    )
+                    is response
+                )
+
+    assert session.trust_env is False
+    get_mock.assert_called_once_with("https://lisbon-rack405.nodes.gen4.ninja:1337/addKey", timeout=(1, 1))
+
+
+def test_run_bounded_timeout_kills_child_and_does_not_block_on_stdin():
+    try:
+        runner.run_bounded(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            timeout=0.1,
+            input_data=b"x" * 32768,
+        )
+        raise AssertionError("Expected subprocess timeout")
+    except runner.subprocess.TimeoutExpired:
+        pass
+
+
+def test_read_response_bounded_closes_and_limits_body():
+    response = mock.Mock()
+    response.headers = {}
+    response.iter_content.return_value = [b"hello", b" world"]
+    assert runner.read_response_bounded(response) == b"hello world"
+    response.close.assert_called_once_with()
+
+    oversized = mock.Mock()
+    oversized.headers = {}
+    oversized.iter_content.return_value = [b"12345", b"6"]
+    try:
+        runner.read_response_bounded(oversized, max_bytes=5)
+        raise AssertionError("Expected response size failure")
+    except RuntimeError as exc:
+        assert "exceeds" in str(exc)
+    oversized.close.assert_called_once_with()
+
+    expired = mock.Mock()
+    expired.headers = {}
+    expired.iter_content.return_value = [b"late"]
+    try:
+        runner.read_response_bounded(expired, deadline=0)
+        raise AssertionError("Expected HTTP deadline failure")
+    except RuntimeError as exc:
+        assert "timed out" in str(exc)
+    expired.close.assert_called_once_with()
+
+
+def test_disconnect_cleans_native_and_cli_state():
+    import io
+    from contextlib import redirect_stdout
+
+    def bounded(command, **kwargs):
+        if command[0] == "/usr/bin/ip" and command[1:3] == ["link", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
+
+    output = io.StringIO()
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/ip"):
+        with mock.patch.object(runner, "run_bounded", side_effect=bounded) as run_mock:
+            with mock.patch.object(runner, "cyberghost_cli_environment", return_value=None):
+                with mock.patch.object(runner.os.path, "exists", return_value=False):
+                    with redirect_stdout(output):
+                        result = runner.disconnect()
+
+    assert result == {"backend": "wireguard", "connected": False}
+    assert any(call.args[0][0:3] == ["/usr/bin/ip", "link", "delete"] for call in run_mock.call_args_list)
+    assert "VPN connection terminated." in output.getvalue()
+
+
+def _native_success_response():
+    response = mock.Mock(status_code=200)
+    response._cyberghost_body = json.dumps(
+        {
+            "status": "OK",
+            "server_key": SAMPLE_PUB,
+            "server_ip": "198.51.100.20",
+            "server_port": 1337,
+            "peer_ip": "10.2.0.2",
+            "dns_servers": ["1.1.1.1"],
+        }
+    ).encode()
+    return response
+
+
+def test_connect_writes_and_activates_native_tunnel():
+    d = tempfile.mkdtemp()
+    conf_path = os.path.join(d, "cyberghost.conf")
+
+    def bounded(command, **kwargs):
+        if command[1] == "up":
+            return runner.subprocess.CompletedProcess(command, 0, "interface up", "")
+        return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+
+    requests_stub = mock.Mock()
+    requests_stub.exceptions.RequestException = Exception
+    with mock.patch.object(runner, "WG_CONF_PATH", conf_path):
+        with mock.patch.object(runner, "get_credentials", return_value=("TOK", "SEC")):
+            with mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)):
+                with mock.patch.object(runner, "get_servers_for_country", return_value=[]):
+                    with mock.patch.object(runner, "load_requests", return_value=requests_stub):
+                        with mock.patch.object(runner, "api_get", return_value=_native_success_response()) as api_mock:
+                            with mock.patch.object(runner, "system_binary", return_value="/usr/bin/wg-quick"):
+                                with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+                                    result = runner.connect("PT", "traffic")
+
+    assert result["backend"] == "wireguard"
+    assert result["country"] == "PT"
+    with open(conf_path, encoding="utf-8") as config_file:
+        config_text = config_file.read()
+    assert "AllowedIPs = 0.0.0.0/0, ::/0" in config_text
+    assert api_mock.call_args.kwargs["timeout"][0] <= 3.5
+    os.unlink(conf_path)
+    os.rmdir(d)
+
+
+def test_connect_retries_without_dns_when_resolvconf_fails():
+    d = tempfile.mkdtemp()
+    conf_path = os.path.join(d, "cyberghost.conf")
+    calls = []
+
+    def bounded(command, **kwargs):
+        calls.append(command)
+        if command[1] == "up" and calls.count(command) == 1:
+            return runner.subprocess.CompletedProcess(command, 1, "", "resolvconf: command failed")
+        if command[1] == "up":
+            return runner.subprocess.CompletedProcess(command, 0, "interface up", "")
+        return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+
+    requests_stub = mock.Mock()
+    requests_stub.exceptions.RequestException = Exception
+    with mock.patch.object(runner, "WG_CONF_PATH", conf_path):
+        with mock.patch.object(runner, "get_credentials", return_value=("TOK", "SEC")):
+            with mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)):
+                with mock.patch.object(runner, "get_servers_for_country", return_value=[]):
+                    with mock.patch.object(runner, "load_requests", return_value=requests_stub):
+                        with mock.patch.object(runner, "api_get", return_value=_native_success_response()):
+                            with mock.patch.object(runner, "system_binary", return_value="/usr/bin/wg-quick"):
+                                with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+                                    runner.connect("PT", "traffic")
+
+    with open(conf_path, encoding="utf-8") as config_file:
+        config_text = config_file.read()
+    assert "DNS =" not in config_text
+    assert sum(command[1] == "up" for command in calls) == 2
+    os.unlink(conf_path)
+    os.rmdir(d)
+
+
+def test_connect_rolls_back_after_tunnel_activation_failure():
+    d = tempfile.mkdtemp()
+    conf_path = os.path.join(d, "cyberghost.conf")
+    calls = []
+
+    def bounded(command, **kwargs):
+        calls.append(command)
+        if command[1] == "up":
+            return runner.subprocess.CompletedProcess(command, 1, "", "wg-quick failed")
+        return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+
+    requests_stub = mock.Mock()
+    requests_stub.exceptions.RequestException = Exception
+    with mock.patch.object(runner, "WG_CONF_PATH", conf_path):
+        with mock.patch.object(runner, "get_credentials", return_value=("TOK", "SEC")):
+            with mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)):
+                with mock.patch.object(runner, "get_servers_for_country", return_value=[]):
+                    with mock.patch.object(runner, "load_requests", return_value=requests_stub):
+                        with mock.patch.object(runner, "api_get", return_value=_native_success_response()):
+                            with mock.patch.object(runner, "system_binary", return_value="/usr/bin/wg-quick"):
+                                with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+                                    try:
+                                        runner.connect("PT", "traffic")
+                                        raise AssertionError("Expected tunnel activation failure")
+                                    except RuntimeError as exc:
+                                        assert "wg-quick up failed" in str(exc)
+
+    assert sum(command[1] == "down" for command in calls) == 2
+    os.unlink(conf_path)
+    os.rmdir(d)
+
+
+def test_register_uses_api_response_and_never_persists_password():
+    d = tempfile.mkdtemp()
+    config_path = os.path.join(d, "config.ini")
+
+    def response(status_code, body):
+        item = mock.Mock(status_code=status_code)
+        item._cyberghost_body = json.dumps(body).encode()
+        return item
+
+    with mock.patch.dict(os.environ, {"CG_USERNAME": "user@example.com", "CG_PASSWORD": "secret"}, clear=False):
+        with mock.patch.object(runner, "user_config_path", return_value=config_path):
+            with mock.patch.object(runner.socket, "gethostname", return_value="test-host"):
+                with mock.patch.object(
+                    runner,
+                    "api_request",
+                    side_effect=[
+                        response(200, {"jwt": "jwt-token"}),
+                        response(201, {"name": "test-host", "token": "TOK", "tokenSecret": "SEC"}),
+                    ],
+                ):
+                    runner.register()
+
+    cfg = configparser.ConfigParser()
+    cfg.read(config_path)
+    assert cfg.get("account", "username") == "user@example.com"
+    assert not cfg.has_option("account", "password")
+    assert cfg.get("device", "secret") == "SEC"
+    os.unlink(config_path)
+    os.rmdir(d)
+
+
+def test_helper_version_and_capability_are_verified():
+    helper = tempfile.NamedTemporaryFile(mode="wb", delete=False)
+    helper.write(f'PLUGIN_VERSION = "{runner.PLUGIN_VERSION}"\n'.encode() + b'HELPER_CAPABILITY_VERSION = "5"\n')
+    helper.close()
+    with mock.patch.object(runner, "HELPER_BIN_PATH", helper.name):
+        with mock.patch.object(runner, "secure_system_file", return_value=True):
+            assert runner.installed_helper_version() == runner.PLUGIN_VERSION
+            assert runner.secure_helper_installed() is True
+            with mock.patch.object(runner, "PLUGIN_VERSION", "1.4.4"):
+                assert runner.secure_helper_installed() is False
+    os.unlink(helper.name)
+
+
+def test_main_emits_structured_json_action_result():
+    import io
+    from contextlib import redirect_stdout
+
+    original_argv = runner.sys.argv
+    buf = io.StringIO()
+    try:
+        runner.sys.argv = ["cyberghost_runner.py", "connect", "--json", "--country", "PT"]
+        with mock.patch.object(runner, "connect", return_value={"backend": "wireguard", "country": "PT"}):
+            with redirect_stdout(buf):
+                runner.main()
+    finally:
+        runner.sys.argv = original_argv
+
+    result = json.loads(buf.getvalue())
+    assert result["ok"] is True
+    assert result["action"] == "connect"
+    assert result["backend"] == "wireguard"
+
+
+def test_main_emits_structured_json_disconnect_result():
+    import io
+    from contextlib import redirect_stdout
+
+    original_argv = runner.sys.argv
+    buf = io.StringIO()
+    try:
+        runner.sys.argv = ["cyberghost_runner.py", "disconnect", "--json"]
+        with mock.patch.object(runner, "disconnect", return_value={"backend": "wireguard", "connected": False}):
+            with redirect_stdout(buf):
+                runner.main()
+    finally:
+        runner.sys.argv = original_argv
+
+    result = json.loads(buf.getvalue())
+    assert result == {"ok": True, "action": "disconnect", "backend": "wireguard", "connected": False}
+
+
+def test_main_emits_structured_json_action_error():
+    import io
+    from contextlib import redirect_stdout
+
+    original_argv = runner.sys.argv
+    buf = io.StringIO()
+    try:
+        runner.sys.argv = ["cyberghost_runner.py", "disconnect", "--json"]
+        with mock.patch.object(runner, "disconnect", side_effect=RuntimeError("helper unavailable")):
+            try:
+                with redirect_stdout(buf):
+                    runner.main()
+                raise AssertionError("Expected main to exit nonzero")
+            except SystemExit as exc:
+                assert exc.code == 1
+    finally:
+        runner.sys.argv = original_argv
+
+    result = json.loads(buf.getvalue())
+    assert result == {"ok": False, "action": "disconnect", "error": "helper unavailable"}
+
+
+def test_ui_contract_uses_json_actions_and_separate_streaming_stderr():
+    service = (ROOT / "Service.qml").read_text()
+    assert '"--json"' in service
+    assert '"--no-cli"' in service
+    assert 'import "ServiceUtils.js" as ServiceUtils' in service
+    assert "streamingServicesErrorOutput" in service
+    assert "extractCleanError" not in service
+    assert "connectedSince" not in service
+    assert "polkitError" not in service
+    assert "userName" not in service
+    assert service.index("savedServerSelection") < service.index("setServerSelection(savedServerSelection)")
+    assert "root.appendBounded" not in service
 
 
 if __name__ == "__main__":

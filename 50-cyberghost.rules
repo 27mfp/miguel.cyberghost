@@ -8,9 +8,9 @@
  * Pinned strictly to the fixed root-owned binary /usr/local/bin/cyberghost-runner,
  * preventing arbitrary command or Python script injection.
  *
- * Install:
- *   sudo install -o root -g root -m 755 cyberghost_runner.py /usr/local/bin/cyberghost-runner
- *   sudo install -D -o root -g root -m 644 50-cyberghost.rules /etc/polkit-1/rules.d/50-cyberghost.rules
+ * Install with the repository installer, which snapshots and verifies both
+ * files before installing them as root:
+ *   bash ./install-helper.sh
  */
 polkit.addRule(function(action, subject) {
     if (action.id === "org.freedesktop.policykit.exec" &&
