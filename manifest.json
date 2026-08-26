@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "miguel.cyberghost",
   "name": "CyberGhost VPN",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "author": "Miguel",
   "license": "MIT",
   "description": "CyberGhost VPN status, quick connect, country switching, and server mode controls in the Omarchy bar.",

@@ -25,7 +25,7 @@ A native, lightweight status bar widget and popup panel for managing **CyberGhos
  - 🙈 **Privacy mode** — one click on the 👁 Hide button (in the details card) masks the IP, location, provider and session info; also hides the IP from the bar tooltip. Persists across restarts.
 - 🌍 **Country switching:**
   - Compact quick-connect grid with 8 popular locations (instant connect).
-  - Searchable country dropdown covering all 100+ CyberGhost countries (the long list is only loaded inside the popup).
+  - Searchable country dropdown covering the supported 90+ CyberGhost countries (the long list is only loaded inside the popup).
   - Live server selector with **Fastest available** (lowest reported load) or an exact manual server instance.
   - The manual list is loaded only for the selected country, so opening the panel does not enumerate every server globally.
 - 🛡️ **Server modes:** ⚡ Traffic · 🔒 Torrent (P2P) · 🎬 Streaming.
@@ -36,7 +36,7 @@ A native, lightweight status bar widget and popup panel for managing **CyberGhos
 - ℹ️ Error/status banner with human-readable messages.
 - ⌨️ Keyboard-tabbable controls, labelled account fields, responsive wrapping and a scrollable panel for small screens.
 - ♿ Reduced-motion setting disables the connection pulses without changing status feedback.
-- 💾 Last country / protocol / server mode are remembered across restarts.
+- 💾 Last country / protocol / server mode / manual server selection are remembered across restarts when still available.
 
 ### Screenshots
 
@@ -56,8 +56,9 @@ The panel in connected and disconnected states. Public IP details are masked in 
 Security posture:
 - Key-exchange requests use **strict TLS verification** — if the certificate chain or hostname fails, credentials are never sent. The official CLI is used for server inventory and for CLI-only modes; the actual WireGuard tunnel is created by the native `wg-quick` path.
 - Strict validation of all WireGuard configuration fields (keys, IP addresses, ports, hostnames, DNS) prevents newline or directive injection (`PreUp`/`PostUp`).
+- The account API app key is a vendor-published client identifier, not an account secret; set `CG_APP_KEY` if CyberGhost rotates it before this plugin is updated.
 - A **handshake watchdog** warns you (notification + bar badge) when the tunnel stops handshaking, instead of silently leaking traffic.
-- The widget never executes mutable plugin code through `pkexec`: the installed helper is root-owned, capability-versioned and accepts only `connect`/`disconnect` with fixed paths. The optional Polkit rule is pinned to that helper.
+- The widget never executes mutable plugin code through `pkexec`: the installed helper is root-owned, capability- and version-checked and accepts only `connect`/`disconnect` with fixed paths. The optional Polkit rule is pinned to that helper. Reinstall the helper after plugin updates; setup detects stale helper versions.
 - Account passwords are used only for registration and are **never written to the config file**; only the account identifier and device token/secret are stored with owner-only permissions.
 - Subprocess, HTTP, CLI and UI output is bounded and time-limited so a stalled or unexpectedly large response cannot hang the panel or consume unbounded memory.
 
@@ -65,14 +66,17 @@ The widget polls VPN status using the runner's JSON output and checks your publi
 
 ```
 Panel.qml (UI) ──> Service.qml (state machine) ──> pkexec ──> /usr/local/bin/cyberghost-runner (root helper)
+                         └─> ServiceUtils.js (pure bounded-output/result helpers)
 ```
+
+`Service.qml` owns connection state and process orchestration; `ServiceUtils.js` contains the small, side-effect-free parsing and bounding helpers; the Python runner owns validation, API access and privileged tunnel lifecycle.
 
 ---
 
 ## 📦 Requirements
 
 1. **WireGuard tools**: `sudo pacman -S wireguard-tools`
-2. **Python requests** (native key exchange + account registration): `sudo pacman -S python-requests`
+2. **Python 3.9+** and **requests** (native key exchange + account registration): `sudo pacman -S python-requests`
 3. A CyberGhost subscription — account linking happens **in the widget** (native API, no CLI).
 4. *(Recommended)* `cyberghostvpn` CLI — used for live server inventory and exact server selection, and required at runtime for OpenVPN / torrent / streaming modes; Streaming also uses it to load service profiles.
 5. A root-owned helper installed at `/usr/local/bin/cyberghost-runner` — required by the widget for safe connect/disconnect. The bundled Polkit rule is optional and only removes repeated password prompts.
@@ -154,7 +158,7 @@ bind = SUPER, V, exec, qs ipc call miguel.cyberghost connect
 
 ## 🔐 Root helper and passwordless connection via Polkit
 
-The widget requires a fixed root-owned helper for connect/disconnect. Without the optional rule, `pkexec` asks for authorization when the helper is used. Install both files from a visible terminal:
+The widget requires a fixed root-owned helper for connect/disconnect. Without the optional rule, `pkexec` asks for authorization when the helper is used. Install the helper (and, by default, the optional rule) from a visible terminal:
 
 ```bash
 bash ./install-helper.sh
@@ -162,10 +166,18 @@ bash ./install-helper.sh
 
 The rule grants only members of `wheel` passwordless access to the exact helper path. The helper rejects `register`, `status`, `check`, custom config paths and arbitrary command arguments. From the widget, choose **Open installer**, complete the visible terminal step, then choose **Recheck setup**. The panel never passes a user-editable plugin path to `pkexec` for a root install operation.
 
+The Polkit rule is optional. The installer enables it by default, or install only the required helper with:
+
+```bash
+bash ./install-helper.sh --no-polkit-rule
+```
+
+Without the rule, `pkexec` asks for authorization for each lifecycle action. With it enabled, any process running as a member of `wheel` can connect or disconnect this user's VPN without another prompt; install it only if that trade-off is appropriate for your machine.
+
 For the helper-only step from a terminal:
 
 ```bash
-bash ~/.config/omarchy/plugins/miguel.cyberghost/install-helper.sh
+bash ~/.config/omarchy/plugins/miguel.cyberghost/install-helper.sh --no-polkit-rule
 ```
 
 The account password is not saved. Registration sends it once over the setup process's stdin; subsequent native WireGuard connections use the device token and secret.
@@ -181,7 +193,7 @@ ln -s ~/Code/miguel.cyberghost ~/.config/omarchy/plugins/miguel.cyberghost
 omarchy restart shell   # reload after changes
 ```
 
-Run the backend standalone:
+Run the backend standalone (Python 3.9 or newer):
 
 ```bash
 python3 cyberghost_runner.py status --json
@@ -189,14 +201,21 @@ sudo python3 cyberghost_runner.py connect --country PT --protocol wireguard --se
 python3 cyberghost_runner.py --help
 ```
 
+The installer creates a private, read-only snapshot of the helper and rule before requesting sudo, then copies each into a root-only staging directory and verifies its SHA-256 digest before installing either final file. Re-run `install-helper.sh` after updating the plugin so the privileged backend receives the same fixes as the UI.
+
 The direct `sudo` command is a developer diagnostic path. The installed widget uses `pkexec /usr/local/bin/cyberghost-runner`; do not expose the development runner through a broad Polkit rule.
 
 Lint and tests (also enforced by CI):
 
 ```bash
 ruff check .
+ruff format --check .
 pytest -q            # or: python3 tests/test_runner.py
+shellcheck install.sh install-helper.sh fresh-install.sh
+for f in Panel.qml Service.qml GhostIcon.qml tests/qml/*.qml; do diff -u "$f" <(qmlformat --settings .qmlformat.ini "$f"); done
 ```
+
+CI also runs `shellcheck`, `qmllint`, `qmlformat` and the QML unit tests.
 
 Simulate a brand-new user (destructive: disconnects the tunnel and removes the plugin, helper/rule and credentials, then reinstalls from GitHub — finish setup through the widget's first-run wizard):
 

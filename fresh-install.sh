@@ -16,6 +16,7 @@
 #   --purge-deps  also uninstall wireguard-tools and python-requests so the
 #                 wizard's one-click Install starts from a truly bare machine.
 #   -y            no confirmation prompts.
+#   -h, --help    print this usage text.
 
 set -euo pipefail
 
@@ -31,16 +32,26 @@ step() { printf "\n${BOLD}==> %s${NC}\n" "$1"; }
 ok() { printf "${GREEN}✓${NC} %s\n" "$1"; }
 
 ASSUME_YES=0 FROM_LOCAL=0 PURGE_DEPS=0
+
 while (($#)); do
   case "$1" in
     --local) FROM_LOCAL=1 ;;
     --github) echo "--github is now the default; use --local for the local checkout" >&2 ;;
     --purge-deps) PURGE_DEPS=1 ;;
     -y | --yes) ASSUME_YES=1 ;;
+    -h | --help)
+      sed -n '5,19p' "$0"
+      exit 0
+      ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
   shift
 done
+
+[[ -x /usr/bin/jq ]] || {
+  echo "fresh-install.sh requires jq; install it before starting (for example: sudo pacman -S jq)." >&2
+  exit 1
+}
 
 confirm() {
   (( ASSUME_YES )) && return 0
@@ -59,13 +70,13 @@ confirm "Reset everything and simulate a fresh CyberGhost plugin install?" || {
 step "Disconnecting any live VPN tunnel"
 qs ipc call "$PLUGIN_ID" disconnect >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do
-  connected=$(python3 "$REPO_DIR/cyberghost_runner.py" status --json 2>/dev/null |
-    jq -r '.connected // empty' || true)
+  connected=$(/usr/bin/python3 "$REPO_DIR/cyberghost_runner.py" status --json 2>/dev/null |
+    /usr/bin/jq -r '.connected // empty' || true)
   [[ $connected == "false" ]] && break
   sleep 0.5
 done
-if [[ ${connected:-} == "true" ]]; then
-  echo "WARNING: tunnel still up — disconnect manually before continuing." >&2
+if [[ ${connected:-} != "false" ]]; then
+  echo "WARNING: could not verify that the tunnel is down — disconnect manually before continuing." >&2
   exit 1
 fi
 ok "tunnel down"
@@ -75,23 +86,23 @@ step "Removing plugin from Omarchy"
 omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true
 # Non-git copies get backed up instead of deleted by `plugin remove`; sweep both.
 omarchy plugin remove "$PLUGIN_ID" --yes >/dev/null 2>&1 || true
-rm -rf "$PLUGINS_DIR/$PLUGIN_ID" "$PLUGINS_DIR"/."$PLUGIN_ID".bak.*
+rm -rf "${PLUGINS_DIR:?}/$PLUGIN_ID" "${PLUGINS_DIR:?}/.$PLUGIN_ID.bak."*
 ok "widget removed from bar and plugins dir"
 
 # ---------------------------------------------------------------------------
 step "Removing Polkit rule & root helper"
-sudo rm -f "$POLKIT_RULE" /usr/local/bin/cyberghost-runner && ok "polkit rule & root helper removed (widget will ask to reinstall the helper)"
+/usr/bin/sudo /usr/bin/rm -f "$POLKIT_RULE" /usr/local/bin/cyberghost-runner && ok "polkit rule & root helper removed (widget will ask to reinstall the helper)"
 rm -f "$POLKIT_MARKER"
 
 # ---------------------------------------------------------------------------
 step "Removing CyberGhost account credentials/state"
 rm -rf "$HOME/.cyberghost"
-ok "~/.cyberghost wiped (account unlinked)"
+ok "$HOME/.cyberghost wiped (account unlinked)"
 
 # ---------------------------------------------------------------------------
 if (( PURGE_DEPS )); then
   step "Uninstalling dependencies (bare-machine simulation)"
-  if sudo pacman -Rns --noconfirm wireguard-tools python-requests >/dev/null 2>&1; then
+  if /usr/bin/sudo /usr/bin/pacman -Rns --noconfirm wireguard-tools python-requests >/dev/null 2>&1; then
     ok "wireguard-tools + python-requests removed"
   else
     echo "- still needed by other packages; wizard will show them installed"
@@ -102,7 +113,7 @@ fi
 if (( FROM_LOCAL )); then
   step "Installing local checkout into plugins directory"
   mkdir -p "$PLUGINS_DIR"
-  rm -rf "$PLUGINS_DIR/$PLUGIN_ID"
+  rm -rf "${PLUGINS_DIR:?}/$PLUGIN_ID"
   cp -a "$REPO_DIR" "$PLUGINS_DIR/$PLUGIN_ID"
   rm -rf "$PLUGINS_DIR/$PLUGIN_ID/__pycache__"
 else
@@ -110,7 +121,7 @@ else
   omarchy plugin add "$PLUGIN_URL" --yes
 fi
 
-section=$(jq -r '.barWidget.defaultSection // "right"' "$PLUGINS_DIR/$PLUGIN_ID/manifest.json")
+section=$(/usr/bin/jq -r '.barWidget.defaultSection // "right"' "$PLUGINS_DIR/$PLUGIN_ID/manifest.json")
 omarchy plugin enable "$PLUGIN_ID" "$section"
 
 # ---------------------------------------------------------------------------

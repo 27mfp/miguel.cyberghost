@@ -101,9 +101,14 @@ var allCountries = [
 // exposes every supported country without making the panel taller.
 var popularCodes = ["PT", "ES", "GB", "US", "DE", "FR", "NL", "CH"];
 
+function normalizeCountryCode(code) {
+  var upper = String(code).toUpperCase().trim();
+  return upper === "UK" ? "GB" : upper;
+}
+
 function countryByCode(code) {
   if (!code) return { code: "PT", name: "Portugal", flag: "🇵🇹" };
-  var upper = String(code).toUpperCase().trim();
+  var upper = normalizeCountryCode(code);
   for (var i = 0; i < allCountries.length; i++) {
     if (allCountries[i].code === upper) return allCountries[i];
   }
@@ -113,6 +118,15 @@ function countryByCode(code) {
 var popularCountries = popularCodes.map(function(code) {
   return countryByCode(code);
 });
+
+function isSupportedCountry(code) {
+  if (!code) return false;
+  var upper = normalizeCountryCode(code);
+  for (var i = 0; i < allCountries.length; i++) {
+    if (allCountries[i].code === upper) return true;
+  }
+  return false;
+}
 
 function countryFlag(code) {
   return countryByCode(code).flag;
