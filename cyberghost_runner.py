@@ -466,6 +466,119 @@ def dialup_tls_target(url, timeout=3.5):
     return canonical_url, connect_host
 
 
+# Cache for the pinned TLS adapter classes (see mapped_https_get).
+# Populated lazily on first use so lightweight commands (status, check)
+# never pay the cost of importing requests/urllib3.
+_MAPPED_ADAPTER_CLASSES = None
+_MAPPED_HTTPS_PROBE_OK = None  # None = not yet probed
+_MAPPED_HTTPS_PROBE_ERROR = (
+    "Installed requests/urllib3 does not support the pinned CyberGhost TLS adapter; "
+    "refusing to send credentials without endpoint pinning. Upgrade python-requests."
+)
+
+
+def _build_mapped_adapter_classes():
+    """Return (MappedConnection, MappedHTTPSConnectionPool, MappedAdapter).
+
+    Built once on first call and cached. Raises RuntimeError if the installed
+    requests/urllib3 does not expose the private symbols this adapter hooks
+    into. urllib3 does not provide a public adapter API for preserving both
+    a custom destination IP and the canonical TLS/SNI hostname, so we fail
+    closed instead of silently dropping DNS pinning.
+    """
+    global _MAPPED_ADAPTER_CLASSES
+    if _MAPPED_ADAPTER_CLASSES is not None:
+        return _MAPPED_ADAPTER_CLASSES
+    from requests.adapters import HTTPAdapter
+    from urllib3.connection import HTTPSConnection
+    from urllib3.connectionpool import HTTPSConnectionPool
+    from urllib3.poolmanager import PoolKey, PoolManager, _default_key_normalizer
+    from urllib3.util import connection as urllib3_connection
+
+    class MappedConnection(HTTPSConnection):
+        def __init__(self, *args, connect_host=None, **connection_kwargs):
+            self._connect_host = connect_host
+            super().__init__(*args, **connection_kwargs)
+
+        def _new_conn(self):
+            return urllib3_connection.create_connection(
+                (self._connect_host or self._dns_host, self.port),
+                self.timeout,
+                source_address=self.source_address,
+                socket_options=self.socket_options,
+            )
+
+    class MappedHTTPSConnectionPool(HTTPSConnectionPool):
+        ConnectionCls = MappedConnection
+
+    class MappedAdapter(HTTPAdapter):
+        def __init__(self, target_host):
+            self.target_host = target_host
+            super().__init__()
+
+        def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+            pool_kwargs["connect_host"] = self.target_host
+            self.poolmanager = PoolManager(
+                num_pools=connections,
+                maxsize=maxsize,
+                block=block,
+                **pool_kwargs,
+            )
+            self.poolmanager.pool_classes_by_scheme["https"] = MappedHTTPSConnectionPool
+
+            def normalize_pool_key(context):
+                try:
+                    return _default_key_normalizer(
+                        PoolKey,
+                        {key: value for key, value in context.items() if key != "connect_host"},
+                    )
+                except (AttributeError, TypeError, KeyError) as exc:
+                    raise RuntimeError(
+                        "Installed urllib3 cannot construct the pinned CyberGhost connection pool"
+                    ) from exc
+
+            self.poolmanager.key_fn_by_scheme["https"] = normalize_pool_key
+
+    _MAPPED_ADAPTER_CLASSES = (MappedConnection, MappedHTTPSConnectionPool, MappedAdapter)
+    return _MAPPED_ADAPTER_CLASSES
+
+
+def _reset_mapped_https_probe():
+    """Reset the probe cache. Tests use this to simulate urllib3 drift; not called at runtime."""
+    global _MAPPED_ADAPTER_CLASSES, _MAPPED_HTTPS_PROBE_OK
+    _MAPPED_ADAPTER_CLASSES = None
+    _MAPPED_HTTPS_PROBE_OK = None
+
+
+def _ensure_mapped_https_probe():
+    """Probe the pinned TLS adapter path once on first use and cache the result.
+
+    urllib3 does not provide a public adapter hook for keeping a custom
+    destination IP while presenting a canonical SNI hostname, so this
+    project reaches into its private API. A urllib3 release that moves
+    those symbols would otherwise fail on the user's first connect with a
+    generic network error. Probing here surfaces a clear message before
+    any credential-bearing request is sent.
+    """
+    global _MAPPED_HTTPS_PROBE_OK
+    if _MAPPED_HTTPS_PROBE_OK is True:
+        return None
+    if _MAPPED_HTTPS_PROBE_OK is False:
+        raise RuntimeError(_MAPPED_HTTPS_PROBE_ERROR)
+    try:
+        _MappedConnection, _MappedPool, MappedAdapter = _build_mapped_adapter_classes()
+        # init_poolmanager is the brittle step: it depends on PoolManager,
+        # pool_classes_by_scheme and the private key normalizer all being
+        # present with the expected shapes.
+        adapter = MappedAdapter("127.0.0.1")
+        adapter.init_poolmanager(1, 1)
+    except (ImportError, RuntimeError, AttributeError, TypeError, KeyError) as exc:
+        _MAPPED_HTTPS_PROBE_OK = False
+        raise RuntimeError(_MAPPED_HTTPS_PROBE_ERROR) from exc
+    _MAPPED_HTTPS_PROBE_OK = True
+    return None
+
+
 def mapped_https_get(requests, url, resolve_timeout=3.5, **kwargs):
     """GET a canonical CyberGhost node while connecting to its dialup IP."""
     if urlsplit(url).scheme.lower() != "https":
@@ -476,73 +589,18 @@ def mapped_https_get(requests, url, resolve_timeout=3.5, **kwargs):
         session.trust_env = False
         return session.get(canonical_url, **kwargs)
 
-    # These imports stay lazy with the native requests dependency. urllib3 does
-    # not expose a public requests adapter hook for preserving both a custom
-    # destination IP and the canonical TLS/SNI hostname, so fail closed if its
-    # private adapter API changes instead of silently dropping DNS pinning.
-    try:
-        from requests.adapters import HTTPAdapter
-        from urllib3.connection import HTTPSConnection
-        from urllib3.connectionpool import HTTPSConnectionPool
-        from urllib3.poolmanager import PoolKey, PoolManager, _default_key_normalizer
-        from urllib3.util import connection as urllib3_connection
+    # Ensure the pinned adapter path was exercised once. After the probe
+    # succeeds the classes are cached, so this is just a cache lookup on
+    # subsequent calls.
+    _ensure_mapped_https_probe()
+    _, _, MappedAdapter = _build_mapped_adapter_classes()
 
-        class MappedConnection(HTTPSConnection):
-            def __init__(self, *args, connect_host=None, **connection_kwargs):
-                self._connect_host = connect_host
-                super().__init__(*args, **connection_kwargs)
-
-            def _new_conn(self):
-                return urllib3_connection.create_connection(
-                    (self._connect_host or self._dns_host, self.port),
-                    self.timeout,
-                    source_address=self.source_address,
-                    socket_options=self.socket_options,
-                )
-
-        class MappedHTTPSConnectionPool(HTTPSConnectionPool):
-            ConnectionCls = MappedConnection
-
-        class MappedAdapter(HTTPAdapter):
-            def __init__(self, target_host):
-                self.target_host = target_host
-                super().__init__()
-
-            def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
-                pool_kwargs["connect_host"] = self.target_host
-                self.poolmanager = PoolManager(
-                    num_pools=connections,
-                    maxsize=maxsize,
-                    block=block,
-                    **pool_kwargs,
-                )
-                self.poolmanager.pool_classes_by_scheme["https"] = MappedHTTPSConnectionPool
-
-                def normalize_pool_key(context):
-                    try:
-                        return _default_key_normalizer(
-                            PoolKey,
-                            {key: value for key, value in context.items() if key != "connect_host"},
-                        )
-                    except (AttributeError, TypeError, KeyError) as exc:
-                        raise RuntimeError(
-                            "Installed urllib3 cannot construct the pinned CyberGhost connection pool"
-                        ) from exc
-
-                self.poolmanager.key_fn_by_scheme["https"] = normalize_pool_key
-
-        session = requests.Session()
-        # A proxy cannot safely preserve the explicit IP/SNI pairing. The VPN
-        # endpoint must be reached directly, while the API's TLS validation stays
-        # enabled through the normal system CA store.
-        session.trust_env = False
-        session.mount("https://", MappedAdapter(connect_host))
-    except (ImportError, AttributeError, TypeError, KeyError) as exc:
-        raise RuntimeError(
-            "Installed requests/urllib3 does not support the pinned CyberGhost TLS adapter; "
-            "refusing to send credentials without endpoint pinning. Upgrade python-requests."
-        ) from exc
-
+    session = requests.Session()
+    # A proxy cannot safely preserve the explicit IP/SNI pairing. The VPN
+    # endpoint must be reached directly, while the API's TLS validation stays
+    # enabled through the normal system CA store.
+    session.trust_env = False
+    session.mount("https://", MappedAdapter(connect_host))
     return session.get(canonical_url, **kwargs)
 
 
@@ -648,6 +706,9 @@ def connect_via_cli(country_code, server_type, protocol, streaming_service=None)
     dialup API cannot serve (OpenVPN, torrent/streaming server pools).
     """
     cc = validate_country_code(country_code)
+    context = f"{cc} via {protocol} / {server_type}"
+    if server_type == "streaming" and streaming_service:
+        context += f" ({streaming_service})"
 
     try:
         cmd = [system_binary("cyberghostvpn")]
@@ -679,11 +740,13 @@ def connect_via_cli(country_code, server_type, protocol, streaming_service=None)
             " Install it or use WireGuard traffic mode."
         ) from exc
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("cyberghostvpn CLI timed out.") from exc
+        raise RuntimeError(f"cyberghostvpn connect to {context} timed out.") from exc
 
     out = (((res.stdout or "") + (res.stderr or "")).strip())[:4096]
     if res.returncode != 0:
-        raise RuntimeError(clean_command_error(out, f"cyberghostvpn exited with code {res.returncode}"))
+        raise RuntimeError(
+            clean_command_error(out, f"cyberghostvpn connect to {context} failed (exit {res.returncode})")
+        )
 
     # A zero exit status is the CLI's authoritative success signal. Do not
     # reject a successful connection merely because a warning or server name

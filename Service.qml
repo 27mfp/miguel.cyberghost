@@ -717,7 +717,17 @@ Item {
           root.connected = true
           root.actionStatus = ""
           root.lastError = ""
+          root.applyHint = ""
           root.sendNotification("CyberGhost VPN Connected", "Protected & Encrypted • " + root.countryName + " " + root.countryFlag, "normal")
+          // Clear any previously-fetched public IP so the bar tooltip and
+          // details card never display the post-disconnect ISP IP after
+          // reconnecting within the 20s GeoIP throttle window. The forced
+          // refresh below repopulates it with the live tunnel egress IP.
+          root.publicIp = ""
+          root.publicCity = ""
+          root.publicCountry = ""
+          root.publicOrg = ""
+          root.refreshIpInfo(true)
         } else {
           root.lastError = ServiceUtils.cleanProcessError(String(result.error || ""), "Operation failed")
           root.actionStatus = ""
@@ -735,7 +745,16 @@ Item {
           root.connected = true
           root.actionStatus = ""
           root.lastError = ""
+          root.applyHint = ""
           root.sendNotification("CyberGhost VPN Connected", "Protected & Encrypted • " + root.countryName + " " + root.countryFlag, "normal")
+          // See the JSON-result success path above: clear the public IP so
+          // the panel cannot display the post-disconnect ISP IP during the
+          // 20s GeoIP throttle window after a reconnect.
+          root.publicIp = ""
+          root.publicCity = ""
+          root.publicCountry = ""
+          root.publicOrg = ""
+          root.refreshIpInfo(true)
         } else if (exitCode === 0 && wasDisconnecting) {
           root.connected = false
           root.actionStatus = ""
