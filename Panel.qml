@@ -113,6 +113,13 @@ Panel {
     }
   }
 
+  Timer {
+    id: applyHintTimer
+    interval: 10000
+    repeat: false
+    onTriggered: cyberghost.applyHint = ""
+  }
+
   Process {
     id: clipboardProcess
     onExited: function (exitCode) {
@@ -167,6 +174,7 @@ Panel {
         "streaming": "Streaming"
       }
       cyberghost.applyHint = "Server mode set to " + (labels[type] || type) + " — reconnect to apply."
+      applyHintTimer.restart()
     }
   }
 
@@ -179,6 +187,7 @@ Panel {
         "openvpn_tcp": "OpenVPN TCP"
       }
       cyberghost.applyHint = "Protocol set to " + (names[proto] || proto) + " — reconnect to apply."
+      applyHintTimer.restart()
     }
   }
 

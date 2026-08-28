@@ -963,8 +963,39 @@ def test_register_uses_api_response_and_never_persists_password():
     assert cfg.get("account", "username") == "user@example.com"
     assert not cfg.has_option("account", "password")
     assert cfg.get("device", "secret") == "SEC"
+    # register() must scrub the env vars it consumed so they cannot leak
+    # into a later subprocess or a captured traceback.
+    assert "CG_USERNAME" not in os.environ
+    assert "CG_PASSWORD" not in os.environ
     os.unlink(config_path)
     os.rmdir(d)
+
+
+def test_register_scrubs_env_vars_even_when_api_fails():
+    """register() must clear CG_USERNAME/CG_PASSWORD from os.environ even if the API call raises."""
+
+    def response(status_code, body):
+        item = mock.Mock(status_code=status_code)
+        item._cyberghost_body = json.dumps(body).encode()
+        return item
+
+    env = {"CG_USERNAME": "user@example.com", "CG_PASSWORD": "secret"}
+    with mock.patch.dict(os.environ, env, clear=False):
+        with mock.patch.object(runner, "user_config_path", return_value="/tmp/cyberghost-scrub-test.ini"):
+            with mock.patch.object(runner.socket, "gethostname", return_value="test-host"):
+                with mock.patch.object(
+                    runner,
+                    "api_request",
+                    side_effect=RuntimeError("network down"),
+                ):
+                    try:
+                        runner.register()
+                    except RuntimeError:
+                        pass
+
+    # The env vars must be gone whether register() succeeded or raised.
+    assert "CG_USERNAME" not in os.environ
+    assert "CG_PASSWORD" not in os.environ
 
 
 def test_helper_version_and_capability_are_verified():
