@@ -13,4 +13,5 @@
 
 ## 1.4.2
 
-- See the repository history for the 1.4.2 release changes.
+- Release notes for 1.4.2 were not captured at release time. See the git
+  history between v1.3.0 and 1.4.3 for the changes shipped in this version.
