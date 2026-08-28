@@ -444,6 +444,50 @@ def test_streaming_service_discovery_and_cli_arguments():
             ]
 
 
+def test_connect_via_cli_includes_context_in_error_fallback():
+    """A cyberghostvpn error with no useful stdout must surface country / protocol / mode context."""
+
+    # Empty stdout/stderr: clean_command_error returns the fallback.
+    empty_failure = runner.subprocess.CompletedProcess(["cyberghostvpn"], 7, "", "")
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(runner, "run_bounded", return_value=empty_failure):
+            try:
+                runner.connect_via_cli("US", "torrent", "openvpn")
+            except RuntimeError as exc:
+                message = str(exc)
+                assert "US" in message
+                assert "openvpn" in message
+                assert "torrent" in message
+                assert "exit 7" in message
+            else:
+                raise AssertionError("Expected a non-zero exit to surface")
+
+    # Streaming mode adds the streaming service name to the context.
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(runner, "run_bounded", return_value=empty_failure):
+            try:
+                runner.connect_via_cli("DE", "streaming", "wireguard", "Netflix DE")
+            except RuntimeError as exc:
+                message = str(exc)
+                assert "Netflix DE" in message
+            else:
+                raise AssertionError("Expected a non-zero exit to surface")
+
+    # Timeout path also carries the context.
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(
+            runner, "run_bounded", side_effect=runner.subprocess.TimeoutExpired(["cyberghostvpn"], 120)
+        ):
+            try:
+                runner.connect_via_cli("PT", "traffic", "wireguard")
+            except RuntimeError as exc:
+                assert "PT" in str(exc)
+                assert "wireguard" in str(exc)
+                assert "timed out" in str(exc)
+            else:
+                raise AssertionError("Expected a CLI timeout to surface")
+
+
 def test_native_api_runtime_errors_are_returned_without_traceback():
     requests_stub = mock.Mock()
     requests_stub.exceptions.RequestException = Exception
@@ -741,26 +785,64 @@ def test_mapped_https_get_uses_pinned_session_without_proxy():
         # supports running before this optional runtime dependency is present.
         return
 
-    response = object()
-    session = requests.Session()
-    with mock.patch.object(
-        runner,
-        "dialup_tls_target",
-        return_value=("https://lisbon-rack405.nodes.gen4.ninja:1337/addKey", "198.51.100.10"),
-    ):
-        with mock.patch.object(requests, "Session", return_value=session):
-            with mock.patch.object(session, "get", return_value=response) as get_mock:
-                assert (
-                    runner.mapped_https_get(
-                        requests,
-                        "https://lisbon-s405-i19.cg-dialup.net:1337/addKey",
-                        timeout=(1, 1),
+    runner._reset_mapped_https_probe()
+    try:
+        response = object()
+        session = requests.Session()
+        with mock.patch.object(
+            runner,
+            "dialup_tls_target",
+            return_value=("https://lisbon-rack405.nodes.gen4.ninja:1337/addKey", "198.51.100.10"),
+        ):
+            with mock.patch.object(requests, "Session", return_value=session):
+                with mock.patch.object(session, "get", return_value=response) as get_mock:
+                    assert (
+                        runner.mapped_https_get(
+                            requests,
+                            "https://lisbon-s405-i19.cg-dialup.net:1337/addKey",
+                            timeout=(1, 1),
+                        )
+                        is response
                     )
-                    is response
-                )
 
-    assert session.trust_env is False
-    get_mock.assert_called_once_with("https://lisbon-rack405.nodes.gen4.ninja:1337/addKey", timeout=(1, 1))
+        assert session.trust_env is False
+        get_mock.assert_called_once_with("https://lisbon-rack405.nodes.gen4.ninja:1337/addKey", timeout=(1, 1))
+        # The probe is cached as successful after the first pinned call.
+        assert runner._MAPPED_HTTPS_PROBE_OK is True
+        # The adapter classes are cached so a second call does not re-import
+        # the urllib3 internals (and so we do not pay the probe cost again).
+        cached_classes = runner._MAPPED_ADAPTER_CLASSES
+        assert cached_classes is not None
+    finally:
+        runner._reset_mapped_https_probe()
+
+
+def test_mapped_https_probe_fails_closed_when_urllib3_drift_breaks_adapter():
+    """When urllib3 moves the private symbols the adapter depends on, the probe must fail before any request is sent."""
+    runner._reset_mapped_https_probe()
+    try:
+        with mock.patch.object(
+            runner, "_build_mapped_adapter_classes", side_effect=AttributeError("simulated urllib3 drift")
+        ):
+            try:
+                runner._ensure_mapped_https_probe()
+            except RuntimeError as exc:
+                assert "pinned CyberGhost TLS adapter" in str(exc)
+                assert "Upgrade python-requests" in str(exc)
+            else:
+                raise AssertionError("Expected the probe to fail closed")
+
+        # The failure is cached, so a second call raises the same way
+        # without re-running the broken code path.
+        with mock.patch.object(
+            runner, "_build_mapped_adapter_classes", side_effect=AssertionError("probe should be cached")
+        ):
+            try:
+                runner._ensure_mapped_https_probe()
+            except RuntimeError as exc:
+                assert "pinned CyberGhost TLS adapter" in str(exc)
+    finally:
+        runner._reset_mapped_https_probe()
 
 
 def test_run_bounded_timeout_kills_child_and_does_not_block_on_stdin():
