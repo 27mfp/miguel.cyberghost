@@ -104,7 +104,22 @@ fi
 
 # Prompt only after both input files have been snapshotted. The root staging
 # directory is inaccessible to the invoking user and is removed on exit.
-ROOT_STAGE_DIR=$(/usr/bin/sudo /usr/bin/mktemp -d /tmp/cyberghost-install-root.XXXXXX)
+#
+# We use a PID-based path instead of `sudo mktemp` in a subshell because the
+# fingerprint-reader auth prompt is sent to stdout (not /dev/tty) when sudo
+# runs without a controlling terminal — and `$(sudo …)` captures stdout into
+# the variable, corrupting the path. mkdir without -p is load-bearing: if an
+# attacker pre-creates this path, the install must abort rather than write
+# root-owned files into a user-owned directory.
+ROOT_STAGE_DIR="/tmp/cyberghost-install-root-$$"
+if [[ -e "$ROOT_STAGE_DIR" ]]; then
+  echo "Refusing to reuse an existing staging path: $ROOT_STAGE_DIR" >&2
+  exit 1
+fi
+/usr/bin/sudo /usr/bin/mkdir -m 0700 -- "$ROOT_STAGE_DIR" || {
+  echo "Could not create the root staging directory at $ROOT_STAGE_DIR." >&2
+  exit 1
+}
 copy_to_root_stage "$SNAPSHOT_DIR/cyberghost_runner.py" cyberghost_runner.py
 if (( INSTALL_POLKIT )); then
   copy_to_root_stage "$SNAPSHOT_DIR/50-cyberghost.rules" 50-cyberghost.rules
@@ -134,4 +149,4 @@ else
 fi
 
 echo "Helper installed: $HELPER_PATH"
-echo "Run 'Recheck setup' in the widget when you return to Omarchy."
+echo "Close this terminal to return to Omarchy; the widget rechecks setup automatically."

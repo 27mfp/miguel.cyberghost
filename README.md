@@ -133,6 +133,7 @@ Configurable from the Omarchy plugin settings:
 | `serverType` | string | `traffic` | `traffic`, `torrent` or `streaming` |
 | `hideDetails` | bool | `false` | Mask IP / location / provider / session in the panel and bar tooltip |
 | `reduceMotion` | bool | `false` | Disable pulsing connection indicators |
+| `polkitRuleDismissed` | bool | `false` | Hide the optional Polkit setup prompt. pkexec will keep asking for a password on connect. |
 
 ---
 
@@ -164,7 +165,7 @@ The widget requires a fixed root-owned helper for connect/disconnect. Without th
 bash ./install-helper.sh
 ```
 
-The rule grants only members of `wheel` passwordless access to the exact helper path. The helper rejects `register`, `status`, `check`, custom config paths and arbitrary command arguments. From the widget, choose **Open installer**, complete the visible terminal step, then choose **Recheck setup**. The panel never passes a user-editable plugin path to `pkexec` for a root install operation.
+The rule grants only members of `wheel` passwordless access to the exact helper path. The helper rejects `register`, `status`, `check`, custom config paths and arbitrary command arguments. From the widget, choose **Install helper**, complete the visible terminal step, then close it — the panel rechecks setup automatically. The panel never passes a user-editable plugin path to `pkexec` for a root install operation.
 
 The Polkit rule is optional. The installer enables it by default, or install only the required helper with:
 
@@ -238,7 +239,7 @@ bash fresh-install.sh --purge-deps # also remove wireguard-tools/python-requests
 | Connect works, but no internet | Try the DNS fallback path (runner retries automatically), or switch protocol to WireGuard if on OpenVPN |
 | Account link fails in the wizard | Check username/password; the CLI is NOT required for this step — it talks to CyberGhost's API natively |
 | OpenVPN/Torrent/Streaming fails | Ensure the `cyberghostvpn` CLI is installed and configured with `sudo cyberghostvpn --setup` — those modes are delegated to it |
-| IP shows "Unavailable" | ipwho.is may be unreachable/rate-limited; hit **Refresh Status** |
+| IP shows "Unavailable" | ipwho.is may be unreachable/rate-limited; hit **Refresh** in the panel |
 
 ---
 

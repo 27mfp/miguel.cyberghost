@@ -77,6 +77,74 @@ Panel {
     }
   }
 
+  // Power button: a circular, semantic power control for the hero card.
+  // Uses the ⏻ glyph (U+23FB) so it reads as "power" at a glance regardless
+  // of the bar's icon font. Active = brand yellow on a translucent yellow
+  // disc; inactive = dim glyph on a subtle outline.
+  component PowerButton: Item {
+    id: powerRoot
+    property bool checked: false
+    property bool busy: false
+    property color accent: "#FFCE00"
+    property color foreground: Color.foreground
+    property string fontFamily: Style.font.family
+    // Expose the inner hover state so external PanelToolTip can attach.
+    property alias containsMouse: hover.containsMouse
+    signal toggled
+
+    implicitWidth: Style.space(36)
+    implicitHeight: Style.space(36)
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Keys.onReturnPressed: if (!powerRoot.busy)
+      powerRoot.toggled()
+    Keys.onEnterPressed: if (!powerRoot.busy)
+      powerRoot.toggled()
+    Keys.onSpacePressed: if (!powerRoot.busy)
+      powerRoot.toggled()
+
+    Rectangle {
+      id: powerDisc
+      anchors.fill: parent
+      radius: Math.min(width, height) / 2
+      color: powerRoot.checked
+        ? Util.alpha(powerRoot.accent, 0.18)
+        : (hover.containsMouse || powerRoot.activeFocus ? Util.alpha(powerRoot.foreground, 0.08) : "transparent")
+      border.width: 1
+      border.color: powerRoot.activeFocus
+        ? powerRoot.accent
+        : (powerRoot.checked
+          ? Util.alpha(powerRoot.accent, 0.55)
+          : Util.alpha(powerRoot.foreground, 0.22))
+
+      Behavior on color  { ColorAnimation { duration: 120 } }
+      Behavior on border.color { ColorAnimation { duration: 120 } }
+
+      Text {
+        anchors.centerIn: parent
+        text: "\u23FB"   // ⏻ power symbol
+        textFormat: Text.PlainText
+        color: powerRoot.checked ? powerRoot.accent : powerRoot.foreground
+        opacity: powerRoot.busy ? 0.5 : (powerRoot.checked ? 1.0 : 0.78)
+        font.family: powerRoot.fontFamily
+        font.pixelSize: Math.round(powerRoot.height * 0.5)
+        font.bold: true
+
+        Behavior on color    { ColorAnimation { duration: 120 } }
+        Behavior on opacity  { NumberAnimation { duration: 120 } }
+      }
+
+      MouseArea {
+        id: hover
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: powerRoot.busy ? Qt.ForbiddenCursor : Qt.PointingHandCursor
+        enabled: !powerRoot.busy
+        onClicked: powerRoot.toggled()
+      }
+    }
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -212,7 +280,7 @@ Panel {
       if (item && item.keyboardTarget && item.keyboardTarget.visible)
         return item.keyboardTarget
     }
-    return polkitBtn
+    return openInstallerBtn
   }
 
   function fmtHandshake(sec) {
@@ -304,15 +372,14 @@ Panel {
     }
 
     onPressed: function (buttonCode) {
-      // Until setup completes, every click just opens the wizard.
-      if (!cyberghost.setupDone || buttonCode === Qt.LeftButton) {
+      // Left-click always opens or closes the panel (even before setup, so
+      // the user can reach the wizard). Middle and right click silently
+      // toggle the VPN without showing the panel — the documented behaviour.
+      if (buttonCode === Qt.LeftButton) {
         root.toggle()
         return
       }
-      if (buttonCode === Qt.MiddleButton) {
-        cyberghost.toggle()
-      } else if (buttonCode === Qt.RightButton) {
-        // Quick toggle without opening the panel (common VPN tray pattern)
+      if (buttonCode === Qt.MiddleButton || buttonCode === Qt.RightButton) {
         cyberghost.toggle()
       }
     }
@@ -368,7 +435,20 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: cyberghost.setupDone ? (cyberghost.readyPolkit ? refreshStatusButton : polkitBtn) : (!cyberghost.readyCreds ? regUser : ((!cyberghost.readyWg || !cyberghost.readyRequests) && dependencyRepeater.count > 0 ? root.firstMissingDependencyTarget() : polkitBtn))
+    focusTarget: {
+      if (!cyberghost.setupDone) {
+        if (!cyberghost.readyCreds)
+          return regUser
+        if ((!cyberghost.readyWg || !cyberghost.readyRequests) && dependencyRepeater.count > 0)
+          return root.firstMissingDependencyTarget()
+        return openInstallerBtn
+      }
+      if (cyberghost.setupCardState === "update-available")
+        return openInstallerBtn
+      if (cyberghost.setupCardState === "polkit-optional")
+        return enablePolkitBtn
+      return connectBtn
+    }
     // Keep the same sizing contract as the official Omarchy panels: the
     // KeyboardPanel owns the popup padding, while the content column fills
     // the available inner width without a second manual inset.
@@ -415,10 +495,17 @@ Panel {
           // -------------------------------------------------------------
           // 1. HERO HEADER
           // -------------------------------------------------------------
+          // The hero is the user's main control surface (connect toggle, IP,
+          // country). It appears as soon as the four REQUIRED checks pass
+          // (WireGuard, Python requests, account link, root helper). The
+          // optional Polkit rule is surfaced as a non-blocking line in the
+          // setup card and in the status banner — it never hides the hero.
           Item {
             visible: cyberghost.setupDone
             width: parent.width
-            implicitHeight: hero.implicitHeight
+            implicitHeight: visible ? hero.implicitHeight : 0
+            height: implicitHeight
+            clip: true
 
             PanelHero {
               id: hero
@@ -452,20 +539,14 @@ Panel {
               }
 
               trailingControl: Component {
-                ToggleSwitch {
+                PowerButton {
                   id: powerSwitch
                   checked: cyberghost.active
-                  busy: cyberghost.busy
-                  foreground: hero.foreground
+                  busy: cyberghost.connecting || cyberghost.disconnecting
                   accent: root.brandYellow
-                  activeFocusOnTab: true
+                  foreground: hero.foreground
+                  fontFamily: hero.fontFamily
                   Accessible.name: cyberghost.active ? "Disconnect VPN" : "Connect to CyberGhost"
-                  Keys.onReturnPressed: if (!cyberghost.busy)
-                    root.toggleRunning()
-                  Keys.onEnterPressed: if (!cyberghost.busy)
-                    root.toggleRunning()
-                  Keys.onSpacePressed: if (!cyberghost.busy)
-                    root.toggleRunning()
                   onToggled: root.toggleRunning()
 
                   PanelToolTip {
@@ -484,9 +565,16 @@ Panel {
           Rectangle {
             id: statusBanner
             readonly property bool isError: cyberghost.lastError !== "" || cyberghost.tunnelStale
-            visible: cyberghost.setupDone && (cyberghost.lastError !== "" || cyberghost.actionStatus !== "" || cyberghost.applyHint !== "" || cyberghost.tunnelStale)
+            // The banner also carries a soft, dismissable "Re-enable Polkit
+            // prompt?" line when the user has previously dismissed the
+            // optional Polkit rule. It is not an error and does not block
+            // any action; click the link to re-show the setup card.
+            readonly property bool showPolkitReminder: cyberghost.setupDone && cyberghost.polkitRuleDismissed && !cyberghost.readyPolkit
+            visible: cyberghost.setupDone && (cyberghost.lastError !== "" || cyberghost.actionStatus !== "" || cyberghost.applyHint !== "" || cyberghost.tunnelStale || showPolkitReminder)
             width: parent.width
-            implicitHeight: bannerText.implicitHeight + Style.space(12)
+            implicitHeight: visible ? bannerText.implicitHeight + Style.space(12) : 0
+            height: implicitHeight
+            clip: true
             radius: Style.cornerRadius > 0 ? Style.space(6) : 0
             color: statusBanner.isError ? Util.alpha(Color.urgent, 0.15) : Util.alpha(Color.accent, 0.15)
             border.width: 1
@@ -504,6 +592,8 @@ Panel {
                   return cyberghost.actionStatus
                 if (cyberghost.tunnelStale)
                   return "Handshake stale (" + Math.round(cyberghost.handshakeAgeSec / 60) + " min) — tunnel may be down. Reconnect recommended."
+                if (statusBanner.showPolkitReminder)
+                  return "Passwordless connect is off and the prompt is hidden. Tap to re-enable it."
                 return cyberghost.applyHint
               }
               color: statusBanner.isError ? Color.urgent : Color.accent
@@ -511,41 +601,172 @@ Panel {
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
               verticalAlignment: Text.AlignVCenter
+              MouseArea {
+                anchors.fill: parent
+                visible: statusBanner.showPolkitReminder && !statusBanner.isError
+                cursorShape: Qt.PointingHandCursor
+                onClicked: cyberghost.restorePolkitPrompt()
+              }
             }
           }
 
           // -------------------------------------------------------------
-          // 3. FIRST-RUN SETUP WIZARD (only while something is missing)
+          // 3. SETUP WIZARD CARD / INLINE NOTICE
           // -------------------------------------------------------------
-          Rectangle {
-            visible: !cyberghost.setupDone || !cyberghost.readyPolkit
+          // Visible only when setupCardState is one of:
+          //   - "first-run"        (any required item missing)  → full card
+          //   - "update-available" (helper version drift)        → full card
+          //   - "polkit-optional"  (only the optional Polkit rule
+          //                         is missing)                 → slim inline notice
+          // Hidden when state is "ready".
+          //
+          // The polkit-optional case gets a borderless single-line notice
+          // instead of a bordered card because a soft, dismissable suggestion
+          // does not deserve the same visual weight as a real blocker.
+          Item {
+            id: setupCard
+            readonly property bool isFirstRun: cyberghost.setupCardState === "first-run"
+            readonly property bool isUpdate: cyberghost.setupCardState === "update-available"
+            readonly property bool isPolkitOptional: cyberghost.setupCardState === "polkit-optional"
+            readonly property color accent: isFirstRun ? Color.urgent : Color.accent
+            visible: cyberghost.setupCardState !== "ready"
             width: parent.width
-            implicitHeight: setupColumn.implicitHeight + Style.space(24)
-            radius: Style.cornerRadius > 0 ? Style.space(6) : 0
-            color: Util.alpha(Color.urgent, 0.05)
-            border.width: 1
-            border.color: Util.alpha(Color.urgent, 0.3)
+            // Hidden Column siblings still contribute implicitHeight in this
+            // Qt build, so every optional block reports 0 when it is not shown.
+            implicitHeight: visible ? (notice.visible ? notice.implicitHeight : (fullCard.visible ? fullCard.implicitHeight : 0)) : 0
+            height: implicitHeight
+            clip: true
 
-            Column {
-              id: setupColumn
+            // -- Compact inline notice (polkit-optional only) --
+            Rectangle {
+              id: notice
+              visible: setupCard.isPolkitOptional
               anchors.left: parent.left
               anchors.right: parent.right
-              anchors.top: parent.top
-              anchors.margins: Style.space(12)
-              spacing: Style.space(8)
+              implicitHeight: visible ? noticeRow.implicitHeight + Style.space(10) : 0
+              height: implicitHeight
+              clip: true
+              radius: Style.cornerRadius > 0 ? Style.space(6) : 0
+              color: Util.alpha(setupCard.accent, 0.06)
+              border.width: 1
+              border.color: Util.alpha(setupCard.accent, 0.28)
 
+              Row {
+                id: noticeRow
+                x: Style.space(10)
+                y: Style.space(5)
+                width: parent.width - Style.space(16)
+                spacing: Style.space(8)
+
+                // Subtle key icon as visual anchor
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "\uf084"  // Font Awesome key
+                  color: setupCard.accent
+                  opacity: 0.85
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Math.max(10, parent.width - keyIconText.width - enablePolkitBtn.width - dismissPolkitBtn.width - Style.space(8) * 4)
+                  text: cyberghost.polkitStatus !== "" && cyberghost.polkitStatus.indexOf("Installer closed") === -1
+                    ? cyberghost.polkitStatus
+                    : (cyberghost.readyPolkit
+                       ? "Passwordless connect enabled."
+                       : "Skip the password prompt on every connect (optional).")
+                  color: cyberghost.readyPolkit ? root.successGreen : root.foreground
+                  elide: Text.ElideRight
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+                // Placeholder to keep the layout math readable; not rendered
+                Item {
+                  id: keyIconText
+                  visible: false
+                  width: Style.space(14)
+                }
+
+                Button {
+                  id: enablePolkitBtn
+                  anchors.verticalCenter: parent.verticalCenter
+                  focusable: true
+                  visible: !cyberghost.readyPolkit
+                  enabled: !cyberghost.busy
+                  text: "Enable"
+                  bordered: true
+                  foreground: root.foreground
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.space(8)
+                  verticalPadding: Style.space(2)
+                  Accessible.name: "Install the optional Polkit rule for passwordless connect"
+                  tooltipText: "Install the Polkit rule so connect/disconnect does not prompt for your password each time"
+                  onClicked: cyberghost.openHelperInstaller()
+                }
+
+                Button {
+                  id: dismissPolkitBtn
+                  anchors.verticalCenter: parent.verticalCenter
+                  focusable: true
+                  visible: !cyberghost.readyPolkit
+                  enabled: !cyberghost.busy
+                  text: "\u00D7"  // ×
+                  bordered: false
+                  foreground: root.dim
+                  fontSize: Style.font.body
+                  horizontalPadding: Style.space(4)
+                  verticalPadding: Style.space(0)
+                  Accessible.name: "Dismiss the Polkit prompt for this session"
+                  tooltipText: "Hide this prompt. You can re-enable Polkit later from the widget (the status banner reminds you)."
+                  onClicked: cyberghost.dismissPolkitPrompt()
+                }
+              }
+            }
+
+            // -- Full bordered card (first-run / update-available) --
+            // Size the Rectangle from the Column's content. Do not use
+            // anchors.fill on the Column (that collapses the card to 0
+            // height) and do not vertically anchor the Column (that loops
+            // with implicitHeight and leaves a large empty gap).
+            Rectangle {
+              id: fullCard
+              visible: setupCard.isFirstRun || setupCard.isUpdate
+              anchors.left: parent.left
+              anchors.right: parent.right
+              implicitHeight: visible ? setupColumn.implicitHeight + Style.space(24) : 0
+              height: implicitHeight
+              clip: true
+              radius: Style.cornerRadius > 0 ? Style.space(6) : 0
+              color: Util.alpha(setupCard.accent, 0.05)
+              border.width: 1
+              border.color: Util.alpha(setupCard.accent, 0.3)
+
+              Column {
+                id: setupColumn
+                x: Style.space(12)
+                y: Style.space(12)
+                width: parent.width - Style.space(24)
+                spacing: Style.space(8)
+
+              // Title — three states, three tones. We never use urgent red
+              // for a routine version-bump or a dismissed-optional prompt.
               Text {
-                text: cyberghost.setupDone ? "OPTIONAL SETUP" : "FIRST-RUN SETUP"
+                text: setupCard.isFirstRun ? "FIRST-RUN SETUP" : (setupCard.isUpdate ? "PLUGIN UPDATE AVAILABLE" : "OPTIONAL SETUP")
                 textFormat: Text.PlainText
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
-                color: Color.urgent
+                color: setupCard.accent
               }
 
+              // Transient status line (installer closed, packages installed…)
               Text {
                 visible: cyberghost.setupMsg !== ""
                 width: parent.width
+                height: visible ? implicitHeight : 0
                 textFormat: Text.PlainText
                 text: cyberghost.setupMsg
                 font.family: root.fontFamily
@@ -555,72 +776,109 @@ Panel {
               }
 
               // -- Dependency rows with one-click install --
-              Repeater {
-                id: dependencyRepeater
-                model: [
-                  {
-                    ok: cyberghost.readyWg,
-                    label: "WireGuard tools"
-                  },
-                  {
-                    ok: cyberghost.readyRequests,
-                    label: "Python requests"
-                  }
-                ]
+              // Only shown when something is still missing. Once both deps
+              // are green we collapse to a one-line summary, freeing vertical
+              // space for the actual blocker (helper, account, polkit).
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+                visible: setupCard.isFirstRun && (!cyberghost.readyWg || !cyberghost.readyRequests)
+                height: visible ? implicitHeight : 0
+                clip: true
 
-                delegate: Item {
-                  required property var modelData
-                  readonly property Item keyboardTarget: dependencyButton
-                  width: setupColumn.width
-                  implicitHeight: Math.max(setupDot.height, depLabel.implicitHeight)
+                Repeater {
+                  id: dependencyRepeater
+                  model: [
+                    {
+                      ok: cyberghost.readyWg,
+                      label: "WireGuard tools"
+                    },
+                    {
+                      ok: cyberghost.readyRequests,
+                      label: "Python requests"
+                    }
+                  ]
 
-                  Row {
-                    spacing: Style.space(6)
-                    anchors.verticalCenter: parent.verticalCenter
+                  delegate: Item {
+                    required property var modelData
+                    readonly property Item keyboardTarget: dependencyButton
+                    width: setupColumn.width
+                    implicitHeight: Math.max(setupDot.height, depLabel.implicitHeight)
 
-                    Rectangle {
-                      id: setupDot
-                      width: Style.space(7)
-                      height: width
-                      radius: width / 2
+                    Row {
+                      spacing: Style.space(6)
                       anchors.verticalCenter: parent.verticalCenter
-                      color: modelData.ok ? root.successGreen : root.urgent
+
+                      Rectangle {
+                        id: setupDot
+                        width: Style.space(7)
+                        height: width
+                        radius: width / 2
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: modelData.ok ? root.successGreen : root.urgent
+                      }
+
+                      Text {
+                        id: depLabel
+                        textFormat: Text.PlainText
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.label + (modelData.ok ? "" : "  ·  missing")
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        color: modelData.ok ? root.successGreen : root.foreground
+                      }
                     }
 
-                    Text {
-                      id: depLabel
-                      textFormat: Text.PlainText
+                    Button {
+                      id: dependencyButton
+                      visible: !modelData.ok
+                      enabled: !cyberghost.busy && !cyberghost.regBusy
+                      focusable: true
+                      Accessible.name: "Install " + modelData.label
+                      anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
-                      text: modelData.label + (modelData.ok ? "" : "  ·  missing")
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      color: modelData.ok ? root.successGreen : root.foreground
+                      text: cyberghost.depsBusy ? "…" : "Install"
+                      bordered: true
+                      foreground: root.foreground
+                      tooltipText: "Installs wireguard-tools and python-requests via pacman (asks for authorization)"
+                      onClicked: cyberghost.installDeps()
                     }
-                  }
-
-                  Button {
-                    id: dependencyButton
-                    visible: !modelData.ok
-                    enabled: !cyberghost.busy && !cyberghost.regBusy
-                    focusable: true
-                    Accessible.name: "Install " + modelData.label
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: cyberghost.depsBusy ? "…" : "Install"
-                    bordered: true
-                    foreground: root.foreground
-                    tooltipText: "Installs wireguard-tools and python-requests via pacman (asks for authorization)"
-                    onClicked: cyberghost.installDeps()
                   }
                 }
               }
-              // (dependency install state lives in Service: depsBusy)
+
+              Row {
+                id: accountLinkedRow
+                width: parent.width
+                spacing: Style.space(6)
+                visible: setupCard.isFirstRun && cyberghost.readyCreds
+                height: visible ? implicitHeight : 0
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "CyberGhost account  ·  linked"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  color: root.successGreen
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "\u2713"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  color: root.successGreen
+                }
+              }
 
               // -- Account linking form --
               Item {
                 width: parent.width
-                implicitHeight: accRow.implicitHeight
-                visible: !cyberghost.readyCreds
+                visible: setupCard.isFirstRun && !cyberghost.readyCreds
+                implicitHeight: visible ? accRow.implicitHeight : 0
+                height: implicitHeight
+                clip: true
 
                 Column {
                   id: accRow
@@ -629,10 +887,10 @@ Panel {
 
                   Text {
                     textFormat: Text.PlainText
-                    text: "CyberGhost account" + (cyberghost.readyCreds ? "" : "  ·  not linked")
+                    text: "CyberGhost account  ·  not linked"
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    color: cyberghost.readyCreds ? root.successGreen : root.foreground
+                    color: root.foreground
                   }
 
                   SetupField {
@@ -682,52 +940,120 @@ Panel {
                 }
               }
 
-              // -- Required root helper; optional passwordless rule --
-              Item {
+              // -- Helper section --
+              // Three sub-states:
+              //   - update-available: helper installed but version drift. The
+              //     version numbers live in the button's tooltipText (for
+              //     curious / a11y users), not in the headline.
+              //   - first-run, helper not yet installed: "Required: install
+              //     the root helper" (the helper is what makes the connect
+              //     button actually do anything).
+              //   - polkit-optional: helper is fine, only the optional
+              //     passwordless rule is missing.
+              // The compact notice above owns the polkit-optional case;
+              // this section is only shown for first-run / update-available,
+              // which is already enforced by the parent `fullCard.visible`.
+              //
+              // Layout: the message gets the full width on top, and the
+              // action row sits right-aligned underneath. Stacking vertically
+              // fixes the ugly narrow-column word-wrap that side-by-side
+              // layouts produce when the message is long.
+              Column {
+                id: helperRow
                 width: parent.width
-                implicitHeight: polkitLabel.implicitHeight
+                spacing: Style.space(8)
+                visible: setupCard.isUpdate || !cyberghost.helperInstalled
+                height: visible ? implicitHeight : 0
+                clip: true
 
+                // Single source of truth for the helper-section copy.
+                // Version numbers live in `tooltipText` / `Accessible.description`
+                // so the headline stays readable.
                 Text {
-                  id: polkitLabel
+                  id: helperLabel
                   textFormat: Text.PlainText
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: parent.width - (polkitBtn.visible ? polkitBtn.width + Style.space(10) : 0)
-                  text: cyberghost.readyCreds && cyberghost.polkitStatus !== "" ? cyberghost.polkitStatus : (cyberghost.readyPolkit ? "Passwordless connect enabled" : (cyberghost.helperInstalled ? "Optional: enable passwordless connect" : (cyberghost.helperVersion !== "" && cyberghost.pluginVersion !== "" && cyberghost.helperVersion !== cyberghost.pluginVersion ? "Required: update root helper (installed v" + cyberghost.helperVersion + ", current v" + cyberghost.pluginVersion + ")" : "Required: install the root helper")))
+                  width: parent.width
+                  text: {
+                    if (cyberghost.polkitStatus !== "" && cyberghost.polkitStatus.indexOf("Installer closed") === -1)
+                      return cyberghost.polkitStatus
+                    if (setupCard.isUpdate)
+                      return "Root helper needs an update to match this plugin version."
+                    return "Required: install the root helper to enable connect and disconnect."
+                  }
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  color: cyberghost.readyCreds && cyberghost.polkitStatus !== "" && !cyberghost.readyPolkit ? root.urgent : (cyberghost.readyPolkit ? root.successGreen : root.foreground)
+                  color: setupCard.isFirstRun && !cyberghost.helperInstalled ? root.urgent : root.foreground
                   wrapMode: Text.WordWrap
+                  Accessible.description: setupCard.isUpdate && cyberghost.helperVersion !== "" && cyberghost.pluginVersion !== ""
+                    ? ("Helper installed: v" + cyberghost.helperVersion + ". Plugin bundled: v" + cyberghost.pluginVersion + ".")
+                    : "A small, fixed Python program installed at /usr/local/bin/cyberghost-runner. This widget never edits the helper; only the bundled copy is read."
+                  // Tooltip on hover keeps the technical detail available
+                  // without bloating the visible label. `ToolTip` lives in
+                  // QtQuick.Controls (imported as `QQC`), not QtQuick, so we
+                  // must qualify the attached property explicitly when used
+                  // on a `Text` (which has no built-in ToolTip).
+                  QQC.ToolTip.visible: ma.containsMouse
+                  QQC.ToolTip.delay: 500
+                  QQC.ToolTip.text: "A small, fixed Python program installed at /usr/local/bin/cyberghost-runner. This widget never edits the helper; only the bundled copy is read."
+                  MouseArea {
+                    id: ma
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                  }
                 }
 
-                Button {
-                  id: polkitBtn
-                  visible: !cyberghost.readyPolkit
-                  enabled: !cyberghost.busy && !cyberghost.regBusy
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  focusable: true
-                  Accessible.name: "Open the secure helper installer in a terminal"
-                  text: cyberghost.polkitBusy ? "…" : "Open installer"
-                  bordered: true
-                  foreground: root.foreground
-                  tooltipText: "Open a terminal and run the sudo installer, then recheck setup"
-                  onClicked: cyberghost.openHelperInstaller()
+                // Action row, right-aligned. The "Install" / "Update helper"
+                // button is the primary action (right edge, where the eye
+                // lands for the "next" action); "Recheck" is the secondary,
+                // smaller, and sits to its left.
+                Row {
+                  id: helperButtons
+                  width: parent.width
+                  spacing: Style.space(6)
+                  layoutDirection: Qt.RightToLeft
+
+                  Button {
+                    id: openInstallerBtn
+                    focusable: true
+                    Accessible.name: setupCard.isUpdate ? "Update the root helper in a terminal" : "Install the root helper in a terminal"
+                    enabled: !cyberghost.busy && !cyberghost.regBusy
+                    text: cyberghost.polkitBusy ? "…" : (setupCard.isUpdate ? "Update helper" : "Install helper")
+                    bordered: true
+                    foreground: setupCard.isUpdate ? Color.accent : root.foreground
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.space(10)
+                    verticalPadding: Style.space(2)
+                    tooltipText: setupCard.isUpdate && cyberghost.helperVersion !== "" && cyberghost.pluginVersion !== ""
+                      ? ("Replaces /usr/local/bin/cyberghost-runner (currently v" + cyberghost.helperVersion + ") with the v" + cyberghost.pluginVersion + " bundled in this plugin. Opens a sudo terminal.")
+                      : "Open a terminal and run the sudo installer, then recheck setup"
+                    onClicked: cyberghost.openHelperInstaller()
+                  }
+
+                  Button {
+                    id: recheckBtn
+                    focusable: true
+                    Accessible.name: "Recheck CyberGhost setup"
+                    enabled: !cyberghost.busy && !cyberghost.regBusy
+                    text: "Recheck"
+                    bordered: true
+                    foreground: root.foreground
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.space(8)
+                    verticalPadding: Style.space(2)
+                    tooltipText: "Check dependencies, account, helper and optional Polkit setup again"
+                    onClicked: cyberghost.recheck()
+                  }
                 }
               }
 
-              Button {
-                visible: true
-                enabled: !cyberghost.busy && !cyberghost.regBusy
-                focusable: true
-                Accessible.name: "Recheck CyberGhost setup"
-                text: "Recheck setup"
-                bordered: true
-                foreground: root.foreground
-                tooltipText: "Check dependencies, account, helper and optional Polkit setup again"
-                onClicked: cyberghost.recheck()
-              }
+              // -- Dismissed-state footer --
+              // When the user has explicitly dismissed the Polkit prompt, we
+              // do not show the card at all (state is "ready"). If the helper
+              // is later re-detected as drift, the card returns with state
+              // "update-available" — no manual re-enable required.
             }
+          }
           }
 
           // -------------------------------------------------------------
@@ -736,7 +1062,12 @@ Panel {
           Rectangle {
             visible: cyberghost.setupDone
             width: parent.width
-            implicitHeight: infoColumn.implicitHeight + Style.space(20)
+            // Size from content with equal 10px padding on every side. Hidden
+            // first-run siblings must report 0 height or the panel stays as
+            // tall as the full connected layout.
+            implicitHeight: visible ? infoColumn.implicitHeight + Style.space(20) : 0
+            height: implicitHeight
+            clip: true
             radius: Style.cornerRadius > 0 ? Style.space(6) : 0
             color: Util.alpha(Color.popups.text, cyberghost.connected ? 0.04 : 0.02)
             border.width: 1
@@ -747,88 +1078,74 @@ Panel {
 
             Column {
               id: infoColumn
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.top: parent.top
-              anchors.margins: Style.space(10)
+              x: Style.space(10)
+              y: Style.space(10)
+              width: parent.width - Style.space(20)
               spacing: Style.space(8)
 
-              // Status badge line + Protocol pill + privacy toggle
+              // Status header: badge + protocol subtitle on the left,
+              // privacy toggle (icon only) on the right. The protocol used to
+              // be a separate pill competing for space; it's now a quiet
+              // subtitle so the badge stays the visual anchor.
               Item {
                 width: parent.width
-                implicitHeight: statusBadgeGrid.implicitHeight
+                implicitHeight: statusRow.implicitHeight
 
-                Grid {
-                  id: statusBadgeGrid
+                Row {
+                  id: statusRow
                   width: parent.width
-                  columns: width < Style.space(300) ? 1 : 3
-                  columnSpacing: Style.space(8)
-                  rowSpacing: Style.space(6)
-                  readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+                  spacing: Style.space(8)
 
+                  // Left cluster: dot + badge + protocol subtitle
                   Row {
-                    id: statusBadgeRow
-                    width: statusBadgeGrid.cellW
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(10, parent.width - hideDetailsBtn.width - Style.space(8))
                     spacing: Style.space(6)
 
                     Rectangle {
+                      id: statusDot
                       width: Style.space(8)
                       height: width
                       radius: width / 2
                       anchors.verticalCenter: parent.verticalCenter
                       color: cyberghost.connected ? root.successGreen : (cyberghost.connecting ? root.brandYellow : root.urgent)
+                      Behavior on color { ColorAnimation { duration: 180 } }
                     }
 
                     Text {
                       textFormat: Text.PlainText
                       anchors.verticalCenter: parent.verticalCenter
-                      width: statusBadgeRow.width - Style.space(14)
-                      // Keep the badge short enough for the three-column layout;
-                      // the hero and detail card carry the full connection context.
                       text: cyberghost.connected ? "PROTECTED" : (cyberghost.connecting ? "CONNECTING…" : "IP EXPOSED")
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: true
-                      wrapMode: Text.WordWrap
                       color: cyberghost.connected ? root.successGreen : (cyberghost.connecting ? root.brandYellow : root.dim)
                     }
-                  }
-
-                  // Protocol pill
-                  Rectangle {
-                    width: statusBadgeGrid.cellW
-                    implicitWidth: protoText.implicitWidth + Style.space(14)
-                    implicitHeight: protoText.implicitHeight + Style.space(6)
-                    radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-                    color: cyberghost.connected ? Util.alpha(root.successGreen, 0.15) : Util.alpha(Color.popups.text, 0.12)
-                    border.width: 1
-                    border.color: cyberghost.connected ? Util.alpha(root.successGreen, 0.4) : Util.alpha(Color.popups.text, 0.25)
 
                     Text {
-                      id: protoText
                       textFormat: Text.PlainText
-                      anchors.centerIn: parent
-                      text: cyberghost.protocol === "wireguard" ? "WireGuard" : "OpenVPN"
+                      anchors.verticalCenter: parent.verticalCenter
+                      visible: cyberghost.protocol !== ""
+                      text: "·  " + (cyberghost.protocol === "wireguard" ? "WireGuard" : (cyberghost.protocol === "openvpn" ? "OpenVPN UDP" : "OpenVPN TCP"))
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
-                      font.bold: true
-                      color: cyberghost.connected ? root.successGreen : root.dim
+                      color: root.dim
                     }
                   }
 
-                  // Privacy toggle — masks IP / location / provider / session
+                  // Right: icon-only privacy toggle
                   Button {
-                    width: statusBadgeGrid.cellW
+                    id: hideDetailsBtn
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(28)
+                    implicitWidth: Style.space(28)
+                    horizontalPadding: 0
                     iconText: cyberghost.hideDetails ? "\uf070" : "\uf06e"
-                    text: cyberghost.hideDetails ? "Show" : "Hide"
-                    bordered: true
-                    foreground: root.foreground
+                    text: ""
+                    bordered: false
+                    foreground: cyberghost.hideDetails ? root.urgent : root.dim
                     focusable: true
                     Accessible.name: cyberghost.hideDetails ? "Show connection details" : "Hide connection details"
-                    horizontalPadding: Style.space(6)
-                    verticalPadding: Style.space(2)
-                    iconSize: Style.font.caption
-                    fontSize: Style.font.caption
                     tooltipText: cyberghost.hideDetails ? "Reveal IP & connection details" : "Hide IP & connection details"
                     onClicked: cyberghost.setHideDetails(!cyberghost.hideDetails)
                   }
@@ -840,15 +1157,20 @@ Panel {
                 foreground: root.foreground
               }
 
-              // Connection details: IP / Location / Provider (click to copy IP)
-              Item {
+              // Connection details: IP / Location / Provider + Copy IP button +
+              // optional geo-mismatch note. The previous implementation used
+              // absolute `y:` positioning for the copy row and the
+              // geoMismatchText had no positioning at all (it overlapped the
+              // detail grid at y=0 when visible). Replaced with a proper
+              // Column so spacing is consistent and the geo-mismatch note
+              // renders in the right place when shown.
+              Column {
                 width: parent.width
-                implicitHeight: detailGrid.implicitHeight + copyRow.implicitHeight + geoMismatchText.implicitHeight + Style.space(12)
+                spacing: Style.space(8)
 
                 Grid {
                   id: detailGrid
-                  anchors.left: parent.left
-                  anchors.right: parent.right
+                  width: parent.width
                   columns: 2
                   columnSpacing: Style.space(8)
                   rowSpacing: Style.space(5)
@@ -959,7 +1281,6 @@ Panel {
                 Row {
                   id: copyRow
                   width: parent.width
-                  y: detailGrid.implicitHeight + Style.space(6)
                   spacing: Style.space(8)
 
                   Button {
@@ -1001,11 +1322,17 @@ Panel {
             }
           }
 
-          Column {
-            id: mainControls
+          Item {
             visible: cyberghost.setupDone
             width: parent.width
-            spacing: Style.space(10)
+            implicitHeight: visible ? mainControls.implicitHeight : 0
+            height: implicitHeight
+            clip: true
+
+            Column {
+              id: mainControls
+              width: parent.width
+              spacing: Style.space(10)
 
             PanelSeparator {
               foreground: root.foreground
@@ -1042,10 +1369,12 @@ Panel {
                   focusable: true
                   Accessible.name: "Connect to " + modelData.name
 
-                  text: modelData.flag + " " + modelData.code
+                  // Show a leading check mark on the currently selected
+                  // country so the active state is unmissable at a glance.
+                  text: (cyberghost.country === modelData.code ? "\u2713 " : "") + modelData.flag + "  " + modelData.code
                   selected: (cyberghost.country === modelData.code)
                   bordered: true
-                  foreground: root.foreground
+                  foreground: (cyberghost.country === modelData.code) ? root.brandYellow : root.foreground
                   tooltipText: modelData.name + " (" + modelData.code + ")"
                   onClicked: root.connectToCountry(modelData.code)
                 }
@@ -1065,9 +1394,12 @@ Panel {
               id: countryDropdown
               width: parent.width
               enabled: !cyberghost.busy
-              label: "Search country"
+              // The "COUNTRY" section header already labels the row, so the
+              // internal `label` would be redundant. The dropdown's own
+              // placeholder carries the helper text instead.
+              label: ""
               placeholderText: "Search 90+ countries…"
-              Accessible.name: "Search country"
+              Accessible.name: "Country"
               value: cyberghost.country
               options: root.dropdownOptionsList
               foreground: root.foreground
@@ -1102,9 +1434,10 @@ Panel {
                   id: serverDropdown
                   width: parent.width
                   enabled: !cyberghost.busy
-                  label: "Server"
+                  // The "SERVER SELECTION" section header already labels the row.
+                  label: ""
                   placeholderText: "Fastest in this country or choose manually…"
-                  Accessible.name: "Choose VPN server"
+                  Accessible.name: "Server"
                   value: cyberghost.serverSelection
                   options: cyberghost.serverOptions
                   foreground: root.foreground
@@ -1140,6 +1473,20 @@ Panel {
               fontFamily: root.fontFamily
             }
 
+            // Small inline labels disambiguate the two similar 3-up rows
+            // that follow. Without them, "Traffic / Torrent / Streaming"
+            // and "WireGuard / OpenVPN UDP / OpenVPN TCP" look almost
+            // identical at a glance and the user has to read every label.
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Mode"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              color: root.dim
+            }
+
             Grid {
               id: modeRow
               width: parent.width
@@ -1153,10 +1500,12 @@ Panel {
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: "Use Traffic servers"
-                text: "⚡ Traffic"
+                // Leading check mark + brand yellow on the active mode, matching
+                // the country grid so the visual language stays consistent.
+                text: (cyberghost.serverType === "traffic" ? "\u2713  " : "") + "⚡  Traffic"
                 selected: cyberghost.serverType === "traffic"
                 bordered: true
-                foreground: root.foreground
+                foreground: (cyberghost.serverType === "traffic") ? root.brandYellow : root.foreground
                 tooltipText: "Fastest standard routing for web browsing"
                 onClicked: root.setServerType("traffic")
               }
@@ -1166,10 +1515,10 @@ Panel {
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: "Use Torrent servers"
-                text: "🔒 Torrent"
+                text: (cyberghost.serverType === "torrent" ? "\u2713  " : "") + "🔒  Torrent"
                 selected: cyberghost.serverType === "torrent"
                 bordered: true
-                foreground: root.foreground
+                foreground: (cyberghost.serverType === "torrent") ? root.brandYellow : root.foreground
                 tooltipText: "Servers optimized for P2P and torrenting"
                 onClicked: root.setServerType("torrent")
               }
@@ -1179,10 +1528,10 @@ Panel {
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: "Use Streaming servers"
-                text: "🎬 Streaming"
+                text: (cyberghost.serverType === "streaming" ? "\u2713  " : "") + "🎬  Streaming"
                 selected: cyberghost.serverType === "streaming"
                 bordered: true
-                foreground: root.foreground
+                foreground: (cyberghost.serverType === "streaming") ? root.brandYellow : root.foreground
                 tooltipText: "Servers optimized for streaming media"
                 onClicked: root.setServerType("streaming")
               }
@@ -1231,6 +1580,16 @@ Panel {
             // -------------------------------------------------------------
             // 9. PROTOCOL SELECTOR (applies on next connect)
             // -------------------------------------------------------------
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: "Protocol"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              color: root.dim
+            }
+
             Grid {
               id: protoRow
               width: parent.width
@@ -1244,10 +1603,11 @@ Panel {
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: "Use WireGuard protocol"
-                text: "WireGuard"
+                // Same active treatment as the mode row: leading ✓ + brand yellow.
+                text: (cyberghost.protocol === "wireguard" ? "\u2713  " : "") + "WireGuard"
                 selected: cyberghost.protocol === "wireguard"
                 bordered: true
-                foreground: root.foreground
+                foreground: (cyberghost.protocol === "wireguard") ? root.brandYellow : root.foreground
                 tooltipText: "WireGuard protocol (Fastest and modern)"
                 onClicked: root.setProtocol("wireguard")
               }
@@ -1257,10 +1617,10 @@ Panel {
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: "Use OpenVPN UDP protocol"
-                text: "OpenVPN UDP"
+                text: (cyberghost.protocol === "openvpn" ? "\u2713  " : "") + "OpenVPN UDP"
                 selected: cyberghost.protocol === "openvpn"
                 bordered: true
-                foreground: root.foreground
+                foreground: (cyberghost.protocol === "openvpn") ? root.brandYellow : root.foreground
                 tooltipText: "OpenVPN over UDP"
                 onClicked: root.setProtocol("openvpn")
               }
@@ -1270,47 +1630,62 @@ Panel {
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: "Use OpenVPN TCP protocol"
-                text: "OpenVPN TCP"
+                text: (cyberghost.protocol === "openvpn_tcp" ? "\u2713  " : "") + "OpenVPN TCP"
                 selected: cyberghost.protocol === "openvpn_tcp"
                 bordered: true
-                foreground: root.foreground
+                foreground: (cyberghost.protocol === "openvpn_tcp") ? root.brandYellow : root.foreground
                 tooltipText: "OpenVPN over TCP"
                 onClicked: root.setProtocol("openvpn_tcp")
               }
             }
 
             // -------------------------------------------------------------
-            // 10. ACTIONS ROW
+            // 10. PRIMARY ACTION + REFRESH
             // -------------------------------------------------------------
-            Grid {
+            // Connect is the primary action (fills the available width minus
+            // the small ghost Refresh button on its left). Anchored layout.
+            //
+            // The Button's implicit width includes content padding even when
+            // `text` is empty, so we pin `width`/`implicitWidth` to the icon
+            // box. Without that, anchoring Connect to Refresh's right edge
+            // leaves a large unexplained gap. Keeping a real Button preserves
+            // Tab focus, the focus ring, and the tooltip.
+            Item {
               id: actionsRow
               width: parent.width
-              columns: width < Style.space(300) ? 1 : 2
-              columnSpacing: Style.space(8)
-              rowSpacing: Style.space(8)
-              readonly property real cellW: Math.floor((width - columnSpacing * (columns - 1)) / columns)
+              implicitHeight: Math.max(refreshStatusButton.height, connectBtn.implicitHeight)
 
               Button {
                 id: refreshStatusButton
-                width: actionsRow.cellW
+                width: Style.space(28)
+                implicitWidth: Style.space(28)
+                implicitHeight: Style.space(28)
+                horizontalPadding: 0
+                verticalPadding: 0
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
                 enabled: !cyberghost.busy
                 focusable: true
-                Accessible.name: "Refresh VPN status"
+                bordered: false
+                text: ""
                 iconText: "\uf021"
-                text: "Refresh Status"
-                bordered: true
-                foreground: root.foreground
-                tooltipText: "Check VPN status and reload IP information"
+                foreground: root.dim
+                Accessible.name: "Refresh VPN status"
+                tooltipText: "Refresh VPN status"
                 onClicked: root.refresh()
               }
 
               Button {
-                width: actionsRow.cellW
+                id: connectBtn
+                anchors.left: refreshStatusButton.right
+                anchors.leftMargin: Style.space(8)
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
                 enabled: !cyberghost.busy
                 focusable: true
                 Accessible.name: cyberghost.active ? "Disconnect VPN" : "Connect VPN"
                 iconText: cyberghost.active ? "\uf00d" : "\uf00c"
-                text: cyberghost.active ? "Disconnect" : "Connect"
+                text: cyberghost.connecting ? "Connecting…" : (cyberghost.disconnecting ? "Disconnecting…" : (cyberghost.active ? "Disconnect" : "Connect"))
                 selected: cyberghost.active
                 bordered: true
                 foreground: cyberghost.active ? Color.urgent : root.brandYellow
@@ -1318,7 +1693,18 @@ Panel {
                 onClicked: root.toggleRunning()
               }
             }
-          } // end mainControls
+            } // end mainControls
+          } // end mainControls wrapper
+
+          // Bottom breathing room: keep the Connect button from kissing the
+          // bottom edge of the panel. Hidden during first-run so the wizard
+          // card is not followed by a tall empty region.
+          Item {
+            width: parent.width
+            visible: cyberghost.setupDone
+            implicitHeight: visible ? Style.space(16) : 0
+            height: implicitHeight
+          }
         }
       }
     }

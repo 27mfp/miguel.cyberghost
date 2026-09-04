@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "miguel.cyberghost",
   "name": "CyberGhost VPN",
-  "version": "1.4.3",
+  "version": "1.5.3",
   "author": "Miguel",
   "license": "MIT",
   "description": "CyberGhost VPN status, quick connect, country switching, and server mode controls in the Omarchy bar.",
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "CyberGhost VPN",
-    "description": "Toggle CyberGhost VPN, switch countries, choose server type, and view active IP.",
+    "description": "One bar icon and one panel: status, public IP, country/server picker, traffic/torrent/streaming modes, and a first-run setup wizard for the root helper.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -25,7 +25,8 @@
       "protocol": "wireguard",
       "serverType": "traffic",
       "hideDetails": false,
-      "reduceMotion": false
+      "reduceMotion": false,
+      "polkitRuleDismissed": false
     },
     "schema": [
       {
@@ -74,6 +75,13 @@
         "type": "boolean",
         "label": "Reduce connection animations",
         "description": "Disable pulsing connection indicators.",
+        "defaultValue": false
+      },
+      {
+        "key": "polkitRuleDismissed",
+        "type": "boolean",
+        "label": "Hide the optional Polkit setup prompt",
+        "description": "When on, the widget will not ask you to install the passwordless Polkit rule. pkexec will keep prompting for a password on connect.",
         "defaultValue": false
       }
     ]

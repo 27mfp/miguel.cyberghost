@@ -137,8 +137,8 @@ Now finish as a brand-new user through the WIDGET:
   2. The FIRST-RUN SETUP panel appears. Use its buttons:
        - Install        -> wireguard-tools + python-requests (pkexec prompt)
        - Link account   -> your CyberGhost username/password
-       - Open installer -> visible terminal with the fixed root helper and optional Polkit rule (sudo)
-       - Recheck setup -> refresh the checklist after the terminal installer finishes
+       - Install helper -> visible terminal with the fixed root helper and optional Polkit rule (sudo)
+       - Recheck        -> optional; the panel rechecks automatically when the installer terminal closes
   3. Once the required dependency, account and helper items are green, the full panel unlocks; Polkit remains optional:
      connect, pick countries, server modes, protocols.
 

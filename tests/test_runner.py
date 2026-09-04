@@ -598,6 +598,7 @@ def test_manifest_schema_and_validity():
     assert data.get("id") == "miguel.cyberghost"
     assert data.get("version") == runner.PLUGIN_VERSION
     assert data.get("entryPoints", {}).get("barWidget") == "Panel.qml"
+    assert data.get("barWidget", {}).get("description")
     assert "barWidget" in data
 
     defaults = data["barWidget"].get("defaults", {})
@@ -699,7 +700,11 @@ def test_ui_privilege_boundary_contract():
     assert '"CG_PASSWORD"' not in service
     assert '"servers"' in service
     assert '"--server"' in service
-    assert "https://ipwho.is/" in service
+    assert "https://ipwho.is/?type=ipv4" in service
+    # The plain (no-params) URL must not reappear — that path returns IPv6
+    # on most hosts today, which is rarely what the user wants to see.
+    assert 'https://ipwho.is/"' not in service
+    assert "https://ipwho.is/," not in service
 
     runner_source = (ROOT / "cyberghost_runner.py").read_text()
     assert 'HELPER_CAPABILITY_VERSION = "5"' in runner_source
@@ -731,6 +736,53 @@ def test_helper_installer_binds_a_pre_authentication_snapshot():
     assert all("$DIR/" not in line for line in privileged_install_lines)
     assert '"$ROOT_STAGE_DIR/cyberghost_runner.py"' in installer
     assert '"$ROOT_STAGE_DIR/50-cyberghost.rules"' in installer
+    # mkdir without -p: a pre-created /tmp path must abort, not be reused.
+    assert 'mkdir -m 0700 -- "$ROOT_STAGE_DIR"' in installer
+    assert "mkdir -m 0700 -p" not in installer
+    assert "Refusing to reuse an existing staging path" in installer
+
+
+def test_ui_setup_and_layout_contract():
+    panel = (ROOT / "Panel.qml").read_text()
+    service = (ROOT / "Service.qml").read_text()
+    manifest = json.loads((ROOT / "manifest.json").read_text())
+
+    assert "Install helper" in panel
+    assert "Open installer" not in panel
+    assert "Update helper" in panel
+
+    assert "readonly property string setupCardState:" in service
+    assert 'return "first-run"' in service
+    assert 'return "update-available"' in service
+    assert 'return "polkit-optional"' in service
+    assert "helperNeedsUpdate" in service
+    assert "polkitRuleDismissed" in service
+    assert manifest["barWidget"]["defaults"]["polkitRuleDismissed"] is False
+
+    setup_idx = panel.find("id: setupColumn")
+    assert setup_idx != -1
+    assert "anchors.fill: parent" not in panel[setup_idx : setup_idx + 400]
+    assert "setupColumn.implicitHeight" in panel
+    assert "visible: setupCard.isUpdate || !cyberghost.helperInstalled" in panel
+    # Hidden connected-layout sections must report 0 height. Otherwise the
+    # first-run panel is as tall as the full hero+IP+controls column.
+    assert "implicitHeight: visible ? hero.implicitHeight : 0" in panel
+    assert "implicitHeight: visible ? mainControls.implicitHeight : 0" in panel
+    assert "CyberGhost account  ·  linked" in panel
+
+    refresh_idx = panel.find("id: refreshStatusButton")
+    assert refresh_idx != -1
+    refresh_slice = panel[refresh_idx : refresh_idx + 700]
+    assert "focusable: true" in refresh_slice
+    assert 'Accessible.name: "Refresh VPN status"' in refresh_slice
+    assert "implicitWidth: Style.space(28)" in refresh_slice
+
+    assert 'lastError = "Could not save setting' in service
+
+    # A VPN bar icon must poll from load so connected state is truthful.
+    # Omarchy does not honor manifest.activation for bar widgets.
+    assert "activation" not in manifest
+    assert "running: true" in service
 
 
 def test_dialup_tls_target_maps_hostname_and_preserves_request():
@@ -1088,7 +1140,11 @@ def test_helper_version_and_capability_are_verified():
         with mock.patch.object(runner, "secure_system_file", return_value=True):
             assert runner.installed_helper_version() == runner.PLUGIN_VERSION
             assert runner.secure_helper_installed() is True
-            with mock.patch.object(runner, "PLUGIN_VERSION", "1.4.4"):
+            # Patching to a deliberately-bogus version proves the helper is
+            # rejected when the on-disk version does not match the bundled
+            # PLUGIN_VERSION (the same check that powers the
+            # `helperNeedsUpdate` drift detector in Service.qml).
+            with mock.patch.object(runner, "PLUGIN_VERSION", "0.0.0-drift"):
                 assert runner.secure_helper_installed() is False
     os.unlink(helper.name)
 

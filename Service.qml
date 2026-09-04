@@ -63,6 +63,20 @@ Item {
   property string applyHint: ""
   property string rawStatusText: ""
 
+  // ---- Setup card dismissal ----
+  // User-level opt-out for the optional Polkit rule card. When true, the
+  // "OPTIONAL SETUP" card is hidden and the user can still connect/disconnect
+  // normally (pkexec just keeps prompting for the password).
+  property bool polkitRuleDismissed: !!setting("polkitRuleDismissed", false)
+  function dismissPolkitPrompt() {
+    polkitRuleDismissed = true
+    persistSetting("polkitRuleDismissed", true)
+  }
+  function restorePolkitPrompt() {
+    polkitRuleDismissed = false
+    persistSetting("polkitRuleDismissed", false)
+  }
+
   // ---- In-panel setup wizard state ----
   property bool regBusy: false
   property string setupMsg: ""
@@ -102,6 +116,31 @@ Item {
   // plugin code through pkexec. The Polkit rule remains optional.
   readonly property bool setupDone: readyWg && readyRequests && readyCreds && helperInstalled
 
+  // ---- Setup card state machine ----
+  // The card has four states. The UI title, color, and visible rows all
+  // derive from this single property; the card hides itself when state is
+  // "ready".
+  //
+  //   first-run        — anything required is missing
+  //   update-available — setup used to be done, but a new plugin version
+  //                      shipped a fresh helper (or the bundled runner was
+  //                      edited). The hero card still appears; only the
+  //                      helper is stale.
+  //   polkit-optional  — everything required is fine, only the optional
+  //                      Polkit rule is missing and the user has not
+  //                      dismissed the prompt.
+  //   ready            — everything is fine. Card hidden.
+  readonly property bool helperNeedsUpdate: helperInstalled && helperVersion !== "" && pluginVersion !== "" && helperVersion !== pluginVersion
+  readonly property string setupCardState: {
+    if (!readyWg || !readyRequests || !readyCreds || !helperInstalled)
+      return "first-run"
+    if (helperNeedsUpdate)
+      return "update-available"
+    if (!readyPolkit && !polkitRuleDismissed)
+      return "polkit-optional"
+    return "ready"
+  }
+
   // ---- Helper Methods ----
   function setting(key, fallback) {
     if (settings && settings[key] !== undefined)
@@ -115,7 +154,11 @@ Item {
     try {
       settings[key] = value
     } catch (e) {
-      console.warn("CyberGhost: could not persist setting " + key)
+      // A failed write usually means the settings object is read-only or
+      // full. lastError is the status banner, which stays visible after
+      // setup is done; setupMsg only renders inside the first-run card.
+      console.warn("CyberGhost: could not persist setting " + key + " — " + e)
+      lastError = "Could not save setting '" + key + "'. Changes will not survive a restart."
     }
   }
 
@@ -235,7 +278,13 @@ Item {
     }
     fetchingIp = true
     ipOutput = ""
-    ipInfoProcess.command = ["/usr/bin/curl", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/"]
+    // Ask ipwho.is for the IPv4 address explicitly. Without the query param
+    // the API returns whichever address it picks first, which is IPv6 on
+    // most hosts today — and the user almost always wants to see the IPv4
+    // (the one a typical service uses for geolocation, blocking, etc.).
+    // If the host is IPv6-only, the request fails and the panel renders
+    // "Unavailable" — the existing fallback path.
+    ipInfoProcess.command = ["/usr/bin/curl", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/?type=ipv4"]
     ipInfoProcess.running = true
   }
 
@@ -369,9 +418,21 @@ Item {
     id: helperInstallerProcess
     environment: ({})
     onExited: function (exitCode) {
-      var message = exitCode === 0 ? "Installer opened in a terminal. Complete it, then recheck setup." : "Could not open the terminal installer. Run install-helper.sh from the plugin directory."
-      root.polkitStatus = message
-      root.setupMsg = message
+      // The installer is a long-running interactive script in a terminal; we
+      // get the terminal's exit code (0 if the user closed it normally, even
+      // if the install failed mid-way). Treat any 0 exit as "recheck now" so
+      // the user does not have to remember to come back and click the
+      // Recheck button. Non-zero exits still surface a manual message.
+      if (exitCode === 0) {
+        root.polkitStatus = "Installer closed. Rechecking setup…"
+        root.setupMsg = "Rechecking setup after the helper installer closed…"
+        // give the runner a beat to flush new state on disk before probing it
+        recheck()
+      } else {
+        var message = "Installer exited with code " + exitCode + ". Run install-helper.sh from the plugin directory to retry."
+        root.polkitStatus = message
+        root.setupMsg = message
+      }
       helperInstallerProcess.environment = ({})
     }
   }
@@ -588,7 +649,7 @@ Item {
     if (helperInstallerProcess.running)
       return
     polkitStatus = ""
-    setupMsg = "A terminal installer was opened. Complete it there, then use Recheck setup."
+    setupMsg = "A terminal installer was opened. Complete it there; setup will be rechecked when the terminal closes."
     helperInstallerProcess.environment = ({
         "CYBERGHOST_PLUGIN_DIR": root.installerPath.replace(/\/install-helper\.sh$/, "")
       })
@@ -647,7 +708,7 @@ Item {
 
   Process {
     id: ipInfoProcess
-    command: ["/usr/bin/curl", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/"]
+    command: ["/usr/bin/curl", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/?type=ipv4"]
     stdout: SplitParser {
       onRead: function (line) {
         root.ipOutput = ServiceUtils.appendBounded(root.ipOutput, line, 32768)
