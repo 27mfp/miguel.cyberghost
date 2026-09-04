@@ -11,7 +11,21 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+*.egg-info/
 
 # Runtime artifacts
 *.log
 *.qslog
+
+# Test / coverage outputs
+.coverage
+htmlcov/
+*.cover
+
+# Build artifacts
+dist/
+build/
+
+# Local shell history / scratch
+*.local
+.bar_*.png
