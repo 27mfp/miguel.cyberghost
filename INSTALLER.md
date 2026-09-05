@@ -1,42 +1,30 @@
-# Installer guide
+# Installer reference
 
-The repository ships three shell installers. Pick the one that matches the
-task; they are not interchangeable.
+| Script | Purpose | Privileges |
+| --- | --- | --- |
+| `install.sh` | Guided dependency/account/helper setup. Optional AUR CLI installation is a separate trust decision. | Explicit terminal sudo for packages/helper. |
+| `install-helper.sh` | Install/update the fixed, root-owned connection helper. | Explicit terminal sudo; no mutable plugin path is executed as root. |
+| `fresh-install.sh` | Destructive developer reset/reinstall, not a normal upgrade. | Removes installed helper/rule with authorization. |
 
-| Script | When to use | Touches the system? | Re-runnable? |
-|---|---|---|---|
-| `install.sh` | First-time setup after `omarchy plugin add`. Walks through pacman packages, the AUR CLI, account linking, and the root helper. | Yes (asks before each step) | Yes — every step is gated by a `Y/n` prompt and skips work that is already done. |
-| `install-helper.sh` | Re-install **just** the root helper and (optionally) the Polkit rule, after a plugin update that changed `cyberghost_runner.py` or the Polkit rule. | Yes — uses `sudo` in a visible terminal. | Yes. Pass `--no-polkit-rule` (or `--helper-only`) to skip the optional Polkit rule. |
-| `fresh-install.sh` | **Developer-only.** Wipes the plugin, helper, rule, and account state, then reinstalls from GitHub (or from the local checkout) to simulate a brand-new user. | Destructive by design. | Use it after a non-trivial change to confirm a new user lands on a working setup. |
-
-## Re-installing the helper after a plugin update
-
-Every release that touches `cyberghost_runner.py` (the Python root helper) is
-**required** to re-run `install-helper.sh` from a visible terminal:
+## Helper options
 
 ```bash
-bash ~/.config/omarchy/plugins/miguel.cyberghost/install-helper.sh
+bash install-helper.sh                     # helper only, normal authorization
+bash install-helper.sh --with-polkit-rule  # explicit passwordless opt-in
+bash install-helper.sh --no-polkit-rule    # equivalent to helper-only default
 ```
 
-The widget surfaces a **"helper version drift"** warning when the on-disk
-helper is older than the bundled one, and the FIRST-RUN SETUP panel keeps
-showing the helper item until the re-install completes.
+Helper-only updates **preserve existing Polkit rules**. To revoke passwordless access, remove `/etc/polkit-1/rules.d/50-cyberghost.rules` with authorization and remove the user UI marker at `~/.local/state/cyberghost/polkit-rule-installed`.
 
-## Picking the right option for the Polkit rule
+The installer snapshots regular source files before asking for sudo, copies them into a new root-only staging directory, verifies SHA-256 digests, and installs the fixed files. It rejects unsafe source/staging paths. Reinstall after a helper version or capability update; the panel detects mismatches.
 
-The Polkit rule (granted to `wheel`) is **opt-in**. Default: install it.
-Override with `--no-polkit-rule` (or `--helper-only`) when:
+## State ownership
 
-- The machine is shared and `wheel` membership is not strictly controlled.
-- You prefer to type the sudo password every time you connect or disconnect.
+- `~/.cyberghost/native.ini`: plugin-native account identifier and device token/secret, private permissions; no password.
+- `~/.cyberghost/config.ini`: vendor CLI/legacy state. Native registration and developer reset do not overwrite/delete it.
+- `/usr/local/bin/cyberghost-runner`: root-owned lifecycle helper.
+- `/etc/wireguard/cyberghost.conf`: root-owned generated tunnel configuration, including the private WireGuard key.
+- `/etc/polkit-1/rules.d/50-cyberghost.rules`: optional authorization rule.
+- `~/.local/state/cyberghost/polkit-rule-installed`: user-owned UI marker, not authorization.
 
-Without the rule, `pkexec` still gates each connect/disconnect with a
-graphical authorization dialog.
-
-## CI does not run these scripts
-
-`install.sh`, `install-helper.sh`, and `fresh-install.sh` are user-facing
-installers and require an interactive terminal (they prompt, ask for sudo,
-and shell out to package managers). CI only validates their syntax with
-`bash -n` and `shellcheck`. A successful `pytest`, `ruff`, `qmllint`, and
-`qmlformat` run is the gate for merge.
+`omarchy plugin add` only installs the repository; it does not run these scripts or authorize system changes. The plugin stays in the existing shell process. Complete setup through its panel or a visible terminal.

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # CyberGhost plugin — simulate a brand-new user.
 #
-# Wipes every trace of the plugin (widget, polkit rule, account credentials)
-# and reinstalls it from the public GitHub URL exactly like a first-time
-# external user — then it's hands off: ALL configuration (dependencies,
+# Removes plugin-owned state (widget, helper/rule, native credentials), but
+# preserves the vendor CLI config, which may still satisfy legacy readiness.
+# Reinstalls from GitHub — then it's hands off: configuration (dependencies,
 # account link, root-helper installation and optional passwordless rule) is meant
 # to be done through the widget's FIRST-RUN SETUP panel. The helper step opens a
 # visible terminal and asks for sudo explicitly.
@@ -95,9 +95,9 @@ step "Removing Polkit rule & root helper"
 rm -f "$POLKIT_MARKER"
 
 # ---------------------------------------------------------------------------
-step "Removing CyberGhost account credentials/state"
-rm -rf "$HOME/.cyberghost"
-ok "$HOME/.cyberghost wiped (account unlinked)"
+step "Removing native plugin credentials (preserving the vendor CLI)"
+rm -f "$HOME/.cyberghost/native.ini"
+ok "Native credentials removed. Legacy config.ini is preserved and may still provide account access."
 
 # ---------------------------------------------------------------------------
 if (( PURGE_DEPS )); then

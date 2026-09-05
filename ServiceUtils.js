@@ -6,6 +6,47 @@ function isValidServerSelector(value) {
   return value === "fastest" || serverSelectorPattern.test(value)
 }
 
+function preferences(settings) {
+  var saved = settings || {}
+  var server = String(saved.serverSelection || "fastest").toLowerCase()
+  return {
+    country: String(saved.defaultCountry || "PT").trim().toUpperCase(),
+    protocol: saved.protocol === "openvpn" || saved.protocol === "openvpn_tcp" ? saved.protocol : "wireguard",
+    serverType: saved.serverType === "torrent" || saved.serverType === "streaming" ? saved.serverType : "traffic",
+    serverSelection: isValidServerSelector(server) ? server : "fastest",
+    hideDetails: saved.hideDetails === true
+  }
+}
+
+function setupState(wg, requests, credentials, helperCompatible, helperVersion, pluginVersion) {
+  if (!wg || !requests || !credentials) return "first-run"
+  if (!helperCompatible && helperVersion !== "") return "update-available"
+  if (!helperCompatible) return "first-run"
+  if (helperVersion !== pluginVersion) return "update-available"
+  return "ready"
+}
+
+function inventoryMatches(key, country, protocol, mode) {
+  return key === country + "|" + protocol + "|" + mode
+}
+
+function serverOptions(rows, countryName) {
+  var options = [{value: "fastest", label: "Automatic · " + countryName,
+    description: "Lowest reported load when inventory is available; otherwise automatic fallback"}]
+  var seen = {}
+  if (!Array.isArray(rows)) return options
+  for (var i = 0; i < rows.length && options.length < 65; i++) {
+    var item = rows[i] || {}
+    var value = String(item.server || item.instance || "").toLowerCase()
+    var load = Number(item.load)
+    if (!serverSelectorPattern.test(value) || seen[value] || !isFinite(load) || load < 0 || load > 100) continue
+    seen[value] = true
+    var city = String(item.city || countryName).substring(0, 48).replace(/</g, "[").replace(/>/g, "]")
+    options.push({value: value, label: city + " · " + value + " · " + load + "% load", description: "Exact server"})
+  }
+  return options
+}
+
 function appendBounded(existing, line, maxChars) {
   var current = String(existing || "")
   if (current.indexOf("[output truncated]") !== -1) return current

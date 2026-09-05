@@ -34,8 +34,8 @@ HELPER_BIN_PATH = "/usr/local/bin/cyberghost-runner"
 POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
 POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
 POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
-PLUGIN_VERSION = "1.5.3"
-HELPER_CAPABILITY_VERSION = "5"
+PLUGIN_VERSION = "1.6.0"
+HELPER_CAPABILITY_VERSION = "6"
 MAX_CONFIG_BYTES = 64 * 1024
 MAX_HELPER_BYTES = 256 * 1024
 MAX_HTTP_RESPONSE_BYTES = 64 * 1024
@@ -679,6 +679,11 @@ def clean_command_error(text, fallback="Command failed"):
         clean = line.strip()
         if not clean:
             continue
+        # PyInstaller appends this generic footer after the useful exception.
+        if re.match(r"\[\d+\] Failed to execute script .*due to unhandled exception!?$", clean):
+            continue
+        if re.search(r"The key [\"\'](?:password|username)[\"\'] does not exist in section [\"\']account[\"\']", clean):
+            return "CyberGhost CLI account setup is incomplete. Run cyberghostvpn --setup in a terminal, then refresh."
         if clean in {
             "Traceback (most recent call last):",
             "During handling of the above exception, another exception occurred:",
@@ -823,6 +828,10 @@ def cyberghost_cli_environment():
 
 
 def user_config_path():
+    return os.path.join(invoking_user().pw_dir, ".cyberghost", "native.ini")
+
+
+def legacy_config_path():
     return os.path.join(invoking_user().pw_dir, ".cyberghost", "config.ini")
 
 
@@ -830,12 +839,12 @@ def validate_user_config_path(path, require_default=False):
     """Keep account state inside the invoking user's private CyberGhost directory."""
     expected = os.path.abspath(user_config_path())
     candidate = os.path.abspath(os.path.expanduser(path or expected))
-    if require_default and candidate != expected:
+    if require_default and candidate not in (expected, os.path.abspath(legacy_config_path())):
         raise RuntimeError("Root helper may only use the invoking user's CyberGhost config")
     if os.path.commonpath((candidate, os.path.dirname(expected))) != os.path.dirname(expected):
         raise RuntimeError("Configuration path must stay inside ~/.cyberghost")
-    if os.path.basename(candidate) != "config.ini":
-        raise RuntimeError("Configuration path must be ~/.cyberghost/config.ini")
+    if os.path.basename(candidate) not in ("native.ini", "config.ini"):
+        raise RuntimeError("Configuration path must be ~/.cyberghost/native.ini or the legacy config.ini")
     config_dir = os.path.dirname(candidate)
     if os.path.lexists(config_dir) and os.path.islink(config_dir):
         raise RuntimeError("CyberGhost config directory must not be a symlink")
@@ -844,6 +853,10 @@ def validate_user_config_path(path, require_default=False):
 
 def get_credentials(config_path=None):
     path = find_config_path(config_path)
+    # Read-only compatibility: never rewrite the vendor CLI's credentials.
+    # A present but invalid native file must fail closed, not fall back.
+    if path == user_config_path() and not os.path.lexists(path):
+        path = legacy_config_path()
     if os.geteuid() == 0 and os.environ.get("PKEXEC_UID", "").isdigit():
         path = validate_user_config_path(path, require_default=True)
     if not os.path.exists(path):
@@ -919,6 +932,7 @@ def get_servers_for_country(country_code, server_type="traffic"):
             raise RuntimeError(detail)
 
         servers = []
+        seen = set()
         for line in (res.stdout or "").splitlines()[:256]:
             match = re.match(r"\|\s*(\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(\d+)%\s*\|\s*$", line)
             if not match:
@@ -929,7 +943,15 @@ def get_servers_for_country(country_code, server_type="traffic"):
                 server = validate_server_selector(instance)
             except ValueError:
                 continue
-            servers.append({"city": city, "instance": server, "server": server, "load": int(match.group(4))})
+            load = int(match.group(4))
+            if load > 100 or server in seen:
+                continue
+            seen.add(server)
+            servers.append({"city": city, "instance": server, "server": server, "load": load})
+        if not servers:
+            raise RuntimeError(
+                "No selectable servers returned by CyberGhost CLI. Automatic selection remains available."
+            )
         servers.sort(key=lambda item: (item["load"], item["server"]))
         return servers
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as exc:
@@ -1194,6 +1216,26 @@ def best_effort_wireguard_down(wg_quick, timeout=5):
         pass
 
 
+def activate_wireguard(wg_quick, deadline):
+    """Activate once; every failure after launch attempts rollback, never drops DNS."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("WireGuard connection attempt timed out before tunnel activation")
+    try:
+        result = run_bounded([wg_quick, "up", INTERFACE], timeout=min(45, remaining), max_output_bytes=16 * 1024)
+        if result.returncode != 0:
+            detail = clean_command_error(result.stderr or result.stdout, "unknown error")
+            if "resolv" in detail.lower():
+                raise RuntimeError(
+                    "VPN DNS setup failed. Configure a working resolvconf provider (for example openresolv), "
+                    "then reconnect. The tunnel was not activated without VPN DNS."
+                )
+            raise RuntimeError(f"wg-quick up failed: {detail}")
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
+        best_effort_wireguard_down(wg_quick)
+        raise
+
+
 def connect(country_code="PT", server_type="traffic", city=None, config_path=None, server=None):
     """Establish a native WireGuard tunnel within one bounded operation budget."""
     deadline = time.monotonic() + NATIVE_CONNECT_BUDGET_SECONDS
@@ -1226,40 +1268,7 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
     )
 
     write_wireguard_config(priv_key, peer_ip, server_key, server_ip, server_port, dns_servers_str)
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise RuntimeError("WireGuard connection attempt timed out before tunnel activation")
-    up_res = run_bounded(
-        [wg_quick, "up", INTERFACE],
-        timeout=min(45, remaining),
-        max_output_bytes=16 * 1024,
-    )
-    if up_res.returncode != 0:
-        # If DNS configuration failed in wg-quick, tear down the partially
-        # created interface before retrying without the optional DNS hook.
-        if "resolvconf" in (up_res.stderr or "") or "resolv" in (up_res.stderr or ""):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                best_effort_wireguard_down(wg_quick)
-                raise RuntimeError("WireGuard connection attempt timed out while configuring DNS")
-            best_effort_wireguard_down(wg_quick, timeout=min(20, remaining))
-            write_wireguard_config(priv_key, peer_ip, server_key, server_ip, server_port)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise RuntimeError("WireGuard connection attempt timed out while configuring DNS")
-            up_res = run_bounded(
-                [wg_quick, "up", INTERFACE],
-                timeout=min(45, remaining),
-                max_output_bytes=16 * 1024,
-            )
-
-        if up_res.returncode != 0:
-            # Best-effort cleanup of a half-created interface/config.
-            remaining = deadline - time.monotonic()
-            cleanup_timeout = min(20, max(5, remaining)) if remaining > 0 else 5
-            best_effort_wireguard_down(wg_quick, timeout=cleanup_timeout)
-            err_msg = (up_res.stderr or up_res.stdout or "").strip()[:512]
-            raise RuntimeError(f"wg-quick up failed: {err_msg}")
+    activate_wireguard(wg_quick, deadline)
 
     print("VPN connection established.")
     print(f"Connected to {cc} via {connected_host} (IP: {server_ip})")
@@ -1439,6 +1448,11 @@ def register(config_path=None):
     env_username = os.environ.pop("CG_USERNAME", "")
     env_password = os.environ.pop("CG_PASSWORD", "")
     try:
+        target = validate_user_config_path(config_path)
+        if os.path.basename(target) == "config.ini":
+            raise RuntimeError(
+                "Native registration cannot overwrite the vendor CLI config. Use ~/.cyberghost/native.ini."
+            )
         username = env_username.strip()[:256]
         password = env_password[:256]
         if not username or not password:
@@ -1484,7 +1498,6 @@ def register(config_path=None):
         if not device.get("token"):
             raise RuntimeError("Device registration response missing token.")
 
-        target = validate_user_config_path(config_path)
         write_user_config(target, username, device_name, device)
         print(f"Account linked. Device credentials stored in {target}")
     finally:
@@ -1498,12 +1511,37 @@ def register(config_path=None):
         os.environ.pop("CG_PASSWORD", None)
 
 
+def cli_account_configured():
+    """Local prerequisite check only; this does not prove vendor authentication."""
+    path = legacy_config_path()
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_CONFIG_BYTES or info.st_mode & 0o077:
+            return False
+        if info.st_uid != invoking_user().pw_uid:
+            return False
+        with os.fdopen(fd, encoding="utf-8") as stream:
+            fd = None
+            config = configparser.ConfigParser(interpolation=None)
+            config.read_string(stream.read(MAX_CONFIG_BYTES + 1))
+        return all(config.get("account", key, fallback="").strip() for key in ("username", "password"))
+    except (OSError, UnicodeError, configparser.Error):
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def check():
     """Report onboarding readiness as JSON (fast, no heavy imports)."""
     result = {
         "wg_tools": shutil.which("wg-quick") is not None,
+        "dns_tools": shutil.which("resolvconf") is not None,
         "requests": importlib.util.find_spec("requests") is not None,
         "cli": system_binary_available("cyberghostvpn"),
+        "cli_configured": cli_account_configured(),
         "credentials": False,
         "helper_installed": secure_helper_installed(),
         "helper_version": installed_helper_version(),

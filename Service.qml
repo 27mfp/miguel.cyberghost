@@ -24,12 +24,9 @@ Item {
   // `fastest` means the lowest-load live instance for the selected country.
   // A concrete value is an exact server name returned by the official CLI.
   property string serverSelection: "fastest"
-  property var serverOptions: []
-  property bool loadingServers: false
-  property string serverError: ""
-  property string serversOutput: ""
-  property string serversError: ""
-  property string serversProcessCountry: ""
+  readonly property var serverOptions: inventory.options
+  readonly property bool loadingServers: inventory.loading
+  readonly property string serverError: inventory.error
   property string protocol: "wireguard"
   property string serverType: "traffic"
   property string streamingService: ""
@@ -63,28 +60,14 @@ Item {
   property string applyHint: ""
   property string rawStatusText: ""
 
-  // ---- Setup card dismissal ----
-  // User-level opt-out for the optional Polkit rule card. When true, the
-  // "OPTIONAL SETUP" card is hidden and the user can still connect/disconnect
-  // normally (pkexec just keeps prompting for the password).
-  property bool polkitRuleDismissed: !!setting("polkitRuleDismissed", false)
-  function dismissPolkitPrompt() {
-    polkitRuleDismissed = true
-    persistSetting("polkitRuleDismissed", true)
-  }
-  function restorePolkitPrompt() {
-    polkitRuleDismissed = false
-    persistSetting("polkitRuleDismissed", false)
-  }
-
   // ---- In-panel setup wizard state ----
-  property bool regBusy: false
-  property string setupMsg: ""
-  property string depsError: ""
-  property string polkitStatus: ""
-  property string registerOutput: ""
-  property string registerError: ""
-  property string checkOutput: ""
+  property alias regBusy: setup.regBusy
+  property alias setupMsg: setup.setupMsg
+  property alias depsError: setup.depsError
+  property alias polkitStatus: setup.polkitStatus
+  property alias registerOutput: setup.registerOutput
+  property alias registerError: setup.registerError
+  property alias checkOutput: setup.checkOutput
   property string statusOutput: ""
   property string statusError: ""
   property string ipOutput: ""
@@ -94,51 +77,46 @@ Item {
   property string streamingServicesErrorOutput: ""
   property string streamingError: ""
   property string streamingProcessCountry: ""
-  readonly property bool depsBusy: depsProcess.running
-  readonly property bool polkitBusy: helperInstallerProcess.running
+  readonly property bool depsBusy: setup.depsBusy
+  readonly property bool polkitBusy: setup.polkitBusy
   readonly property bool streamingBusy: streamingServicesProcess.running
 
   property real lastIpFetchAt: 0
 
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
-  readonly property bool busy: statusProcess.running || actionProcess.running || depsProcess.running || helperInstallerProcess.running || streamingServicesProcess.running || serverProcess.running || regBusy || connecting || disconnecting
+  readonly property bool busy: actionProcess.running || setup.busy || connecting || disconnecting
 
   // ---- Onboarding readiness (from runner `check --json`) ----
-  property bool readyWg: false
-  property bool readyRequests: false
-  property bool readyCli: false
-  property bool readyCreds: false
-  property bool readyPolkit: false
-  property bool helperInstalled: false
-  property string helperVersion: ""
-  property string pluginVersion: ""
+  property alias readyWg: setup.readyWg
+  property alias readyDns: setup.readyDns
+  property alias readyRequests: setup.readyRequests
+  property alias readyCli: setup.readyCli
+  property alias cliConfigured: setup.cliConfigured
+  property alias readyCreds: setup.readyCreds
+  property alias readyPolkit: setup.readyPolkit
+  property alias helperInstalled: setup.helperInstalled
+  property alias helperVersion: setup.helperVersion
+  property alias pluginVersion: setup.pluginVersion
   // The fixed root helper is mandatory: the UI must never execute mutable
   // plugin code through pkexec. The Polkit rule remains optional.
-  readonly property bool setupDone: readyWg && readyRequests && readyCreds && helperInstalled
+  readonly property bool setupDone: readyWg && readyDns && readyRequests && readyCreds && helperInstalled
 
-  // ---- Setup card state machine ----
-  // The card has four states. The UI title, color, and visible rows all
-  // derive from this single property; the card hides itself when state is
-  // "ready".
-  //
-  //   first-run        — anything required is missing
-  //   update-available — setup used to be done, but a new plugin version
-  //                      shipped a fresh helper (or the bundled runner was
-  //                      edited). The hero card still appears; only the
-  //                      helper is stale.
-  //   polkit-optional  — everything required is fine, only the optional
-  //                      Polkit rule is missing and the user has not
-  //                      dismissed the prompt.
-  //   ready            — everything is fine. Card hidden.
-  readonly property bool helperNeedsUpdate: helperInstalled && helperVersion !== "" && pluginVersion !== "" && helperVersion !== pluginVersion
-  readonly property string setupCardState: {
-    if (!readyWg || !readyRequests || !readyCreds || !helperInstalled)
-      return "first-run"
-    if (helperNeedsUpdate)
-      return "update-available"
-    if (!readyPolkit && !polkitRuleDismissed)
-      return "polkit-optional"
-    return "ready"
+  readonly property string setupCardState: ServiceUtils.setupState(readyWg && readyDns, readyRequests, readyCreds, helperInstalled, helperVersion, pluginVersion)
+
+  SetupController {
+    id: setup
+    runnerPath: root.runnerPath
+    installerPath: root.installerPath
+    onRegistered: root.lastError = ""
+    onChecked: {
+      root.refreshServers()
+      if (root.serverType === "streaming")
+        root.refreshStreamingServices()
+      root.refresh()
+    }
+    onSendNotification: function (title, body, urgency) {
+      root.sendNotification(title, body, urgency)
+    }
   }
 
   // ---- Helper Methods ----
@@ -148,18 +126,11 @@ Item {
     return fallback
   }
 
+  signal settingChanged(string key, var value)
   function persistSetting(key, value) {
-    if (!settings)
+    if (settings && settings[key] === value)
       return
-    try {
-      settings[key] = value
-    } catch (e) {
-      // A failed write usually means the settings object is read-only or
-      // full. lastError is the status banner, which stays visible after
-      // setup is done; setupMsg only renders inside the first-run card.
-      console.warn("CyberGhost: could not persist setting " + key + " — " + e)
-      lastError = "Could not save setting '" + key + "'. Changes will not survive a restart."
-    }
+    settingChanged(key, value)
   }
 
   function setCountry(code) {
@@ -213,38 +184,25 @@ Item {
     persistSetting("serverSelection", value)
   }
 
-  function defaultServerOptions() {
-    return [
-      {
-        value: "fastest",
-        label: readyCli ? "⚡ Fastest in " + countryName : "⚡ Automatic server",
-        description: readyCli ? "Choose the lowest-load server in " + countryName : "Use the automatic fallback for " + countryName
-      }
-    ]
+  function refreshServers() {
+    inventory.refresh()
   }
 
-  function refreshServers() {
-    serverOptions = defaultServerOptions()
-    serverError = ""
-    if (protocol !== "wireguard" || serverType !== "traffic")
-      return
-    if (!readyCli) {
-      if (serverSelection !== "fastest")
-        setServerSelection("fastest")
-      serverError = "Install cyberghostvpn to choose an exact server. Fastest mode remains available."
-      return
+  ServerInventory {
+    id: inventory
+    country: root.country
+    countryName: root.countryName
+    protocol: root.protocol
+    mode: root.serverType
+    cliAvailable: root.readyCli && root.cliConfigured
+    runnerPath: root.runnerPath
+    onLoaded: function (options) {
+      var found = options.some(function (item) {
+        return item.value === root.serverSelection
+      })
+      if (!found)
+        root.setServerSelection("fastest")
     }
-    // The server inventory is a short-lived request. Do not cancel and
-    // immediately restart it when the setup check finishes; that race can
-    // deliver the cancelled process's empty output as a false error.
-    if (serverProcess.running)
-      return
-    serversProcessCountry = country
-    serversOutput = ""
-    serversError = ""
-    loadingServers = true
-    serverProcess.command = ["/usr/bin/python3", root.runnerPath, "servers", "--country", country, "--server-type", serverType]
-    serverProcess.running = true
   }
 
   function refresh() {
@@ -310,19 +268,26 @@ Item {
       return
     }
 
-    if (targetCountry && !setCountry(targetCountry)) {
+    if (targetCountry && String(targetCountry).trim().toUpperCase() !== country && !setCountry(targetCountry)) {
       actionStatus = ""
       sendNotification("CyberGhost VPN", lastError, "normal")
       return
     }
-    if (targetProtocol)
+    if (targetProtocol && targetProtocol !== protocol)
       setProtocol(targetProtocol)
-    if (targetServerType)
+    if (targetServerType && targetServerType !== serverType)
       setServerType(targetServerType)
     if (targetStreaming !== undefined)
       streamingService = targetStreaming
     if (targetServer !== undefined && targetServer !== "")
       setServerSelection(targetServer)
+
+    if ((protocol !== "wireguard" || serverType !== "traffic") && (!readyCli || !cliConfigured)) {
+      lastError = "Advanced modes require CyberGhost CLI account setup. Run cyberghostvpn --setup in a terminal."
+      actionStatus = ""
+      sendNotification("CyberGhost VPN", lastError, "normal")
+      return
+    }
 
     if (serverType === "streaming" && !streamingService) {
       lastError = readyCli ? "Choose a streaming service before connecting." : "Install and set up the cyberghostvpn CLI for Streaming mode."
@@ -333,7 +298,7 @@ Item {
 
     lastError = ""
     applyHint = ""
-    var serverLabel = serverSelection === "fastest" ? "fastest server" : serverSelection
+    var serverLabel = serverSelection === "fastest" ? "automatic server" : serverSelection
     actionStatus = "Connecting to " + countryName + " (" + country + ", " + serverLabel + ")…"
     connecting = true
     disconnecting = false
@@ -388,128 +353,6 @@ Item {
     }
   }
 
-  // ---- Setup wizard processes ----
-  Process {
-    id: depsProcess
-    command: ["/usr/bin/pkexec", "/usr/bin/pacman", "-S", "--needed", "--noconfirm", "wireguard-tools", "python-requests"]
-    stdout: SplitParser {
-      onRead: function (line) {
-        root.depsError = ServiceUtils.appendBounded(root.depsError, line, 4096)
-      }
-    }
-    stderr: SplitParser {
-      onRead: function (line) {
-        root.depsError = ServiceUtils.appendBounded(root.depsError, line, 4096)
-      }
-    }
-    onExited: function (exitCode) {
-      if (exitCode === 0) {
-        root.setupMsg = "Packages installed."
-        root.sendNotification("CyberGhost VPN", "Dependencies installed.", "normal")
-      } else {
-        root.setupMsg = ServiceUtils.cleanProcessError(root.depsError, "Could not install dependencies. Check pacman and try again.")
-      }
-      root.depsError = ""
-      root.recheck()
-    }
-  }
-
-  Process {
-    id: helperInstallerProcess
-    environment: ({})
-    onExited: function (exitCode) {
-      // The installer is a long-running interactive script in a terminal; we
-      // get the terminal's exit code (0 if the user closed it normally, even
-      // if the install failed mid-way). Treat any 0 exit as "recheck now" so
-      // the user does not have to remember to come back and click the
-      // Recheck button. Non-zero exits still surface a manual message.
-      if (exitCode === 0) {
-        root.polkitStatus = "Installer closed. Rechecking setup…"
-        root.setupMsg = "Rechecking setup after the helper installer closed…"
-        // give the runner a beat to flush new state on disk before probing it
-        recheck()
-      } else {
-        var message = "Installer exited with code " + exitCode + ". Run install-helper.sh from the plugin directory to retry."
-        root.polkitStatus = message
-        root.setupMsg = message
-      }
-      helperInstallerProcess.environment = ({})
-    }
-  }
-
-  Process {
-    id: registerProcess
-    command: ["/usr/bin/python3", root.runnerPath, "register"]
-    environment: ({})
-    property string pendingCredentials: ""
-    stdinEnabled: true
-    onStarted: {
-      write(pendingCredentials + "\n")
-      pendingCredentials = ""
-    }
-    stdout: SplitParser {
-      onRead: function (line) {
-        root.registerOutput = ServiceUtils.appendBounded(root.registerOutput, line, 4096)
-      }
-    }
-    stderr: SplitParser {
-      onRead: function (line) {
-        root.registerError = ServiceUtils.appendBounded(root.registerError, line, 4096)
-      }
-    }
-    onExited: function (exitCode) {
-      root.regBusy = false
-      var out = String(root.registerOutput || "")
-      var err = String(root.registerError || "")
-      registerProcess.pendingCredentials = ""
-      registerProcess.environment = ({})
-      if (exitCode === 0) {
-        root.setupMsg = ""
-        root.lastError = ""
-        root.sendNotification("CyberGhost VPN", "Account linked — you're ready to connect.", "normal")
-      } else {
-        var cleanErr = ServiceUtils.cleanProcessError(err || out, "Could not link account.")
-        root.setupMsg = cleanErr
-      }
-      root.registerOutput = ""
-      root.registerError = ""
-      root.recheck()
-    }
-  }
-
-  // ---- Processes ----
-  Process {
-    id: checkProcess
-    command: ["/usr/bin/python3", root.runnerPath, "check", "--json"]
-    stdout: SplitParser {
-      onRead: function (line) {
-        root.checkOutput = ServiceUtils.appendBounded(root.checkOutput, line, 4096)
-      }
-    }
-    onExited: function (exitCode) {
-      var d = {}
-      try {
-        var text = String(root.checkOutput || "{}").substring(0, 4096)
-        d = JSON.parse(text)
-      } catch (e) {
-        // An unavailable or older runner leaves the readiness flags false.
-      }
-      root.readyWg = !!d.wg_tools
-      root.readyRequests = !!d.requests
-      root.readyCli = !!d.cli
-      root.readyCreds = !!d.credentials
-      root.readyPolkit = !!d.helper_installed && !!d.polkit_rule_installed
-      root.helperInstalled = !!d.helper_installed
-      root.helperVersion = String(d.helper_version || "")
-      root.pluginVersion = String(d.plugin_version || "")
-      root.refreshServers()
-      if (!root.readyPolkit && root.polkitStatus === "Passwordless connect enabled.")
-        root.polkitStatus = ""
-      root.checkOutput = ""
-      root.refresh()
-    }
-  }
-
   Process {
     id: streamingServicesProcess
     stdout: SplitParser {
@@ -539,8 +382,10 @@ Item {
         // Keep an empty list when the optional CLI emits malformed output.
       }
       root.streamingOptions = parsed
-      if (parsed.length > 0)
-        root.streamingService = String(parsed[0].value || "")
+      if (!parsed.some(function (item) {
+        return item && item.value === root.streamingService
+      }))
+        root.streamingService = parsed.length > 0 ? String(parsed[0].value || "") : ""
       if (exitCode !== 0 || parsed.length === 0) {
         var cliError = String(root.streamingServicesErrorOutput || "").trim()
         root.streamingError = cliError !== "" ? ServiceUtils.cleanProcessError(cliError, "Could not load streaming services.") : (root.readyCli ? "No streaming services are available for this country." : "Install and set up the cyberghostvpn CLI to load streaming services.")
@@ -550,133 +395,34 @@ Item {
     }
   }
 
-  Process {
-    id: serverProcess
-    stdout: SplitParser {
-      onRead: function (line) {
-        root.serversOutput = ServiceUtils.appendBounded(root.serversOutput, line, 32768)
-      }
-    }
-    stderr: SplitParser {
-      onRead: function (line) {
-        root.serversError = ServiceUtils.appendBounded(root.serversError, line, 4096)
-      }
-    }
-    onExited: function (exitCode) {
-      root.loadingServers = false
-      var requestedCountry = root.serversProcessCountry
-      var out = String(root.serversOutput || "").substring(0, 32768).trim()
-      var err = String(root.serversError || "").substring(0, 512).trim()
-      root.serversOutput = ""
-      root.serversError = ""
-      if (requestedCountry !== root.country) {
-        root.refreshServers()
-        return
-      }
-
-      var parsed = []
-      try {
-        var raw = JSON.parse(out || "[]")
-        if (Array.isArray(raw))
-          parsed = raw
-      } catch (e) {
-        // Keep the automatic fallback when the optional CLI emits malformed output.
-      }
-
-      var options = root.defaultServerOptions()
-      for (var i = 0; i < parsed.length && i < 64; i++) {
-        var item = parsed[i] || {}
-        var value = String(item.server || item.instance || "").toLowerCase()
-        if (!ServiceUtils.isValidServerSelector(value))
-          continue
-        var city = String(item.city || root.countryName).substring(0, 48)
-        var displayCity = city.replace(/</g, "[").replace(/>/g, "]")
-        var load = parseInt(item.load, 10)
-        var loadText = isNaN(load) ? "" : " · " + load + "% load"
-        options.push({
-          value: value,
-          label: displayCity + " · " + value + loadText,
-          description: "Manual server selection"
-        })
-      }
-      root.serverOptions = options
-      if (root.serverSelection !== "fastest") {
-        var found = false
-        for (var j = 1; j < options.length; j++) {
-          if (options[j].value === root.serverSelection) {
-            found = true
-            break
-          }
-        }
-        if (!found)
-          root.setServerSelection("fastest")
-      }
-      if (options.length === 1 && (exitCode !== 0 || err !== "")) {
-        root.serverError = err !== "" ? ServiceUtils.cleanProcessError(err, "Could not load the live server list.") : "Could not load the live server list. Fastest fallback is still available."
-      }
-    }
-  }
-
   function recheck() {
-    if (!checkProcess.running)
-      checkProcess.running = true
+    setup.recheck()
   }
 
   function refreshStreamingServices() {
-    if (serverType !== "streaming")
+    if (serverType !== "streaming" || streamingServicesProcess.running)
       return
     streamingOptions = []
-    streamingService = ""
     streamingError = ""
     streamingServicesOutput = ""
     streamingServicesErrorOutput = ""
-    if (streamingServicesProcess.running)
+    if (!readyCli || !cliConfigured) {
+      streamingError = "Complete CyberGhost CLI setup, then recheck."
       return
+    }
     streamingProcessCountry = country
     streamingServicesProcess.command = ["/usr/bin/python3", root.runnerPath, "streaming-services", "--country", country]
     streamingServicesProcess.running = true
   }
 
   function installDeps() {
-    if (depsProcess.running)
-      return
-    depsError = ""
-    setupMsg = "Installing system packages (authorize in the dialog)…"
-    depsProcess.running = true
+    setup.installDeps()
   }
-
-  function openHelperInstaller() {
-    if (helperInstallerProcess.running)
-      return
-    polkitStatus = ""
-    setupMsg = "A terminal installer was opened. Complete it there; setup will be rechecked when the terminal closes."
-    helperInstallerProcess.environment = ({
-        "CYBERGHOST_PLUGIN_DIR": root.installerPath.replace(/\/install-helper\.sh$/, "")
-      })
-    helperInstallerProcess.command = ["omarchy-launch-terminal", "bash", "-lc", "cd -- \"$CYBERGHOST_PLUGIN_DIR\" && bash ./install-helper.sh; rc=$?; printf '\\nInstaller exited with code %s. Press Enter to close.\\n' \"$rc\"; read -r"]
-    helperInstallerProcess.running = true
+  function openHelperInstaller(withPolkit) {
+    setup.openHelperInstaller(withPolkit)
   }
-
   function registerAccount(username, password) {
-    if (regBusy || !username || !password)
-      return
-    if (username.length > 256 || password.length > 256) {
-      setupMsg = "Username and password must be 256 characters or fewer."
-      return
-    }
-    regBusy = true
-    registerOutput = ""
-    registerError = ""
-    setupMsg = "Linking your CyberGhost account…"
-    // Credentials travel once over stdin, never argv, environment or disk.
-    registerProcess.environment = ({
-        "CG_DEVICE_NAME": Quickshell.env("HOSTNAME") || "omarchy"
-      })
-    registerProcess.pendingCredentials = JSON.stringify({
-      "username": username,
-      "password": password
-    })
-    registerProcess.running = true
+    setup.registerAccount(username, password)
   }
 
   Process {
@@ -955,22 +701,25 @@ Item {
     onTriggered: root.refresh()
   }
 
+  // Shell settings may arrive after Component.onCompleted. Restore without
+  // calling user-action setters: loading preferences must not write defaults
+  // over the saved file or reset an exact-server selection.
+  function restoreSettings() {
+    var saved = ServiceUtils.preferences(settings)
+    var selected = Countries.countryByCode(saved.country)
+    if (!selected || !Countries.isSupportedCountry(saved.country))
+      selected = Countries.countryByCode("PT")
+    country = selected.code
+    countryName = selected.name
+    countryFlag = selected.flag
+    protocol = saved.protocol
+    serverType = saved.serverType
+    serverSelection = saved.serverSelection
+    hideDetails = saved.hideDetails
+  }
+  onSettingsChanged: restoreSettings()
   Component.onCompleted: {
-    var defCountry = setting("defaultCountry", "PT")
-    var savedServerSelection = setting("serverSelection", "fastest")
-    if (!setCountry(defCountry)) {
-      setCountry("PT")
-      lastError = ""
-    }
-    var defProto = setting("protocol", "wireguard")
-    setProtocol(defProto)
-    var defType = setting("serverType", "traffic")
-    setServerType(defType)
-    // setCountry/setServerType intentionally reset the server when a user
-    // changes target/mode; restore the persisted value only after startup.
-    setServerSelection(savedServerSelection)
-    setHideDetails(!!setting("hideDetails", false))
-
-    checkProcess.running = true
+    restoreSettings()
+    setup.recheck()
   }
 }

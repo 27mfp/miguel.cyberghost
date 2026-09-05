@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.6.0
+
+- Split the bar entry point, popup, setup UI, connection preferences/details, setup processes and inventory into focused components following the installed Omarchy clock lifecycle contract.
+- Simplify daily use to country → Connect; place server/mode/protocol and optional passwordless authorization under Advanced settings. Remove duplicate quick-connect tiles, the second power button and recurring optional-setup reminders.
+- Preserve exact-server selection when connecting, restore late-arriving shell settings without writing defaults, and persist user changes through the host's inline settings API.
+- Separate native credentials from vendor CLI state, distinguish installed/configured CLI readiness, and identify incompatible helpers as updates. Keep private legacy credentials readable without rewriting them.
+- Require VPN DNS setup; remove the unsafe DNS-less retry. Attempt rollback on activation errors, timeouts and bounded-output failures. Detect a missing resolvconf provider during onboarding.
+- Keep background status/inventory work from blocking Disconnect. Reject stale inventory callbacks; preserve in-flight streaming output and selected service profiles on refresh.
+- Use observed tunnel/backend state instead of labeling the connection with next-connect preferences. Mask geolocation mismatch details in privacy mode and remove blanket protection claims.
+- Make passwordless installation explicit in GUI and terminal flows. Preserve vendor credentials during removal/developer reset.
+- Replace brittle layout text checks with Qt behavior tests; organize backend tests by domain. Add real installed-import lint tooling with explicit host metadata limits, CI component tests and updated architecture/testing/install documentation.
+
+**Upgrade:** run the bundled `install-helper.sh` explicitly after updating the plugin. No kill switch is provided; live VPN routing still needs integration validation.
+
+## 1.5.4
+
+- Native registration now uses private `~/.cyberghost/native.ini`, with read-only legacy credential compatibility, instead of overwriting vendor CLI configuration. Helper capability updated; reinstall the helper.
+- Optional CLI modes check account configuration separately from executable availability. Server inventory errors retain the useful cause and filter duplicate/invalid entries.
+- Passwordless Polkit installation is explicitly opt-in (`--with-polkit-rule`); the panel's Enable action passes that option. Helper-only updates preserve existing rules.
+- Development docs use real plugin directories and hot reload; removal preserves vendor credentials. Security documentation distinguishes routing and handshake monitoring from leak protection.
+
+- **Tidied the FIRST-RUN SETUP card.** Field labels sit above inputs with clear vertical hierarchy (`Style.space(8)` between fields vs `Style.space(4)` label margins). Status dots are vertically centered with text cap-height (`anchors.verticalCenterOffset: -Style.space(1)`) so they no longer sag below the text baseline. Buttons have comfortable vertical padding (`Style.space(4)`) and balanced horizontal padding, "Link account" dims gracefully when empty/disabled, and a subtle divider separates the Account and Helper steps when both are active. Both primary actions cleanly align to the right edge.
+
 ## 1.5.3
 
 - **Fixed the FIRST-RUN SETUP / PLUGIN UPDATE card height.** Vertically anchoring the inner Column while the Rectangle's `implicitHeight` depended on that Column created a Qt Quick binding loop (~90 px of empty space). `anchors.fill` on the Column was worse: it collapses the card to 0 height. The card now sizes from content with `x`/`y`/`width` padding, matching the official Omarchy panel pattern. The IP card uses the same layout so Copy IP no longer sits above an empty bar.

@@ -3,8 +3,8 @@
 #
 # This script deliberately uses sudo in the user's terminal. The Omarchy panel
 # must not pass a user-editable plugin path to pkexec's root install operation.
-# By default it installs the helper and optional Polkit rule; pass
-# --no-polkit-rule (or --helper-only) to install only the helper.
+# By default it installs only the helper. Pass --with-polkit-rule to explicitly
+# opt into passwordless lifecycle authorization. Existing rules are not removed.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +12,7 @@ HELPER_PATH="/usr/local/bin/cyberghost-runner"
 RULE_PATH="/etc/polkit-1/rules.d/50-cyberghost.rules"
 MARKER_DIR="$HOME/.local/state/cyberghost"
 MARKER_PATH="$MARKER_DIR/polkit-rule-installed"
-INSTALL_POLKIT=1
+INSTALL_POLKIT=0
 SNAPSHOT_DIR=""
 ROOT_STAGE_DIR=""
 
@@ -31,8 +31,9 @@ trap cleanup EXIT
 while (($#)); do
   case "$1" in
     --no-polkit-rule | --helper-only) INSTALL_POLKIT=0 ;;
+    --with-polkit-rule) INSTALL_POLKIT=1 ;;
     -h | --help)
-      printf 'Usage: %s [--no-polkit-rule|--helper-only]\n' "$(basename "$0")"
+      printf 'Usage: %s [--with-polkit-rule|--no-polkit-rule|--helper-only]\n' "$(basename "$0")"
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
