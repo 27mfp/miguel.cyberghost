@@ -64,8 +64,10 @@ install_polkit_rule() {
     return 0
   fi
 
-  if confirm "Also install the optional Polkit rule for passwordless connect/disconnect?"; then
-    bash "$DIR/install-helper.sh"
+  local answer=""
+  read -rp "Allow passwordless VPN actions for wheel members? [y/N] " answer
+  if [[ $answer == [Yy]* ]]; then
+    bash "$DIR/install-helper.sh" --with-polkit-rule
     say "${GREEN}✓${NC} Root helper and optional Polkit rule installed"
   else
     bash "$DIR/install-helper.sh" --no-polkit-rule
@@ -74,8 +76,8 @@ install_polkit_rule() {
 }
 
 setup_account() {
-  if [[ -f "$HOME/.cyberghost/config.ini" ]]; then
-    say "${GREEN}✓${NC} CyberGhost credentials found (~/.cyberghost/config.ini)"
+  if /usr/bin/python3 "$DIR/cyberghost_runner.py" check | /usr/bin/python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("credentials") else 1)'; then
+    say "${GREEN}✓${NC} Native or compatible legacy credentials are ready"
     return 0
   fi
   say "→ No CyberGhost credentials found."
@@ -100,6 +102,7 @@ try:
     def tick(key):
         return "\033[0;32m✓\033[0m" if data.get(key) else "\033[1;33m✗\033[0m"
     print(f" {tick('wg_tools')} WireGuard tools (wg-quick)")
+    print(f" {tick('dns_tools')} VPN DNS provider (resolvconf)")
     print(f" {tick('requests')} Python requests (key negotiation)")
     print(f" {tick('credentials')} CyberGhost account credentials")
     print(f" {tick('helper_installed')} Root helper binary (/usr/local/bin/cyberghost-runner)")
@@ -118,6 +121,9 @@ say "CyberGhost VPN plugin — setup"
 
 # 1. System packages
 install_pacman wireguard-tools || true
+if ! command -v resolvconf >/dev/null 2>&1; then
+  install_pacman openresolv || true
+fi
 if /usr/bin/python3 -c 'import requests' >/dev/null 2>&1; then
   say "${GREEN}✓${NC} python-requests already installed"
 else

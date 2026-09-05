@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "miguel.cyberghost",
   "name": "CyberGhost VPN",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "author": "Miguel",
   "license": "MIT",
   "description": "CyberGhost VPN status, quick connect, country switching, and server mode controls in the Omarchy bar.",
@@ -10,11 +10,11 @@
     "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml"
+    "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "CyberGhost VPN",
-    "description": "One bar icon and one panel: status, public IP, country/server picker, traffic/torrent/streaming modes, and a first-run setup wizard for the root helper.",
+    "description": "Choose a country and connect. Advanced settings provide exact servers, modes and protocols; guided setup handles requirements.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -25,8 +25,7 @@
       "protocol": "wireguard",
       "serverType": "traffic",
       "hideDetails": false,
-      "reduceMotion": false,
-      "polkitRuleDismissed": false
+      "reduceMotion": false
     },
     "schema": [
       {
@@ -41,20 +40,20 @@
       {
         "key": "defaultCountry",
         "type": "string",
-        "label": "Default Country",
+        "label": "Default country",
         "defaultValue": "PT"
       },
       {
         "key": "serverSelection",
         "type": "string",
-        "label": "Server selection (fastest or exact instance)",
-        "description": "Use the lowest-load server or a specific server returned by CyberGhost.",
+        "label": "Server selection (automatic or exact instance)",
+        "description": "Use fastest for automatic selection, or an exact instance from the live server list.",
         "defaultValue": "fastest"
       },
       {
         "key": "protocol",
         "type": "string",
-        "label": "VPN Protocol (wireguard or openvpn)",
+        "label": "VPN protocol (wireguard, openvpn or openvpn_tcp)",
         "defaultValue": "wireguard"
       },
       {
@@ -75,13 +74,6 @@
         "type": "boolean",
         "label": "Reduce connection animations",
         "description": "Disable pulsing connection indicators.",
-        "defaultValue": false
-      },
-      {
-        "key": "polkitRuleDismissed",
-        "type": "boolean",
-        "label": "Hide the optional Polkit setup prompt",
-        "description": "When on, the widget will not ask you to install the passwordless Polkit rule. pkexec will keep prompting for a password on connect.",
         "defaultValue": false
       }
     ]
