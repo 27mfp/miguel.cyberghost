@@ -123,7 +123,7 @@ bash scripts/test-qml.sh     # Qt tests; does not start Quickshell
 omarchy plugin validate "$PWD"
 ```
 
-See [architecture and review decisions](docs/architecture.md), [test strategy and validation limits](docs/testing.md), and [installer reference](INSTALLER.md).
+See [architecture and review decisions](docs/architecture.md), [test strategy and validation limits](docs/testing.md), [real-shell visual checks](docs/visual-testing.md), and [installer reference](INSTALLER.md).
 
 ### IPC
 

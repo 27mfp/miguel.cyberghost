@@ -38,6 +38,7 @@ Panel {
 
   function close() {
     preferences.closePopups()
+    setupCard.clearPassword()
     root.controller.hide()
   }
 

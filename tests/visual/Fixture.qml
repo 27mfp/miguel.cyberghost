@@ -55,6 +55,7 @@ Plugin.Panel {
   function snapshot() {
     var data = {
       opened: preview.opened,
+      setupMsg: sample.setupMsg,
       country: sample.country,
       connected: sample.connected,
       hideDetails: sample.hideDetails,
@@ -77,7 +78,7 @@ Plugin.Panel {
         height: item.height,
         x: point.x,
         y: point.y,
-        text: item.text || "",
+        text: item.text && (item.objectName === "accountPassword" || item.objectName === "accountUsername") ? "<redacted>" : (item.text || ""),
         selected: item.selected === true,
         popupOpen: item.popupOpen === true
       }
@@ -94,6 +95,14 @@ Plugin.Panel {
       return preview.focusControl(preview.find(name))
     }
     function scenario(name: string): void {
+      if (name === "disconnected") {
+        sample.setCountry("PT")
+        sample.hideDetails = false
+        sample.protocol = "wireguard"
+        sample.serverType = "traffic"
+        sample.setupMsg = ""
+        sample.lastError = ""
+      }
       sample.readyCli = name !== "missing-cli"
       sample.cliConfigured = sample.readyCli
       sample.tunnelStale = name === "stale"
@@ -142,7 +151,7 @@ Plugin.Panel {
         city: "Lisbon",
         load: 18
       }
-    ], "Portugal")
+    ], countryName)
     property bool loadingServers: false
     property string serverError: ""
     property bool streamingBusy: false
@@ -188,6 +197,7 @@ Plugin.Panel {
       hideDetails = value
     }
     function toggle() {
+      lastBackend = protocol === "wireguard" ? "wireguard" : "cli"
       connected = !connected
     }
     function refreshServers() {

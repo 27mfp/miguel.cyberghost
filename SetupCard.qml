@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls as QQC
 import qs.Commons
 import qs.Ui
 
@@ -15,6 +14,12 @@ Column {
   visible: service.setupCardState !== "ready"
   height: visible ? implicitHeight : 0
   spacing: visible ? Style.space(12) : 0
+
+  function clearPassword() {
+    password.clear()
+  }
+  onVisibleChanged: if (!visible)
+    clearPassword()
 
   function submit() {
     if (!username.text.trim() || !password.text) {
@@ -60,7 +65,7 @@ Column {
     spacing: Style.space(6)
     Text {
       width: parent.width
-      text: "1. Install WireGuard tools, Python requests and a VPN DNS provider (resolvconf)."
+      text: "Install WireGuard tools, Python requests and a VPN DNS provider (resolvconf)."
       textFormat: Text.PlainText
       color: root.foreground
       font.family: root.fontFamily
@@ -85,7 +90,7 @@ Column {
     spacing: Style.space(8)
     Text {
       width: parent.width
-      text: "2. Link your CyberGhost account. The plugin does not save your password."
+      text: "Link your CyberGhost account. The plugin does not save your password."
       textFormat: Text.PlainText
       color: root.foreground
       font.family: root.fontFamily
@@ -98,7 +103,7 @@ Column {
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
-    QQC.TextField {
+    TextField {
       id: username
       objectName: "accountUsername"
       width: parent.width
@@ -117,7 +122,7 @@ Column {
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
-    QQC.TextField {
+    TextField {
       id: password
       objectName: "accountPassword"
       width: parent.width
@@ -147,7 +152,7 @@ Column {
     spacing: Style.space(8)
     Text {
       width: parent.width
-      text: root.service.setupCardState === "update-available" ? "Update the helper to match this plugin. A terminal will ask for authorization." : "3. Install the fixed connection helper. A terminal will ask for authorization; passwordless access is optional."
+      text: root.service.setupCardState === "update-available" ? "Update the helper to match this plugin. A terminal will ask for authorization." : "Install the connection helper. A terminal will ask for authorization; passwordless access is optional."
       textFormat: Text.PlainText
       color: root.foreground
       font.family: root.fontFamily
