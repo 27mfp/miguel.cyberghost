@@ -27,7 +27,7 @@ ruff format --check .
 bash scripts/test-qml.sh
 python3 scripts/check_qml.py
 omarchy plugin validate "$PWD"
-shellcheck install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh
+shellcheck install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
 git diff --check
 ```
 
@@ -37,7 +37,7 @@ Qt tools default to `/usr/lib/qt6/bin`; override with `QT_BIN` if necessary. The
 
 `tests/qml` executes real JavaScript functions under Qt. `tests/ui` instantiates the production setup, settings, inventory and service components. It uses explicit doubles under `tests/support/imports` for shell controls, theme tokens and process execution. Tests deliver process output/exit events; no helper, network or package installation runs.
 
-These tests prove plugin bindings and orchestration, **not** Omarchy rendering, compositor focus or actual VPN routing. They are complemented by real installed-import linting and live shell smoke checks.
+These tests prove plugin bindings and orchestration, **not** Omarchy rendering, compositor focus or actual VPN routing. They are complemented by real installed-import linting and the [real-shell visual smoke fixture](visual-testing.md). The latter uses real host controls, synthetic service data, keyboard interactions and rendered captures—not the component-test doubles.
 
 `qmltestrunner` cannot load this distribution's statically registered Quickshell plugin. Trying to use real shell controls directly in it fails with `quickshell-coreplugin not found`. That is why the doubles are explicit rather than pretending a standalone test runner is the shell.
 
@@ -49,7 +49,7 @@ The checker fails new/project diagnostics. It records a narrow allowlist of know
 
 CI runs Python 3.9/3.12 tests, Ruff, shell syntax/ShellCheck, QML parsing and Qt behavior tests. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
 
-## Local evidence for 1.6.0
+## Refactor baseline (1.6.0)
 
 - Python regression suite: 76 cases passing on both Python 3.9 and Python 3.12.
 - Qt: 20 substantive test functions passing (plus Qt's suite initialization/cleanup entries).
@@ -60,15 +60,26 @@ CI runs Python 3.9/3.12 tests, Ruff, shell syntax/ShellCheck, QML parsing and Qt
 - Setup screenshot inspected locally: the actual installed helper was correctly identified as needing an update.
 - One existing-shell restart cleared a stale Qt filename cache after the entry-point rename. No second shell was started alongside it.
 
-## Not verified by this run
+## UI follow-up evidence
 
-The installed privileged helper was not replaced, account credentials were not changed, and no live connect/disconnect was performed. The installed helper is older than 1.6.0; update it explicitly before live connection validation.
+- Python: 76 cases passing; Qt: 27 substantive test functions, excluding suite initialization/cleanup.
+- Regressions observed failing before their fixes: premature clipboard success, open dropdowns after hiding settings, old GeoIP responses crossing tunnel transitions, missing IPv4 transport selection, and retained unsubmitted passwords.
+- Native import lint: zero project diagnostics and 62 recorded host metadata warnings on Omarchy 4.0.2 / Qt 6.11.2.
+- Real-shell smoke: nine synthetic-data captures reviewed, with keyboard selection, privacy, real clipboard copy/restore, Advanced, simulated connect/disconnect, account-field clearing and Escape assertions passing. Setup fields now match the host theme.
+- The live installed panel was inspected and its Connect button clicked. With explicit user authorization and helper 1.6.0, native WireGuard connected successfully.
+- Connected route lookups for IPv4 and IPv6 selected `cyberghost` (table 51820). An IPv4 HTTPS egress lookup succeeded. `systemd-resolved` attached the VPN DNS servers and `~.` routing domain to the tunnel; an uncached DNS query used that link.
+- With separate user authorization, Disconnect removed the interface. Both route lookups returned to Wi-Fi, and an uncached DNS query used Wi-Fi again. No passwordless rule was installed.
+- These are bounded observations, **not a leak-proof or kill-switch claim**. IPv6 transport was not independently exercised with an HTTPS request.
+- With eDP-1 and HEADLESS-69 active, CyberGhost emitted no duplicate IPC warning. Shell summon opened on the focused output in both cases; focus was restored afterward. Other host/plugin IPC warnings remain outside this change.
+- The installed plugin is now a real user-owned checkout, not the old source symlink. QML edits required restarting the existing shell to invalidate its imported-type cache.
+
+## Remaining integration limits
 
 Before publishing a release, also check with authorization:
 
-1. Native connect/disconnect, failed DNS setup, and IPv4/IPv6/DNS routing on the real network.
-2. Optional CLI authentication, exact-server selection and supported streaming/OpenVPN modes.
-3. Actual keyboard dropdown interaction, small-screen ready-state layout and multiple-monitor behavior.
-4. Disable/re-enable and removal on a disposable installation. These mutate persisted shell setup and were not run against the user's working installation.
+1. Real activation failure/timeout/DNS-failure recovery under controlled network conditions; unit tests cover these without damaging the working network.
+2. Optional CLI authentication, exact-server availability and supported streaming/OpenVPN connections. The local CLI is installed but not configured; its account state was not changed. Fixture selections are not vendor integration evidence.
+3. Monitor hotplug, owner re-election and constrained-height display behavior. Narrow fixture captures do not cover every screen size.
+4. Production disable/re-enable and removal on a disposable installation. The synthetic preview uses the ordinary plugin lifecycle, but that does not establish complete production removal behavior.
 
-The existing developer installation is a symlink to the source checkout. It was not silently replaced. Use a real user-owned checkout for a documentation-compliant clean installation, and do not ship symlinks in the plugin folder. Historical screenshots in the repository predate the simplified flow and are no longer presented as current UI in the README.
+Historical screenshots in the repository predate the simplified flow and are not presented as current UI in the README.

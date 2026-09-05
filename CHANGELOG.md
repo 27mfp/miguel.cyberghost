@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Keep Connect directly below Country when Advanced expands. Use compact native dropdowns for mode/protocol and shrink filtered search popups to their results.
+- Simplify public connection details, wrap long providers, and report clipboard success only after the copy process succeeds.
+- Close dropdowns when hiding the panel. Use themed setup fields and discard unsubmitted passwords on close.
+- Reject GeoIP responses from earlier tunnel states and explicitly select IPv4 transport for the IPv4 lookup.
+- Elect one IPC handler across monitor widgets instead of registering the same target on every output.
+- Add real-shell synthetic-data visual smoke captures and keyboard/clipboard assertions; retain explicit limits on what mocked Qt tests establish. Verify native connect, VPN DNS and route selection, then disconnect cleanup with user authorization.
+
 ## 1.6.0
 
 - Split the bar entry point, popup, setup UI, connection preferences/details, setup processes and inventory into focused components following the installed Omarchy clock lifecycle contract.

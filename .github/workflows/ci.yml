@@ -36,11 +36,11 @@ jobs:
         run: |
           python -m py_compile cyberghost_runner.py
           python -m json.tool manifest.json >/dev/null
-          bash -n install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh
-          shellcheck install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh
+          bash -n install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
+          shellcheck install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
           # qmlformat parses every QML file. Formatter output differs between
           # the Ubuntu Qt version and Omarchy's Qt version, so do not compare it.
-          for file in *.qml tests/qml/*.qml tests/ui/*.qml; do
+          for file in *.qml tests/qml/*.qml tests/ui/*.qml tests/visual/*.qml; do
             /usr/lib/qt6/bin/qmlformat "$file" >/dev/null
           done
           bash scripts/test-qml.sh

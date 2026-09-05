@@ -32,6 +32,12 @@ The Python helper intentionally remains a **self-contained installed file**. Spl
 
 The manifest declares only `bar-widget`; `BarWidget.qml` loads the nested `Panel.qml`. No extra panel kind or second Quickshell process is created. The host bar identity and anchor are forwarded, including `opened`, `closeForPopoutSwitch` and `popoutSwitchClosing`.
 
+The host creates one widget (and service) per monitor. Only the first widget in `bar.moduleWidgets()` enables the plugin IPC handler; refresh broadcasts to the monitor widgets. This fixes duplicate target registration without pretending the service is a singleton. Monitor hotplug/re-election remains a separate integration check.
+
+`ConnectionSettings` accepts a primary-action Component between Country and Advanced, exposing that slot's `focusTarget` to the panel. Closing explicitly closes child popups and clears an unsubmitted setup password. GeoIP requests carry the tunnel-state generation so an old result cannot describe a new connection.
+
+The development-only visual fixture is a separate temporary panel plugin with synthetic service data; it is not a second entry point in the production manifest.
+
 ## Before → after
 
 - One ~1,770-line combined popup/bar → a small entry point and focused composition/components.

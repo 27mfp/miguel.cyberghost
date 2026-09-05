@@ -3,6 +3,7 @@
 
 No VPN, account or installer action is executed. The clipboard is restored.
 """
+
 import argparse
 import json
 import math
@@ -20,7 +21,7 @@ def run(tool, *args, data=None):
     if not binary:
         raise RuntimeError(f"Required tool missing: {tool}")
     result = subprocess.run(  # noqa: S603 - fixed local tools and test-fixture arguments, no shell
-        [binary, *args], input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, check=True
+        [binary, *args], input=data, capture_output=True, timeout=10, check=True
     )
     return result.stdout
 
@@ -43,6 +44,11 @@ def wait_for(predicate):
     raise AssertionError("Timed out waiting for the fixture state")
 
 
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
 def activate(name):
     if ipc("focus", name) != "true":
         raise AssertionError(f"Cannot focus {name}")
@@ -54,7 +60,7 @@ def capture(directory, name):
     state = snapshot()
     box = state["controls"]["vpnPanelViewport"]
     x, y = max(0, math.floor(box["x"] - 16)), max(0, math.floor(box["y"] - 16))
-    geometry = f'{x},{y} {math.ceil(box["width"] + 32)}x{math.ceil(box["height"] + 32)}'
+    geometry = f"{x},{y} {math.ceil(box['width'] + 32)}x{math.ceil(box['height'] + 32)}"
     run("grim", "-g", geometry, str(directory / f"{name}.png"))
     (directory / f"{name}.json").write_text(json.dumps(state, indent=2) + "\n")
     return state
@@ -62,7 +68,9 @@ def capture(directory, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", action="store_true", help="Manipulate the installed synthetic fixture in the live shell")
+    parser.add_argument(
+        "--run", action="store_true", help="Manipulate the installed synthetic fixture in the live shell"
+    )
     args = parser.parse_args()
     if not args.run:
         parser.error("Pass --run after installing/enabling the visual fixture; see docs/visual-testing.md")
@@ -78,6 +86,8 @@ def main():
     except subprocess.CalledProcessError:
         pass  # An empty clipboard is a valid starting state.
     try:
+        run("omarchy-shell", "shell", "summon", TARGET, "{}")
+        wait_for(lambda state: state["opened"])
         run("omarchy-shell", "shell", "hide", TARGET)
         ipc("scenario", "disconnected")
         run("omarchy-shell", "shell", "summon", TARGET, "{}")
@@ -91,7 +101,7 @@ def main():
         capture(directory, "02-filtered-country")
         run("wtype", "-k", "Down", "-k", "Return")
         wait_for(lambda state: state["country"] == "ES")
-        assert not snapshot()["connected"], "Country selection connected without consent"
+        require(not snapshot()["connected"], "Country selection connected without consent")
         activate("countryPicker")
         wait_for(lambda state: state["controls"]["countryPicker"]["popupOpen"])
         run("omarchy-shell", "shell", "hide", TARGET)
@@ -104,10 +114,15 @@ def main():
         activate("copyIpButton")
         copied = True
         wait_for(lambda state: state["controls"]["copyIpButton"]["text"] == "Copied")
-        assert run("wl-paste", "--no-newline").decode() == "203.0.113.42", "Clipboard did not receive the displayed IP"
+        require(
+            run("wl-paste", "--no-newline").decode() == "203.0.113.42", "Clipboard did not receive the displayed IP"
+        )
         activate("advancedToggle")
         expanded = wait_for(lambda state: state["controls"]["advancedToggle"]["selected"])
-        assert expanded["controls"]["connectButton"]["y"] == ready["controls"]["connectButton"]["y"], "Advanced moved the primary action"
+        require(
+            expanded["controls"]["connectButton"]["y"] == ready["controls"]["connectButton"]["y"],
+            "Advanced moved the primary action",
+        )
         capture(directory, "04-advanced")
         activate("modePicker")
         run("wtype", "-k", "Down", "-k", "Return")
@@ -131,8 +146,14 @@ def main():
         capture(directory, "08-stale")
         ipc("scenario", "setup")
         capture(directory, "09-setup")
-        run("wtype", "-k", "Escape")
+        require(ipc("focus", "accountUsername") == "true", "Cannot focus account username")
+        run("wtype", "preview@example.invalid", "-k", "Return", "not-a-real-password", "-k", "Return")
+        wait_for(lambda state: state["setupMsg"].startswith("Preview:"))
+        require(snapshot()["controls"]["accountPassword"]["text"] == "", "Submitted password was retained")
+        require(ipc("focus", "accountPassword") == "true", "Cannot focus account password")
+        run("wtype", "discard-this-draft", "-k", "Escape")
         wait_for(lambda state: not state["opened"])
+        require(snapshot()["controls"]["accountPassword"]["text"] == "", "Closing retained an unsubmitted password")
         print(f"PASS: real-shell interactions and 9 synthetic-data captures. Review images in {directory}")
     finally:
         if copied:

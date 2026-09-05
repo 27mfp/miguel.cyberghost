@@ -138,6 +138,14 @@ TestCase {
     mockService.readyRequests = false
   }
 
+  function test_hidingSetupClearsUnsubmittedPassword() {
+    var setup = createTemporaryObject(setupFactory, this)
+    var password = findChild(setup, "accountPassword")
+    password.text = "never-save-this"
+    setup.visible = false
+    compare(password.text, "")
+  }
+
   function test_hiddenSettingsCloseTheirDropdowns() {
     var controls = createTemporaryObject(preferencesFactory, this)
     var picker = findChild(controls, "countryPicker")
