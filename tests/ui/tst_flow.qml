@@ -138,6 +138,15 @@ TestCase {
     mockService.readyRequests = false
   }
 
+  function test_hiddenSettingsCloseTheirDropdowns() {
+    var controls = createTemporaryObject(preferencesFactory, this)
+    var picker = findChild(controls, "countryPicker")
+    picker.open()
+    compare(controls.popupOpen, true)
+    controls.visible = false
+    compare(controls.popupOpen, false)
+  }
+
   function test_advancedCollapsedAndCountrySelectionDoesNotConnect() {
     var controls = createTemporaryObject(preferencesFactory, this)
     verify(controls !== null)

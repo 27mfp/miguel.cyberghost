@@ -37,6 +37,18 @@ Item {
   property string publicCountry: ""
   property string publicOrg: ""
   property bool fetchingIp: false
+  property int networkGeneration: 0
+  property int ipRequestGeneration: 0
+  property bool ipRefreshPending: false
+  onConnectedChanged: {
+    networkGeneration++
+    publicIp = ""
+    publicCity = ""
+    publicCountry = ""
+    publicOrg = ""
+    if (ipInfoProcess.running)
+      ipRefreshPending = true
+  }
 
   // Privacy mode: mask IP / location / provider / session in the UI.
   property bool hideDetails: false
@@ -223,8 +235,10 @@ Item {
   }
 
   function refreshIpInfo(force) {
-    if (ipInfoProcess.running)
+    if (ipInfoProcess.running) {
+      ipRefreshPending = ipRefreshPending || force
       return
+    }
     if (!force && Date.now() - lastIpFetchAt < 20000)
       return
     lastIpFetchAt = Date.now()
@@ -236,13 +250,11 @@ Item {
     }
     fetchingIp = true
     ipOutput = ""
-    // Ask ipwho.is for the IPv4 address explicitly. Without the query param
-    // the API returns whichever address it picks first, which is IPv6 on
-    // most hosts today — and the user almost always wants to see the IPv4
-    // (the one a typical service uses for geolocation, blocking, etc.).
-    // If the host is IPv6-only, the request fails and the panel renders
-    // "Unavailable" — the existing fallback path.
-    ipInfoProcess.command = ["/usr/bin/curl", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/?type=ipv4"]
+    ipRequestGeneration = networkGeneration
+    // Force the transport family: ipwho.is ignores the old type query on
+    // some responses. IPv6-only hosts report Unavailable rather than a
+    // mislabeled IPv4 result. Generation checks reject pre-tunnel replies.
+    ipInfoProcess.command = ["/usr/bin/curl", "--ipv4", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/?type=ipv4"]
     ipInfoProcess.running = true
   }
 
@@ -454,7 +466,7 @@ Item {
 
   Process {
     id: ipInfoProcess
-    command: ["/usr/bin/curl", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/?type=ipv4"]
+    command: ["/usr/bin/curl", "--ipv4", "--silent", "--show-error", "--fail-with-body", "--connect-timeout", "2", "--max-time", "4", "--max-filesize", "32768", "--proto", "=https", "https://ipwho.is/?type=ipv4"]
     stdout: SplitParser {
       onRead: function (line) {
         root.ipOutput = ServiceUtils.appendBounded(root.ipOutput, line, 32768)
@@ -463,10 +475,14 @@ Item {
     onExited: function (exitCode) {
       root.fetchingIp = false
       var out = String(root.ipOutput || "").substring(0, 32768).trim()
-      if (exitCode === 0 && out !== "") {
+      if (exitCode === 0 && out !== "" && root.ipRequestGeneration === root.networkGeneration) {
         root.parseIpInfo(out)
       }
       root.ipOutput = ""
+      if (root.ipRefreshPending) {
+        root.ipRefreshPending = false
+        root.refreshIpInfo(true)
+      }
     }
   }
 
@@ -650,7 +666,7 @@ Item {
       return
     try {
       var data = JSON.parse(jsonStr.substring(0, 4096))
-      if (data && data.ip) {
+      if (data && data.success !== false && data.ip) {
         var candidateIp = String(data.ip || "").substring(0, 45).trim()
         if (!/^[0-9A-Fa-f:.]+$/.test(candidateIp))
           return

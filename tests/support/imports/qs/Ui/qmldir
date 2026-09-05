@@ -1,3 +1,5 @@
 module qs.Ui
 Button 1.0 Button.qml
+PanelSeparator 1.0 PanelSeparator.qml
+Dropdown 1.0 SearchableDropdown.qml
 SearchableDropdown 1.0 SearchableDropdown.qml

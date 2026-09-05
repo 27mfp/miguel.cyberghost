@@ -13,6 +13,7 @@ Panel {
   required property var cyberghost
   property var anchorItem: null
   property var hostWidget: null
+  property real preferredContentWidth: 380
   readonly property var barIdentity: hostWidget || root
   function switchPanel(direction) {
     return bar && typeof bar.switchPanelFrom === "function" ? bar.switchPanelFrom(barIdentity, direction) : false
@@ -35,6 +36,11 @@ Panel {
     }
   }
 
+  function close() {
+    preferences.closePopups()
+    root.controller.hide()
+  }
+
   function toggleRunning() {
     cyberghost.toggle()
   }
@@ -49,11 +55,11 @@ Panel {
     owner: root.barIdentity
     bar: root.bar
     open: root.opened && root.cyberghost !== null
-    focusTarget: !root.cyberghost || !root.cyberghost.setupDone ? setupCard.focusTarget : connectBtn
+    focusTarget: !root.cyberghost || !root.cyberghost.setupDone ? setupCard.focusTarget : preferences.primaryFocusTarget
     // Keep the same sizing contract as the official Omarchy panels: the
     // KeyboardPanel owns the popup padding, while the content column fills
     // the available inner width without a second manual inset.
-    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentWidth: panel.fittedContentWidth(Style.space(root.preferredContentWidth))
     contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight)
 
     PanelKeyCatcher {
@@ -64,6 +70,7 @@ Panel {
 
       Flickable {
         id: scroll
+        objectName: "vpnPanelViewport"
         anchors.fill: parent
         contentWidth: width
         contentHeight: mainColumn.implicitHeight
@@ -90,6 +97,7 @@ Panel {
 
         Column {
           id: mainColumn
+          objectName: "vpnPanelContent"
           width: scroll.width
           spacing: Style.space(8)
 
@@ -188,50 +196,53 @@ Panel {
             service: root.cyberghost
             foreground: root.foreground
             fontFamily: root.fontFamily
-          }
+            primaryActions: Component {
+              Item {
+                id: actionsRow
+                readonly property var focusTarget: connectBtn
+                visible: root.cyberghost.setupDone
+                width: parent.width
+                implicitHeight: Math.max(refreshStatusButton.height, connectBtn.implicitHeight)
 
-          Item {
-            id: actionsRow
-            visible: root.cyberghost.setupDone
-            width: parent.width
-            implicitHeight: Math.max(refreshStatusButton.height, connectBtn.implicitHeight)
+                Button {
+                  id: refreshStatusButton
+                  width: Style.space(28)
+                  implicitWidth: Style.space(28)
+                  implicitHeight: Style.space(28)
+                  horizontalPadding: 0
+                  verticalPadding: 0
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  enabled: !root.cyberghost.busy
+                  focusable: true
+                  bordered: false
+                  text: ""
+                  iconText: "\uf021"
+                  foreground: root.dim
+                  Accessible.name: "Refresh VPN status"
+                  tooltipText: "Refresh VPN status"
+                  onClicked: root.refresh()
+                }
 
-            Button {
-              id: refreshStatusButton
-              width: Style.space(28)
-              implicitWidth: Style.space(28)
-              implicitHeight: Style.space(28)
-              horizontalPadding: 0
-              verticalPadding: 0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              enabled: !root.cyberghost.busy
-              focusable: true
-              bordered: false
-              text: ""
-              iconText: "\uf021"
-              foreground: root.dim
-              Accessible.name: "Refresh VPN status"
-              tooltipText: "Refresh VPN status"
-              onClicked: root.refresh()
-            }
-
-            Button {
-              id: connectBtn
-              anchors.left: refreshStatusButton.right
-              anchors.leftMargin: Style.space(8)
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              enabled: !root.cyberghost.busy
-              focusable: true
-              Accessible.name: root.cyberghost.active ? "Disconnect VPN" : "Connect VPN"
-              iconText: root.cyberghost.active ? "\uf00d" : "\uf00c"
-              text: root.cyberghost.connecting ? "Connecting…" : (root.cyberghost.disconnecting ? "Disconnecting…" : (root.cyberghost.active ? "Disconnect" : "Connect"))
-              selected: root.cyberghost.active
-              bordered: true
-              foreground: root.cyberghost.active ? Color.urgent : root.brandYellow
-              tooltipText: root.cyberghost.active ? "Stop VPN connection" : "Start VPN connection"
-              onClicked: root.toggleRunning()
+                Button {
+                  id: connectBtn
+                  objectName: "connectButton"
+                  anchors.left: refreshStatusButton.right
+                  anchors.leftMargin: Style.space(8)
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  enabled: !root.cyberghost.busy
+                  focusable: true
+                  Accessible.name: root.cyberghost.active ? "Disconnect VPN" : "Connect VPN"
+                  iconText: root.cyberghost.active ? "\uf00d" : "\uf00c"
+                  text: root.cyberghost.connecting ? "Connecting…" : (root.cyberghost.disconnecting ? "Disconnecting…" : (root.cyberghost.active ? "Disconnect" : "Connect"))
+                  selected: root.cyberghost.active
+                  bordered: true
+                  foreground: root.cyberghost.active ? Color.urgent : root.brandYellow
+                  tooltipText: root.cyberghost.active ? "Stop VPN connection" : "Start VPN connection"
+                  onClicked: root.toggleRunning()
+                }
+              }
             }
           }
 

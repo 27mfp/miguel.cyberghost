@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "test.cyberghost-visual",
+  "name": "CyberGhost visual fixture",
+  "version": "1.0.0",
+  "description": "Temporary real-shell preview with synthetic data. No VPN or account operations.",
+  "kinds": ["panel"],
+  "entryPoints": {"panel": "Fixture.qml"}
+}
