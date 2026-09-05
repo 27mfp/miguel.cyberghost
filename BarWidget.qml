@@ -83,6 +83,9 @@ Ui.BarWidget {
     }
   }
   IpcHandler {
+    // The bar owns a widget per output. Elect one handler, while every
+    // visible widget keeps its own anchor and direct click interactions.
+    enabled: root.bar && typeof root.bar.moduleWidgets === "function" && root.bar.moduleWidgets(root.moduleName)[0] === root
     target: root.moduleName
     function open(): void {
       root.open()
@@ -100,7 +103,7 @@ Ui.BarWidget {
       root.togglePanel()
     }
     function refresh(): void {
-      root.refresh()
+      root.broadcast("refresh")
     }
     function connect(countryCode: string): void {
       cyberghost.connectTo(countryCode || cyberghost.country)

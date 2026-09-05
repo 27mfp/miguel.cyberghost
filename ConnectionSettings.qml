@@ -10,6 +10,24 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   property bool advanced: false
+  property Component primaryActions: null
+  // The injected Component's dynamic contract is a focusTarget item.
+  readonly property var primaryFocusTarget: actions.item ? actions.item["focusTarget"] : null
+  function closePopups() {
+    countryPicker.close()
+    serverPicker.close()
+    modePicker.close()
+    protocolPicker.close()
+    streamingPicker.close()
+  }
+  onVisibleChanged: if (!visible)
+    closePopups()
+  onAdvancedChanged: if (!advanced) {
+    serverPicker.close()
+    modePicker.close()
+    protocolPicker.close()
+    streamingPicker.close()
+  }
   readonly property bool popupOpen: countryPicker.popupOpen || serverPicker.popupOpen || modePicker.popupOpen || protocolPicker.popupOpen || streamingPicker.popupOpen
   spacing: Style.space(10)
 
@@ -24,6 +42,7 @@ Column {
     label: "Country"
     Accessible.name: "VPN destination country"
     placeholderText: "Search countries…"
+    popupMinHeight: 0
     options: Countries.dropdownOptions()
     value: root.service.country
     foreground: root.foreground
@@ -34,9 +53,19 @@ Column {
     }
   }
 
+  Loader {
+    id: actions
+    width: parent.width
+    sourceComponent: root.primaryActions
+  }
+
   Button {
     objectName: "advancedToggle"
-    text: root.advanced ? "Hide advanced settings" : "Advanced settings"
+    text: "Advanced settings"
+    iconText: root.advanced ? "\uf106" : "\uf107"
+    fontSize: Style.font.caption
+    horizontalPadding: Style.space(4)
+    verticalPadding: Style.space(4)
     focusable: true
     selected: root.advanced
     foreground: root.foreground
@@ -61,8 +90,10 @@ Column {
 
     SearchableDropdown {
       id: serverPicker
+      objectName: "serverPicker"
+      popupMinHeight: 0
       width: parent.width
-      visible: root.service.protocol === "wireguard" && root.service.serverType === "traffic"
+      visible: root.service.readyCli && root.service.cliConfigured && root.service.protocol === "wireguard" && root.service.serverType === "traffic"
       label: "Server"
       Accessible.name: "VPN server"
       value: root.service.serverSelection
@@ -106,8 +137,9 @@ Column {
       onClicked: root.service.recheck()
     }
 
-    SearchableDropdown {
+    Dropdown {
       id: modePicker
+      objectName: "modePicker"
       width: parent.width
       label: "Mode"
       Accessible.name: "VPN server mode"
@@ -136,6 +168,8 @@ Column {
 
     SearchableDropdown {
       id: streamingPicker
+      objectName: "streamingPicker"
+      popupMinHeight: 0
       width: parent.width
       visible: root.service.serverType === "streaming"
       label: "Streaming service"
@@ -161,8 +195,9 @@ Column {
       wrapMode: Text.WordWrap
     }
 
-    SearchableDropdown {
+    Dropdown {
       id: protocolPicker
+      objectName: "protocolPicker"
       width: parent.width
       label: "Protocol"
       Accessible.name: "VPN protocol"

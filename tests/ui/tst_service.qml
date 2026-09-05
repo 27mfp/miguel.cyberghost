@@ -76,6 +76,35 @@ TestCase {
     compare(service.streamingService, "Netflix")
   }
 
+  function ipProcess(service) {
+    for (var i = 0; i < service.children.length; i++) {
+      var command = service.children[i].command
+      if (command && command[0] === "/usr/bin/curl")
+        return service.children[i]
+    }
+    return null
+  }
+
+  function test_ipLookupUsesIpv4AndRejectsApiErrors() {
+    var service = readyService({})
+    service.refreshIpInfo(true)
+    verify(ipProcess(service).command.indexOf("--ipv4") >= 0)
+    service.parseIpInfo('{"success":false,"ip":"203.0.113.9"}')
+    compare(service.publicIp, "")
+  }
+
+  function test_oldIpResponseCannotDescribeANewTunnel() {
+    var service = readyService({})
+    service.refreshIpInfo(true)
+    var process = ipProcess(service)
+    process.stdout.read('{"success":true,"ip":"203.0.113.9"}')
+    service.connected = true
+    process.running = false
+    process.exited(0)
+    compare(service.publicIp, "")
+    compare(process.running, true)
+  }
+
   function test_unconfiguredCliCannotLaunchAdvancedConnection() {
     var service = readyService({
       protocol: "openvpn"
