@@ -22,13 +22,21 @@ Alternatively, run `bash ./install.sh` from the plugin directory for guided term
 
 The official `cyberghostvpn` CLI supplies exact server inventory, OpenVPN, torrent and streaming modes. Native WireGuard traffic mode has automatic fallback candidates without it.
 
-Install the CLI from a source you trust, then run its setup **as the same account that runs the shell**:
+Install the CLI from a source you trust. For the installed Linux CLI 1.4.1, run setup **from your desktop user's terminal**, using sudo as required by the vendor:
 
 ```bash
-cyberghostvpn --setup
+sudo cyberghostvpn --setup
 ```
 
-Follow vendor authorization requirements while keeping its configuration in that user's HOME. Blindly running setup as root can configure a different account. Use **Advanced settings → Recheck CLI setup** afterwards. An installed CLI is not necessarily configured, and local configuration does not prove successful vendor authentication.
+When updating an existing configuration, explicitly type `y` at both **override original configuration** and **change account credentials**, then enter your account login. In CLI 1.4.1, pressing Enter means **no**, despite the `[Y/n]` prompt; it can print “Install completed” and exit successfully without configuring authentication.
+
+Alternatively, from this plugin checkout run `python3 scripts/setup-vendor-cli.py` in your terminal, **without sudo on the Python command**. The wrapper invokes sudo itself and makes Enter select Yes at those two known confirmations. Explicit `n` still declines. Password input is unchanged, and the wrapper records no transcript. It does not patch the vendor binary.
+
+This version constructs its configuration directory from `/home/` plus `SUDO_USER` (or `USER`), rather than respecting `HOME`. Do not launch it from a root login shell or assume a HOME override selects the account. Nonstandard home directories need separate compatibility validation.
+
+The vendor CLI requires a locally stored account password. Use **Advanced settings → Recheck CLI setup** afterwards. An installed CLI is not necessarily configured, and local configuration does not prove successful vendor authentication.
+
+**Before overwriting legacy configuration:** if `native.ini` is absent, native WireGuard may still depend on device credentials in `config.ini`. Back up that private file and preserve its native device credentials separately before allowing vendor setup to replace it.
 
 **Credential separation:** vendor CLI setup owns `~/.cyberghost/config.ini`. Native registration never overwrites it. For compatibility, the plugin can read private legacy device credentials from that file when `native.ini` does not exist. A present but invalid native file fails rather than silently falling back. The vendor CLI has its own credential-storage policy; the plugin's no-saved-password guarantee applies only to native registration.
 

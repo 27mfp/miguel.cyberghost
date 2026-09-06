@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an optional terminal wrapper for vendor setup: Enter now means Yes at its two misleading `[Y/n]` confirmations, while explicit No and password input remain unchanged. Add confirmation-filter and real-PTY regression tests; correct CLI setup documentation.
+
 - Keep Connect directly below Country when Advanced expands. Use compact native dropdowns for mode/protocol and shrink filtered search popups to their results.
 - Simplify public connection details, wrap long providers, and report clipboard success only after the copy process succeeds.
 - Close dropdowns when hiding the panel. Use themed setup fields and discard unsubmitted passwords on close.
