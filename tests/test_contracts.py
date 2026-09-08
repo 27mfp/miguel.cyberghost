@@ -152,7 +152,7 @@ def test_ui_privilege_boundary_contract():
     assert "https://ipwho.is/," not in service
 
     runner_source = (ROOT / "cyberghost_runner.py").read_text()
-    assert 'HELPER_CAPABILITY_VERSION = "6"' in runner_source
+    assert 'HELPER_CAPABILITY_VERSION = "7"' in runner_source
 
 
 def test_polkit_marker_is_user_owned_ui_state():
@@ -189,7 +189,12 @@ def test_helper_installer_binds_a_pre_authentication_snapshot():
 
 def test_helper_version_and_capability_are_verified():
     helper = tempfile.NamedTemporaryFile(mode="wb", delete=False)
-    helper.write(f'PLUGIN_VERSION = "{runner.PLUGIN_VERSION}"\n'.encode() + b'HELPER_CAPABILITY_VERSION = "6"\n')
+    helper.write(
+        (
+            f'PLUGIN_VERSION = "{runner.PLUGIN_VERSION}"\n'
+            f'HELPER_CAPABILITY_VERSION = "{runner.HELPER_CAPABILITY_VERSION}"\n'
+        ).encode()
+    )
     helper.close()
     with mock.patch.object(runner, "HELPER_BIN_PATH", helper.name):
         with mock.patch.object(runner, "secure_system_file", return_value=True):
@@ -201,6 +206,10 @@ def test_helper_version_and_capability_are_verified():
             # `helperNeedsUpdate` drift detector in Service.qml).
             with mock.patch.object(runner, "PLUGIN_VERSION", "0.0.0-drift"):
                 assert runner.secure_helper_installed() is False
+            pathlib.Path(helper.name).write_text(
+                f'PLUGIN_VERSION = "{runner.PLUGIN_VERSION}"\nHELPER_CAPABILITY_VERSION = "6"\n'
+            )
+            assert runner.secure_helper_installed() is False
     os.unlink(helper.name)
 
 

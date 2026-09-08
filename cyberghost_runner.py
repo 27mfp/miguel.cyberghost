@@ -34,8 +34,8 @@ HELPER_BIN_PATH = "/usr/local/bin/cyberghost-runner"
 POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
 POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
 POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
-PLUGIN_VERSION = "1.6.0"
-HELPER_CAPABILITY_VERSION = "6"
+PLUGIN_VERSION = "1.6.1"
+HELPER_CAPABILITY_VERSION = "7"
 MAX_CONFIG_BYTES = 64 * 1024
 MAX_HELPER_BYTES = 256 * 1024
 MAX_HTTP_RESPONSE_BYTES = 64 * 1024
@@ -705,68 +705,100 @@ def clean_command_error(text, fallback="Command failed"):
     return fallback[:512]
 
 
+def cli_connection_state():
+    """Return the vendor's observed state, or None when its probe is inconclusive.
+
+    This is process/tunnel presence, not proof of routing or leak protection.
+    Unknown output must never count as successful activation or cleanup.
+    """
+    try:
+        result = run_bounded(
+            [system_binary("cyberghostvpn"), "--status"],
+            timeout=3,
+            max_output_bytes=8 * 1024,
+            env=cyberghost_cli_environment(),
+        )
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
+        return None
+    if result.returncode != 0:
+        return None
+    output = (result.stdout or "").strip()
+    if re.search(r"^No VPN connections? found\.?$", output, re.I | re.M):
+        return False
+    if re.search(r"^VPN connection found\.?$", output, re.I | re.M):
+        return True
+    return None
+
+
+def stop_cli_connection():
+    result = run_bounded(
+        [system_binary("cyberghostvpn"), "--stop"],
+        timeout=20,
+        max_output_bytes=16 * 1024,
+        env=cyberghost_cli_environment(),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(clean_command_error(result.stderr or result.stdout, "Vendor stop command failed"))
+    if cli_connection_state() is not False:
+        raise RuntimeError("Could not confirm that the vendor VPN stopped")
+
+
 def connect_via_cli(country_code, server_type, protocol, streaming_service=None):
-    """
-    Delegate to the official cyberghostvpn CLI for combinations the native
-    dialup API cannot serve (OpenVPN, torrent/streaming server pools).
-    """
+    """Delegate optional modes, then verify activation instead of trusting exit zero."""
     cc = validate_country_code(country_code)
     context = f"{cc} via {protocol} / {server_type}"
     if server_type == "streaming" and streaming_service:
         context += f" ({streaming_service})"
 
-    try:
-        cmd = [system_binary("cyberghostvpn")]
-        if server_type == "torrent":
-            cmd.append("--torrent")
-        elif server_type == "streaming":
-            service = validate_streaming_service(streaming_service)
-            cmd.append("--streaming")
-            cmd.append(service)
-        else:
-            cmd.append("--traffic")
-        if protocol == "wireguard":
-            cmd.append("--wireguard")
-        else:
-            cmd.append("--openvpn")
-            cmd.append("--tcp" if protocol == "openvpn_tcp" else "--udp")
-        cmd += ["--country-code", cc, "--connect"]
-
-        print(f"Connecting to {cc} ({protocol} / {server_type}) via cyberghostvpn CLI...")
-        res = run_bounded(
-            cmd,
-            timeout=120,
-            max_output_bytes=16 * 1024,
-            env=cyberghost_cli_environment(),
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            "'cyberghostvpn' CLI is not installed (required for OpenVPN / torrent / streaming modes)."
-            " Install it or use WireGuard traffic mode."
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"cyberghostvpn connect to {context} timed out.") from exc
-
-    out = (((res.stdout or "") + (res.stderr or "")).strip())[:4096]
-    if res.returncode != 0:
-        raise RuntimeError(
-            clean_command_error(out, f"cyberghostvpn connect to {context} failed (exit {res.returncode})")
-        )
-
-    # A zero exit status is the CLI's authoritative success signal. Do not
-    # reject a successful connection merely because a warning or server name
-    # contains words such as "not found".
-    if re.search(r"connected|established", out, re.I):
-        print(out)
+    # Validate before entering the activation/rollback boundary.
+    cmd = [system_binary("cyberghostvpn")]
+    if server_type == "torrent":
+        cmd.append("--torrent")
+    elif server_type == "streaming":
+        cmd += ["--streaming", validate_streaming_service(streaming_service)]
     else:
-        print("VPN connection established.")
-    print(f"Connected to {cc} via {protocol} ({server_type}).")
-    return {
-        "backend": "cyberghostvpn",
-        "country": cc,
-        "protocol": protocol,
-        "server_type": server_type,
-    }
+        cmd.append("--traffic")
+    if protocol == "wireguard":
+        cmd.append("--wireguard")
+    else:
+        cmd += ["--openvpn", "--connection", "tcp" if protocol == "openvpn_tcp" else "udp"]
+    cmd += ["--country-code", cc, "--connect"]
+
+    print(f"Connecting to {cc} ({protocol} / {server_type}) via cyberghostvpn CLI...")
+    try:
+        result = run_bounded(cmd, timeout=120, max_output_bytes=16 * 1024, env=cyberghost_cli_environment())
+        if result.returncode != 0:
+            raise RuntimeError(
+                clean_command_error(
+                    result.stdout or result.stderr,
+                    f"cyberghostvpn connect to {context} failed (exit {result.returncode})",
+                )
+            )
+        # The vendor can exit zero even when its daemon fails. Allow a short,
+        # bounded startup grace period; never infer success from connect text.
+        for attempt in range(3):
+            if cli_connection_state() is True:
+                break
+            if attempt < 2:
+                time.sleep(0.5)
+        else:
+            raise RuntimeError(f"cyberghostvpn reported success for {context}, but no active VPN could be verified")
+    except FileNotFoundError as exc:
+        raise RuntimeError("'cyberghostvpn' CLI is not installed. Install it or use WireGuard traffic mode.") from exc
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        message = (
+            f"cyberghostvpn connect to {context} timed out."
+            if isinstance(exc, subprocess.TimeoutExpired)
+            else clean_command_error(exc)
+        )
+        try:
+            stop_cli_connection()
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as cleanup_error:
+            message += f" Cleanup failed: {clean_command_error(cleanup_error)}"
+        raise RuntimeError(message) from exc
+
+    print(f"Vendor VPN active for {cc} via {protocol} ({server_type}).")
+    return {"backend": "cyberghostvpn", "country": cc, "protocol": protocol, "server_type": server_type}
 
 
 def find_config_path(override_path=None):
@@ -797,15 +829,13 @@ def invoking_user():
 
 
 def cyberghost_cli_environment():
-    """Give the vendor CLI the initiating user's config home under pkexec.
+    """Select the initiating user's vendor configuration under pkexec.
 
-    Polkit/pkexec can expose a synthetic root HOME (for example
-    ``/home/root``). The official CLI resolves ``~/.cyberghost/config.ini``
-    from HOME, while this helper deliberately keeps the account config owned
-    by the user who clicked Connect. Keep the privileged CLI process root,
-    but point its HOME/identity variables at that user so it reads the same
-    configuration. Outside a pkexec-root invocation the inherited environment
-    is already correct and no override is needed.
+    CLI 1.4.1 constructs /home/<SUDO_USER or USER>/.cyberghost, ignoring
+    HOME. Set USER from the verified invoking uid and do not inherit
+    SUDO_USER. Keep HOME correct for dependencies and other CLI versions.
+    The vendor's hard-coded /home layout needs separate compatibility work
+    for accounts with nonstandard home directories.
     """
     if os.geteuid() != 0 or not os.environ.get("PKEXEC_UID", "").isdigit():
         return None
@@ -1327,22 +1357,11 @@ def disconnect():
 
     if not was_up:
         try:
-            cli_res = run_bounded(
-                [system_binary("cyberghostvpn"), "--stop"],
-                timeout=30,
-                max_output_bytes=16 * 1024,
-                env=cyberghost_cli_environment(),
-            )
-            # A missing CLI connection is harmless during an idempotent
-            # disconnect; only surface a useful failure if the command emitted one.
-            if cli_res.returncode != 0 and (cli_res.stderr or cli_res.stdout):
-                sys.stderr.write(
-                    f"Vendor CLI disconnect warning: {clean_command_error(cli_res.stderr or cli_res.stdout)}\n"
-                )
-        except (FileNotFoundError, subprocess.TimeoutExpired, RuntimeError) as exc:
-            # The vendor CLI is optional when no native tunnel was present.
-            if not isinstance(exc, FileNotFoundError):
-                sys.stderr.write(f"Vendor CLI disconnect warning: {clean_command_error(exc)}\n")
+            stop_cli_connection()
+        except FileNotFoundError:
+            pass  # The vendor CLI is optional when there is no native tunnel.
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+            raise RuntimeError(f"Could not disconnect the vendor VPN: {clean_command_error(exc)}") from exc
     if os.path.exists(WG_CONF_PATH):
         try:
             os.remove(WG_CONF_PATH)

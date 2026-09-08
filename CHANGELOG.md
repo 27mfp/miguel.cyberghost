@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## Unreleased — 1.6.1 candidate
+
+- Use the vendor's supported `--connection udp|tcp` option for OpenVPN.
+- Reject CLI exit-zero results unless a subsequent vendor status probe observes an active connection. Attempt bounded cleanup on failures/timeouts and report cleanup failures.
+- Do not report successful CLI disconnection when stop fails or its result cannot be verified. Helper capability is now 7; explicitly update the helper before testing this candidate.
 
 - Add an optional terminal wrapper for vendor setup: Enter now means Yes at its two misleading `[Y/n]` confirmations, while explicit No and password input remain unchanged. Add confirmation-filter and real-PTY regression tests; correct CLI setup documentation.
 

@@ -1,5 +1,7 @@
 # Tests and verification
 
+For the current 1.6.1 candidate, see the [release gates and live findings](release-checklist.md). Historical evidence below does not certify the newer candidate or optional CLI connections.
+
 ## What changed in the test strategy
 
 The previous suite mixed real backend behavior tests with source-text assertions about labels, IDs and exact spacing. One test explicitly required retrying WireGuard **without DNS** after resolver failure. That was a passing test for the wrong security behavior.

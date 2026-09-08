@@ -2,6 +2,7 @@
 
 from unittest import mock
 
+import pytest
 from runner_support import load_runner
 
 runner = load_runner()
@@ -134,9 +135,10 @@ def test_streaming_service_discovery_and_cli_arguments():
             assert services == [{"value": "Netflix US", "label": "Netflix US"}]
 
         completed_empty = runner.subprocess.CompletedProcess([], 0, "Server not found in cache\n", "")
-        with mock.patch.object(runner, "run_bounded", return_value=completed_empty) as run_mock:
+        observed_connected = runner.subprocess.CompletedProcess([], 0, "VPN connection found.\n", "")
+        with mock.patch.object(runner, "run_bounded", side_effect=[completed_empty, observed_connected]) as run_mock:
             runner.connect_via_cli("US", "streaming", "wireguard", "Netflix US")
-            command = run_mock.call_args.args[0]
+            command = run_mock.call_args_list[0].args[0]
             assert command == [
                 "/usr/bin/cyberghostvpn",
                 "--streaming",
@@ -190,6 +192,85 @@ def test_connect_via_cli_includes_context_in_error_fallback():
                 assert "timed out" in str(exc)
             else:
                 raise AssertionError("Expected a CLI timeout to surface")
+
+
+@pytest.mark.parametrize("protocol,expected", [("openvpn", "udp"), ("openvpn_tcp", "tcp")])
+def test_openvpn_uses_documented_connection_option(protocol, expected):
+    commands = []
+
+    def vendor(command, **kwargs):
+        commands.append(command)
+        return runner.subprocess.CompletedProcess(command, 0, "VPN connection found.\n", "")
+
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(runner, "run_bounded", side_effect=vendor):
+            runner.connect_via_cli("PT", "traffic", protocol)
+    command = commands[0]
+    assert "--connection" in command
+    assert command[command.index("--connection") + 1] == expected
+    assert "--tcp" not in command and "--udp" not in command
+
+
+def test_zero_exit_without_tunnel_fails_and_attempts_cleanup():
+    commands = []
+
+    def vendor(command, **kwargs):
+        commands.append(command)
+        text = "No VPN connections found." if "--status" in command else "Completed"
+        return runner.subprocess.CompletedProcess(command, 0, text, "")
+
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(runner, "run_bounded", side_effect=vendor):
+            with pytest.raises(RuntimeError, match="no active VPN"):
+                runner.connect_via_cli("PT", "traffic", "openvpn")
+    assert any("--stop" in command for command in commands)
+
+
+def test_cli_timeout_attempts_cleanup_and_reports_failed_cleanup():
+    commands = []
+
+    def vendor(command, **kwargs):
+        commands.append(command)
+        if "--connect" in command:
+            raise runner.subprocess.TimeoutExpired(command, 120)
+        if "--stop" in command:
+            return runner.subprocess.CompletedProcess(command, 1, "", "cleanup refused")
+        return runner.subprocess.CompletedProcess(command, 0, "VPN connection found.", "")
+
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(runner, "run_bounded", side_effect=vendor):
+            with pytest.raises(RuntimeError, match="cleanup refused"):
+                runner.connect_via_cli("PT", "traffic", "openvpn")
+    assert any("--stop" in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    "code,text,state",
+    [
+        (0, "VPN connection found.", True),
+        (0, "No VPN connections found.", False),
+        (0, "", None),
+        (1, "No VPN connections found.", None),
+        (0, "Not running", None),
+    ],
+)
+def test_vendor_status_requires_recognized_successful_probe(code, text, state):
+    result = runner.subprocess.CompletedProcess([], code, text, "")
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/cyberghostvpn"):
+        with mock.patch.object(runner, "run_bounded", return_value=result):
+            assert runner.cli_connection_state() is state
+
+
+def test_disconnect_does_not_report_success_when_vendor_stop_fails():
+    def vendor(command, **kwargs):
+        if "--stop" in command:
+            return runner.subprocess.CompletedProcess(command, 1, "", "stop failed")
+        return runner.subprocess.CompletedProcess(command, 1, "", "No such device")
+
+    with mock.patch.object(runner, "system_binary", side_effect=lambda name: "/usr/bin/" + name):
+        with mock.patch.object(runner, "run_bounded", side_effect=vendor):
+            with pytest.raises(RuntimeError, match="stop failed"):
+                runner.disconnect()
 
 
 def test_clean_command_error_drops_partial_traceback():
