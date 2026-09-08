@@ -33,7 +33,7 @@ def test_main_uses_native_wireguard_for_traffic_even_when_cli_exists():
         runner.sys.argv = original_argv
 
 
-def test_main_delegates_non_wireguard_modes_to_cli():
+def test_main_rejects_non_wireguard_modes_without_starting_a_backend():
     original_argv = runner.sys.argv
     try:
         runner.sys.argv = [
@@ -48,8 +48,12 @@ def test_main_delegates_non_wireguard_modes_to_cli():
         ]
         with mock.patch.object(runner, "connect_via_cli") as cli_mock:
             with mock.patch.object(runner, "connect") as native_mock:
-                runner.main()
-        cli_mock.assert_called_once_with("PT", "traffic", "openvpn", None)
+                try:
+                    runner.main()
+                    raise AssertionError("Unsupported mode was accepted")
+                except SystemExit as exc:
+                    assert exc.code == 1
+        cli_mock.assert_not_called()
         native_mock.assert_not_called()
     finally:
         runner.sys.argv = original_argv
@@ -125,7 +129,15 @@ def test_root_helper_rejects_non_lifecycle_actions():
 
 def test_root_helper_rejects_custom_config():
     with mock.patch.object(runner, "installed_helper_invocation", return_value=True):
-        args = mock.Mock(action="connect", config="/tmp/other.ini", city=None, json=False)
+        args = mock.Mock(
+            action="connect",
+            config="/tmp/other.ini",
+            city=None,
+            json=False,
+            protocol="wireguard",
+            server_type="traffic",
+            streaming_service=None,
+        )
         try:
             runner.validate_helper_request(args)
             raise AssertionError("Expected the installed helper to reject a custom config")
@@ -152,7 +164,7 @@ def test_ui_privilege_boundary_contract():
     assert "https://ipwho.is/," not in service
 
     runner_source = (ROOT / "cyberghost_runner.py").read_text()
-    assert 'HELPER_CAPABILITY_VERSION = "7"' in runner_source
+    assert 'HELPER_CAPABILITY_VERSION = "8"' in runner_source
 
 
 def test_polkit_marker_is_user_owned_ui_state():

@@ -33,7 +33,7 @@ If you edit imported QML after loading the fixture, a rescan may still use cache
 - Submit synthetic account fields and verify the password is cleared; close with an unsubmitted password and verify it is discarded.
 - Escape closes the panel.
 
-The script saves nine rendered captures: ready, filtered country, private details, Advanced, streaming/TCP, connected, narrow (280 logical units before host scaling), stale handshake and account setup. Snapshots mask entered account values. The test fails on missing controls or unsuccessful interactions; it does not silently skip unavailable IPC.
+The script saves nine rendered captures: ready, filtered country, private details, Advanced, WireGuard-only controls, connected, narrow (280 logical units before host scaling), stale handshake and account setup. Snapshots mask entered account values. The test fails on missing controls or unsuccessful interactions; it does not silently skip unavailable IPC.
 
 ## Human visual review
 

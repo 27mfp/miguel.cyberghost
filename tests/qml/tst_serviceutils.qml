@@ -16,8 +16,9 @@ TestCase {
     }
     var before = JSON.stringify(saved)
     var restored = ServiceUtils.preferences(saved)
-    compare(restored.protocol, "openvpn_tcp")
-    compare(restored.serverSelection, "madrid-s10-i2")
+    compare(restored.protocol, "wireguard")
+    compare(restored.serverType, "traffic")
+    compare(restored.serverSelection, "fastest")
     compare(restored.hideDetails, true)
     compare(JSON.stringify(saved), before)
     var invalid = ServiceUtils.preferences({

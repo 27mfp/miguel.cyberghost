@@ -167,13 +167,13 @@ Item {
   }
 
   function setProtocol(p) {
-    protocol = (p === "openvpn" || p === "openvpn_tcp") ? p : "wireguard"
+    protocol = "wireguard"
     persistSetting("protocol", protocol)
     refreshServers()
   }
 
   function setServerType(t) {
-    serverType = (t === "torrent" || t === "streaming") ? t : "traffic"
+    serverType = "traffic"
     persistSetting("serverType", serverType)
     serverSelection = "fastest"
     persistSetting("serverSelection", serverSelection)
@@ -206,7 +206,7 @@ Item {
     countryName: root.countryName
     protocol: root.protocol
     mode: root.serverType
-    cliAvailable: root.readyCli && root.cliConfigured
+    cliAvailable: false // No vendor inventory dependency in the WireGuard release.
     runnerPath: root.runnerPath
     onLoaded: function (options) {
       var found = options.some(function (item) {
@@ -264,6 +264,11 @@ Item {
   readonly property string installerPath: String(Qt.resolvedUrl("install-helper.sh")).replace(/^file:\/\//, "")
 
   function connectTo(targetCountry, targetProtocol, targetServerType, targetStreaming, targetServer) {
+    if ((targetProtocol && targetProtocol !== "wireguard") || (targetServerType && targetServerType !== "traffic") || targetStreaming || (targetServer && targetServer !== "fastest")) {
+      lastError = "This release supports native WireGuard with automatic server selection only."
+      actionStatus = ""
+      return
+    }
     if (actionProcess.running)
       return
     if (!helperInstalled) {
@@ -294,8 +299,8 @@ Item {
     if (targetServer !== undefined && targetServer !== "")
       setServerSelection(targetServer)
 
-    if ((protocol !== "wireguard" || serverType !== "traffic") && (!readyCli || !cliConfigured)) {
-      lastError = "Advanced modes require CyberGhost CLI account setup. Run cyberghostvpn --setup in a terminal."
+    if (protocol !== "wireguard" || serverType !== "traffic" || serverSelection !== "fastest") {
+      lastError = "This release supports native WireGuard with automatic server selection only."
       actionStatus = ""
       sendNotification("CyberGhost VPN", lastError, "normal")
       return

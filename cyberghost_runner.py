@@ -34,8 +34,8 @@ HELPER_BIN_PATH = "/usr/local/bin/cyberghost-runner"
 POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
 POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
 POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
-PLUGIN_VERSION = "1.6.1"
-HELPER_CAPABILITY_VERSION = "7"
+PLUGIN_VERSION = "1.6.2"
+HELPER_CAPABILITY_VERSION = "8"
 MAX_CONFIG_BYTES = 64 * 1024
 MAX_HELPER_BYTES = 256 * 1024
 MAX_HTTP_RESPONSE_BYTES = 64 * 1024
@@ -1355,13 +1355,7 @@ def disconnect():
     if was_up and down_error and delete_error:
         raise RuntimeError(f"Could not disconnect the WireGuard tunnel: {down_error}; {delete_error}")
 
-    if not was_up:
-        try:
-            stop_cli_connection()
-        except FileNotFoundError:
-            pass  # The vendor CLI is optional when there is no native tunnel.
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
-            raise RuntimeError(f"Could not disconnect the vendor VPN: {clean_command_error(exc)}") from exc
+    # Native-only release: never stop a separately managed vendor VPN.
     if os.path.exists(WG_CONF_PATH):
         try:
             os.remove(WG_CONF_PATH)
@@ -1371,7 +1365,7 @@ def disconnect():
         print("VPN connection terminated.")
     else:
         print("No VPN connections found.")
-    return {"backend": "wireguard" if was_up else "cyberghostvpn", "connected": False}
+    return {"backend": "wireguard", "connected": False}
 
 
 def build_login_payload(username, password):
@@ -1672,7 +1666,11 @@ def installed_helper_invocation():
 
 
 def validate_helper_request(args):
-    """Reduce the Polkit-granted root interface to tunnel lifecycle only."""
+    """Reduce the release interface to native WireGuard lifecycle only."""
+    if args.action == "connect" and (
+        args.protocol != "wireguard" or args.server_type != "traffic" or args.streaming_service
+    ):
+        raise RuntimeError("This release supports native WireGuard traffic connections only")
     if not installed_helper_invocation():
         return args
     if args.action not in HELPER_ACTIONS:
@@ -1804,7 +1802,7 @@ def main():
             else:
                 disconnect()
         elif args.action == "status":
-            status(args.config, args.json, not args.no_cli)
+            status(args.config, args.json, check_cli=False)
         elif args.action == "check":
             check()
         elif args.action == "register":

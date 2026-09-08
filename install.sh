@@ -35,29 +35,6 @@ install_pacman() {
   fi
 }
 
-install_cyberghost_cli() {
-  if command -v cyberghostvpn >/dev/null 2>&1; then
-    say "${GREEN}✓${NC} cyberghostvpn CLI already installed"
-    return 0
-  fi
-  local helper=""
-  command -v yay >/dev/null 2>&1 && helper="yay"
-  command -v paru >/dev/null 2>&1 && helper="paru"
-  echo "→ The cyberghostvpn CLI is RECOMMENDED (live server inventory/manual selection and"
-  echo "  required for OpenVPN / torrent / streaming modes — account linking remains native)."
-  if [[ -z $helper ]]; then
-    say "${DIM}- no AUR helper found (yay/paru) — skip or install the CLI manually later"
-    return 1
-  fi
-  say "${DIM}- this is an optional third-party AUR package; review its PKGBUILD and trust it before continuing"
-  if confirm "Install 'cyberghostvpn' via $helper?"; then
-    "$helper" -S --needed cyberghostvpn
-  else
-    say "${DIM}- skipped cyberghostvpn CLI (native fallback remains available, but the CLI is recommended)"
-    return 1
-  fi
-}
-
 install_polkit_rule() {
   if ! confirm "Install the required root helper?"; then
     say "${DIM}- skipped root helper (connect is disabled until the helper is installed)${NC}"
@@ -107,8 +84,6 @@ try:
     print(f" {tick('credentials')} CyberGhost account credentials")
     print(f" {tick('helper_installed')} Root helper binary (/usr/local/bin/cyberghost-runner)")
     print(f" {tick('polkit_rule_installed')} Polkit rule (50-cyberghost.rules)")
-    cli_status = "\033[0;32m✓\033[0m" if data.get("cli") else "\033[2m- (recommended, WireGuard/OpenVPN/streaming)\033[0m"
-    print(f" {cli_status} cyberghostvpn CLI")
 except Exception:
     print(" Check status unavailable")
 PY
@@ -131,7 +106,6 @@ else
 fi
 
 # 2. CyberGhost CLI (AUR) + account link
-install_cyberghost_cli || true
 setup_account || true
 
 # 3. Passwordless privilege escalation

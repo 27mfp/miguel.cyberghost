@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "miguel.cyberghost",
   "name": "CyberGhost VPN",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "author": "Miguel",
   "license": "MIT",
-  "description": "CyberGhost VPN status, quick connect, country switching, and server mode controls in the Omarchy bar.",
+  "description": "Native CyberGhost WireGuard connections and country switching in the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,16 +14,13 @@
   },
   "barWidget": {
     "displayName": "CyberGhost VPN",
-    "description": "Choose a country and connect. Advanced settings provide exact servers, modes and protocols; guided setup handles requirements.",
+    "description": "Choose a country and connect with native WireGuard and automatic server selection.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "refreshIntervalSec": 8,
       "defaultCountry": "PT",
-      "serverSelection": "fastest",
-      "protocol": "wireguard",
-      "serverType": "traffic",
       "hideDetails": false,
       "reduceMotion": false
     },
@@ -42,25 +39,6 @@
         "type": "string",
         "label": "Default country",
         "defaultValue": "PT"
-      },
-      {
-        "key": "serverSelection",
-        "type": "string",
-        "label": "Server selection (automatic or exact instance)",
-        "description": "Use fastest for automatic selection, or an exact instance from the live server list.",
-        "defaultValue": "fastest"
-      },
-      {
-        "key": "protocol",
-        "type": "string",
-        "label": "VPN protocol (wireguard, openvpn or openvpn_tcp)",
-        "defaultValue": "wireguard"
-      },
-      {
-        "key": "serverType",
-        "type": "string",
-        "label": "Server type (traffic, torrent or streaming)",
-        "defaultValue": "traffic"
       },
       {
         "key": "hideDetails",

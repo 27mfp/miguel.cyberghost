@@ -124,17 +124,11 @@ def main():
             "Advanced moved the primary action",
         )
         capture(directory, "04-advanced")
-        activate("modePicker")
-        run("wtype", "-k", "Down", "-k", "Return")
-        wait_for(lambda state: state["mode"] == "torrent")
-        activate("modePicker")
-        run("wtype", "-k", "Down", "-k", "Return")
-        wait_for(lambda state: state["mode"] == "streaming")
-        activate("protocolPicker")
-        wait_for(lambda state: state["controls"]["protocolPicker"]["popupOpen"])
-        run("wtype", "-k", "Down", "-k", "Down", "-k", "Return")
-        wait_for(lambda state: state["protocol"] == "openvpn_tcp")
-        capture(directory, "05-streaming-tcp")
+        for name in ("modePicker", "protocolPicker", "streamingPicker", "serverPicker"):
+            require(name not in expanded["controls"], "Unsupported vendor control is exposed: " + name)
+        require(expanded["protocol"] == "wireguard" and expanded["mode"] == "traffic", "Wrong release mode")
+        activate("advancedToggle")
+        capture(directory, "05-wireguard-only")
         activate("connectButton")  # Synthetic service only: no root helper exists in this fixture.
         wait_for(lambda state: state["connected"])
         capture(directory, "06-connected")

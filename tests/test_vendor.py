@@ -261,7 +261,7 @@ def test_vendor_status_requires_recognized_successful_probe(code, text, state):
             assert runner.cli_connection_state() is state
 
 
-def test_disconnect_does_not_report_success_when_vendor_stop_fails():
+def test_experimental_vendor_stop_reports_failure():
     def vendor(command, **kwargs):
         if "--stop" in command:
             return runner.subprocess.CompletedProcess(command, 1, "", "stop failed")
@@ -270,7 +270,7 @@ def test_disconnect_does_not_report_success_when_vendor_stop_fails():
     with mock.patch.object(runner, "system_binary", side_effect=lambda name: "/usr/bin/" + name):
         with mock.patch.object(runner, "run_bounded", side_effect=vendor):
             with pytest.raises(RuntimeError, match="stop failed"):
-                runner.disconnect()
+                runner.stop_cli_connection()
 
 
 def test_clean_command_error_drops_partial_traceback():
