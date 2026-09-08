@@ -67,7 +67,8 @@ Column {
     implicitHeight: Style.space(28)
     Text {
       anchors.left: parent.left
-      anchors.right: privacy.left
+      anchors.right: copyButton.left
+      anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
       text: "Public connection"
       color: root.muted
@@ -75,6 +76,23 @@ Column {
       font.pixelSize: Style.font.caption
       textFormat: Text.PlainText
       elide: Text.ElideRight
+    }
+    Button {
+      id: copyButton
+      objectName: "copyIpButton"
+      anchors.right: privacy.left
+      anchors.rightMargin: Style.space(4)
+      anchors.verticalCenter: parent.verticalCenter
+      text: root.ipCopied ? "Copied" : "Copy IP"
+      iconText: "\uf0c5"
+      fontSize: Style.font.caption
+      horizontalPadding: Style.space(4)
+      verticalPadding: Style.space(4)
+      focusable: true
+      enabled: !root.service.hideDetails && root.service.publicIp !== "" && !clipboardProcess.running
+      foreground: root.foreground
+      Accessible.name: root.ipCopied ? "Public IP copied" : "Copy public IP"
+      onClicked: root.copyIp()
     }
     Button {
       id: privacy
@@ -181,18 +199,5 @@ Column {
       textFormat: Text.PlainText
       wrapMode: Text.WrapAnywhere
     }
-  }
-
-  Button {
-    objectName: "copyIpButton"
-    text: root.ipCopied ? "Copied" : "Copy IP"
-    iconText: "\uf0c5"
-    fontSize: Style.font.caption
-    verticalPadding: Style.space(4)
-    focusable: true
-    enabled: !root.service.hideDetails && root.service.publicIp !== "" && !clipboardProcess.running
-    foreground: root.foreground
-    Accessible.name: root.ipCopied ? "Public IP copied" : "Copy public IP"
-    onClicked: root.copyIp()
   }
 }

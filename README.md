@@ -30,7 +30,7 @@ Native registration does not overwrite the vendor's `~/.cyberghost/config.ini`. 
 - Middle/right-click retains the quick connection toggle.
 - The eye button masks connection details, including tooltip and location-mismatch information.
 - Escape closes dropdowns first, then the panel. Controls support Tab/Enter.
-- **Advanced settings** contains the protection disclaimer and optional passwordless authorization—not extra VPN modes.
+- **Settings** contains the protection disclaimer and optional passwordless authorization—not extra VPN modes.
 
 Automatic selection can use live vendor inventory if already available, otherwise bounded native fallback candidates. It does not measure the fastest latency or throughput. Provider changes can make particular countries or endpoints unavailable.
 
@@ -53,7 +53,7 @@ Normal authorization is the default:
 bash install-helper.sh
 ```
 
-An explicit opt-in is available under Advanced settings or with:
+An explicit opt-in is available under Settings or with:
 
 ```bash
 bash install-helper.sh --with-polkit-rule

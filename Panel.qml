@@ -212,7 +212,7 @@ Panel {
                   implicitHeight: Style.space(28)
                   horizontalPadding: 0
                   verticalPadding: 0
-                  anchors.left: parent.left
+                  anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   enabled: !root.cyberghost.busy
                   focusable: true
@@ -228,14 +228,14 @@ Panel {
                 Button {
                   id: connectBtn
                   objectName: "connectButton"
-                  anchors.left: refreshStatusButton.right
-                  anchors.leftMargin: Style.space(8)
-                  anchors.right: parent.right
+                  anchors.left: parent.left
+                  anchors.right: refreshStatusButton.left
+                  anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   enabled: !root.cyberghost.busy
                   focusable: true
                   Accessible.name: root.cyberghost.active ? "Disconnect VPN" : "Connect VPN"
-                  iconText: root.cyberghost.active ? "\uf00d" : "\uf00c"
+                  iconText: "\uf011"
                   text: root.cyberghost.connecting ? "Connecting…" : (root.cyberghost.disconnecting ? "Disconnecting…" : (root.cyberghost.active ? "Disconnect" : "Connect"))
                   selected: root.cyberghost.active
                   bordered: true
@@ -245,21 +245,14 @@ Panel {
                 }
               }
             }
-          }
-
-          ConnectionDetails {
-            width: parent.width
-            service: root.cyberghost
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
-
-          // No trailing space when only required setup is visible.
-          Item {
-            width: parent.width
-            visible: root.cyberghost.setupDone
-            implicitHeight: visible ? Style.space(16) : 0
-            height: implicitHeight
+            connectionDetails: Component {
+              ConnectionDetails {
+                width: parent.width
+                service: root.cyberghost
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+            }
           }
         }
       }
