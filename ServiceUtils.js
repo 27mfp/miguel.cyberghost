@@ -8,12 +8,12 @@ function isValidServerSelector(value) {
 
 function preferences(settings) {
   var saved = settings || {}
-  var server = String(saved.serverSelection || "fastest").toLowerCase()
   return {
     country: String(saved.defaultCountry || "PT").trim().toUpperCase(),
-    protocol: saved.protocol === "openvpn" || saved.protocol === "openvpn_tcp" ? saved.protocol : "wireguard",
-    serverType: saved.serverType === "torrent" || saved.serverType === "streaming" ? saved.serverType : "traffic",
-    serverSelection: isValidServerSelector(server) ? server : "fastest",
+    // Migrate earlier experimental selections to the supported release path.
+    protocol: "wireguard",
+    serverType: "traffic",
+    serverSelection: "fastest",
     hideDetails: saved.hideDetails === true
   }
 }

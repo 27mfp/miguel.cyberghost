@@ -2,7 +2,7 @@
 
 | Script | Purpose | Privileges |
 | --- | --- | --- |
-| `install.sh` | Guided dependency/account/helper setup. Optional AUR CLI installation is a separate trust decision. | Explicit terminal sudo for packages/helper. |
+| `install.sh` | Guided native WireGuard dependency/account/helper setup. Does not install the vendor CLI. | Explicit terminal sudo for packages/helper. |
 | `install-helper.sh` | Install/update the fixed, root-owned connection helper. | Explicit terminal sudo; no mutable plugin path is executed as root. |
 | `fresh-install.sh` | Destructive developer reset/reinstall, not a normal upgrade. | Removes installed helper/rule with authorization. |
 

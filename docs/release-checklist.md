@@ -1,34 +1,37 @@
-# 1.6.1 candidate — release gates
+# 1.6.2 candidate — native WireGuard release gates
 
-This is not yet a fully verified stable release. Do not label mocked tests or a vendor exit code as proof of a working VPN.
+Scope agreed with the owner: ship native WireGuard traffic connections with country selection and automatic servers. Hide unsupported modes, rather than presenting experimental connections as stable. Omarchy is the supported baseline, but rolling versions, resolver configuration, interfaces and monitor arrangements can differ.
 
-## Verified
+## Release boundaries
 
-- [x] 101 Python tests pass on Python 3.9, 3.12 and the local interpreter.
-- [x] The setup wrapper's real-PTY test verifies Enter/No behavior and hidden password input.
-- [x] Vendor account configuration is present and server discovery works: Lisbon traffic instances and US streaming profiles were fetched.
-- [x] Existing native device credentials were preserved separately before vendor setup; their bytes remained unchanged afterward.
-- [x] Native connect, IPv4/IPv6 route selection, uncached VPN DNS and disconnect cleanup passed on the earlier 1.6.0 helper.
-- [x] A live OpenVPN test reproduced the vendor returning zero while disconnected. The 1.6.1 helper now rejects that case, attempts cleanup and reports the failure.
-- [x] Regression tests cover supported OpenVPN UDP/TCP arguments, missing/unrecognized vendor status, failed activation, timeout cleanup and unsuccessful disconnect.
-- [x] Helper capability 7 rejects older helpers that lack those checks.
+- Unsupported protocol/mode/manual-server controls are absent from the panel and manifest settings.
+- Saved experimental preferences normalize to WireGuard, traffic and automatic selection.
+- IPC rejects unsupported requests; the runner rejects vendor-dependent connection modes before backend dispatch.
+- Status and disconnect manage the native tunnel only, not a separately started vendor VPN.
+- Guided installation does not offer the vendor CLI or OpenVPN compatibility launcher.
+- Optional existing vendor inventory can still assist native endpoint selection; fallback candidates remain available.
+- Helper capability 8 requires an explicit helper update before using this candidate.
 
-## Still required before a stable release
+## Evidence and remaining gates
 
-- [ ] Complete an independent code/security review using the selected Grok model. The review runner has been blocked by Pi runtime/dependency errors; no completed independent audit is claimed.
-- [ ] Resolve the installed vendor/OpenVPN compatibility problem without disabling TLS verification or silently changing system sudo policy.
-- [ ] Successful OpenVPN UDP and TCP connections, observed routes/DNS, and cleanup after each.
-- [ ] Live torrent and streaming-mode connections on supported servers. Listing profiles is not proof that a streaming service can be accessed.
-- [ ] Recheck native WireGuard with helper 1.6.1 and the preserved device credentials.
-- [ ] Controlled activation failure and timeout recovery, including residual routes, DNS, processes and original IPv6 settings.
-- [ ] Concurrent requests from multiple monitor widgets, owner re-election/hotplug and constrained-height UI checks.
+- Earlier native WireGuard live tests passed IPv4/IPv6 tunnel routing, uncached DNS, HTTPS egress and disconnect cleanup with helper 1.6.0.
+- Earlier real-shell visual/keyboard/privacy tests passed. The narrower UI needs another real-shell smoke check.
+- 116 Python tests pass on Python 3.9 and 3.12; 28 substantive Qt tests pass. These cover preference migration, absent vendor controls, rejected unsupported requests and native-only disconnect behavior. Ruff, ShellCheck and manifest validation pass; QML lint reports 0 project diagnostics and 58 known host metadata warnings.
+- [ ] Recheck native WireGuard with the final helper, including operation without configured vendor inventory.
+- [ ] Verify native activation failure/timeout recovery and residual routes/DNS.
+- [ ] Verify concurrent multi-monitor requests and owner re-election/hotplug.
 - [ ] Clean install, upgrade, disable/re-enable and removal in a disposable environment.
-- [ ] Run the complete final gates, review the exact release diff, then push and inspect remote CI before tagging or advertising stability.
+- [ ] Complete the selected Grok independent security review. Previous attempts failed due Pi runtime/dependency errors; no completed independent audit is claimed.
+- [ ] Review final diff, sync the installed checkout/helper, run final gates and inspect remote CI before tagging or advertising stability.
 
-## OpenVPN investigation
+## Deferred vendor investigation (not a release gate for native-only scope)
 
-The installed vendor CLI is 1.4.1 and OpenVPN is 2.7.6. The vendor prints “VPN connection failed” but exits zero; its generated log was empty. Installed vendor code invokes `sudo openvpn` and captures the child's error stream without displaying it in the generic failure path.
+CLI 1.4.1 returned zero even when OpenVPN failed. The experimental helper verification caught this. A read-only sudo lookup confirmed that nested sudo bypassed the Arch compatibility wrapper. With explicit owner approval, a narrowly scoped root-owned `/usr/local/bin/openvpn` launcher was installed without modifying sudoers, packaged OpenVPN or TLS verification.
 
-OpenVPN 2.7.6 rejects `--ncp-disable`. The Arch package supplies an OpenVPN wrapper that strips this obsolete option. Whether nested sudo bypasses that wrapper is being checked; the rejected option alone is not yet proof of the exact live failure cause.
+OpenVPN then exposed a missing `~/.cyberghost/openvpn/auth` file. Vendor code writes the existing device token/secret into this file; those values were restored privately with mode 0600 without overwriting any file or creating/deleting a device.
 
-No sudoers change, certificate replacement, device deletion or passwordless authorization has been applied as a workaround. The plugin provides no kill switch. Vendor process presence does not establish routing, DNS or leak protection.
+A subsequent OpenVPN UDP connection succeeded: IPv4 routed through `tun0`, HTTPS egress reported Portugal, and an uncached DNS lookup reported `tun0`. The tunnel had no per-link DNS server/domain recorded by `resolvectl`, so provider-specific DNS setup is not claimed.
+
+Vendor disconnect removed `tun0`, restored Wi-Fi IPv4/DNS and reverse-path filtering, but left both global/default IPv6-disable settings at 1. The owner authorized restoration to their saved values of 0; Wi-Fi IPv6 routing was verified afterward. **Automatic vendor IPv6 cleanup remains unresolved.** TCP, streaming and torrent connections are not certified.
+
+The compatibility launcher remains installed on the development machine, but native WireGuard does not require it. Retained vendor code/scripts are experimental developer material, not supported release modes. No kill switch or comprehensive leak protection is claimed.

@@ -1,10 +1,17 @@
 # Changelog
 
-## Unreleased — 1.6.1 candidate
+## Unreleased — 1.6.2 native WireGuard candidate
+
+- Restrict release connections to native WireGuard traffic mode. Remove vendor-dependent controls from the panel and manifest, and migrate saved experimental selections to automatic WireGuard.
+- Reject unsupported IPC/helper connection requests. Native status/disconnect no longer manage separately started vendor VPNs.
+- Remove vendor CLI installation prompts. Target Omarchy while retaining prerequisite checks for differing versions and resolver/network setups.
+- Require helper capability 8. Experimental vendor compatibility work below is retained for development, not advertised as a supported release feature.
+
+### Earlier experimental 1.6.1 work
 
 - Use the vendor's supported `--connection udp|tcp` option for OpenVPN.
 - Reject CLI exit-zero results unless a subsequent vendor status probe observes an active connection. Attempt bounded cleanup on failures/timeouts and report cleanup failures.
-- Do not report successful CLI disconnection when stop fails or its result cannot be verified. Helper capability is now 7; explicitly update the helper before testing this candidate.
+- Do not report successful CLI disconnection when stop fails or its result cannot be verified. That experimental candidate used helper capability 7; the native-only candidate supersedes it.
 
 - Add an optional terminal wrapper for vendor setup: Enter now means Yes at its two misleading `[Y/n]` confirmations, while explicit No and password input remain unchanged. Add confirmation-filter and real-PTY regression tests; correct CLI setup documentation.
 

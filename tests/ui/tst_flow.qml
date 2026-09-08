@@ -155,6 +155,14 @@ TestCase {
     compare(controls.popupOpen, false)
   }
 
+  function test_vendorControlsAreAbsentEvenWhenCliIsReady() {
+    var controls = createTemporaryObject(preferencesFactory, this)
+    controls.advanced = true
+    var names = ["modePicker", "protocolPicker", "streamingPicker", "serverPicker"]
+    for (var i = 0; i < names.length; i++)
+      compare(findChild(controls, names[i]), null)
+  }
+
   function test_advancedCollapsedAndCountrySelectionDoesNotConnect() {
     var controls = createTemporaryObject(preferencesFactory, this)
     verify(controls !== null)

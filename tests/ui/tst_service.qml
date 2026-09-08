@@ -33,15 +33,16 @@ TestCase {
     return []
   }
 
-  function test_connectKeepsExactServerSelectedInUi() {
+  function test_connectMigratesOldExactServerToAutomaticWireGuard() {
     var service = readyService({
       defaultCountry: "PT",
       serverSelection: "lisbon-s405-i19"
     })
     service.toggle()
     var command = actionCommand(service)
-    verify(command.indexOf("--server") >= 0)
-    compare(command[command.indexOf("--server") + 1], "lisbon-s405-i19")
+    verify(command.indexOf("--server") < 0)
+    compare(command[command.indexOf("--protocol") + 1], "wireguard")
+    compare(service.serverSelection, "fastest")
   }
 
   function test_optionalInventoryDoesNotBlockDisconnect() {
@@ -50,30 +51,20 @@ TestCase {
     })
     service.connected = true
     service.refreshServers()
-    compare(service.loadingServers, true)
+    compare(service.loadingServers, false)
     service.toggle()
     verify(actionCommand(service).indexOf("disconnect") >= 0)
   }
 
-  function test_streamingRefreshKeepsInFlightOutputAndSelectedProfile() {
-    var service = readyService({
-      serverType: "streaming"
-    })
-    service.streamingService = "Netflix"
+  function test_oldStreamingSettingsDoNotStartVendorInventory() {
+    var service = readyService({ serverType: "streaming", protocol: "openvpn" })
     service.refreshStreamingServices()
-    var process = null
+    compare(service.serverType, "traffic")
+    compare(service.protocol, "wireguard")
     for (var i = 0; i < service.children.length; i++) {
       var command = service.children[i].command
-      if (command && command.indexOf("streaming-services") >= 0)
-        process = service.children[i]
+      verify(!command || command.indexOf("streaming-services") < 0)
     }
-    verify(process !== null)
-    process.stdout.read('[{"value":"Prime","label":"Prime"},{"value":"Netflix","label":"Netflix"}]')
-    service.refreshStreamingServices()
-    process.running = false
-    process.exited(0)
-    compare(service.streamingOptions.length, 2)
-    compare(service.streamingService, "Netflix")
   }
 
   function ipProcess(service) {
@@ -110,9 +101,12 @@ TestCase {
       protocol: "openvpn"
     })
     service.cliConfigured = false
-    service.toggle()
+    service.connectTo("PT", "openvpn", "traffic", "", "fastest")
     compare(actionCommand(service).length, 0)
-    verify(service.lastError.indexOf("CLI account setup") >= 0)
+    verify(service.lastError.indexOf("native WireGuard") >= 0)
+    service.cliConfigured = true
+    service.connectTo("PT", "wireguard", "torrent", "", "fastest")
+    compare(actionCommand(service).length, 0)
   }
 
   function test_lateSettingsRestoreDoesNotWriteOrResetManualChoice() {
@@ -127,7 +121,7 @@ TestCase {
       hideDetails: true
     }
     compare(service.country, "ES")
-    compare(service.serverSelection, "madrid-s10-i2")
+    compare(service.serverSelection, "fastest")
     compare(service.hideDetails, true)
     compare(writes.length, 0)
   }
