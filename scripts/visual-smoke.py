@@ -20,10 +20,13 @@ def run(tool, *args, data=None):
     binary = shutil.which(tool)
     if not binary:
         raise RuntimeError(f"Required tool missing: {tool}")
+    # wl-copy forks a selection owner; inherited capture pipes can keep
+    # communicate() waiting even after a successful clipboard restoration.
+    output = subprocess.DEVNULL if tool == "wl-copy" else subprocess.PIPE
     result = subprocess.run(  # noqa: S603 - fixed local tools and test-fixture arguments, no shell
-        [binary, *args], input=data, capture_output=True, timeout=10, check=True
+        [binary, *args], input=data, stdout=output, stderr=output, timeout=10, check=True
     )
-    return result.stdout
+    return result.stdout or b""
 
 
 def ipc(*args):
@@ -148,7 +151,6 @@ def main():
         run("wtype", "discard-this-draft", "-k", "Escape")
         wait_for(lambda state: not state["opened"])
         require(snapshot()["controls"]["accountPassword"]["text"] == "", "Closing retained an unsubmitted password")
-        print(f"PASS: real-shell interactions and 9 synthetic-data captures. Review images in {directory}")
     finally:
         if copied:
             if clipboard is not None and mime:
@@ -157,6 +159,7 @@ def main():
                 run("wl-copy", "--clear")
         run("omarchy-shell", "shell", "hide", TARGET)
         print(f"Artifacts: {directory}")
+    print(f"PASS: real-shell interactions, clipboard restoration and 9 captures. Review images in {directory}")
 
 
 if __name__ == "__main__":
