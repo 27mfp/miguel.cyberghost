@@ -17,7 +17,8 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 - Earlier native WireGuard live tests passed IPv4/IPv6 tunnel routing, uncached DNS, HTTPS egress and disconnect cleanup with helper 1.6.0.
 - Earlier real-shell visual/keyboard/privacy tests passed. The narrower UI needs another real-shell smoke check.
 - 116 Python tests pass on Python 3.9 and 3.12; 28 substantive Qt tests pass. These cover preference migration, absent vendor controls, rejected unsupported requests and native-only disconnect behavior. Ruff, ShellCheck and manifest validation pass; QML lint reports 0 project diagnostics and 58 known host metadata warnings.
-- [ ] Recheck native WireGuard with the final helper, including operation without configured vendor inventory.
+- [x] Live native WireGuard connect/disconnect with installed helper 1.6.2: IPv4/IPv6 routes selected `cyberghost` table 51820; DNS servers were 10.0.0.243/10.0.0.242 with `~.`; an uncached query used the tunnel and IPv4 HTTPS egress reported PT. Disconnect removed the interface and VPN policy rules, restored both route lookups and uncached DNS to Wi-Fi, and preserved IPv6 settings (0/0) and reverse-path filtering (2).
+- [ ] Recheck final native connection without configured vendor inventory.
 - [ ] Verify native activation failure/timeout recovery and residual routes/DNS.
 - [ ] Verify concurrent multi-monitor requests and owner re-election/hotplug.
 - [ ] Clean install, upgrade, disable/re-enable and removal in a disposable environment.
