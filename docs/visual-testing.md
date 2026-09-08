@@ -27,8 +27,8 @@ If you edit imported QML after loading the fixture, a rescan may still use cache
 - Hide/reopen with a dropdown open; confirm the popup is closed.
 - Toggle privacy and verify displayed values are masked.
 - Copy the synthetic public IP through the real `wl-copy` process, verify clipboard contents and restore the previous clipboard.
-- Expand Advanced without moving Connect below its controls.
-- Select Torrent, Streaming and OpenVPN TCP using real dropdowns.
+- Expand Settings without moving Connect below its controls.
+- Verify vendor-dependent mode, protocol, streaming and server controls are absent.
 - Exercise Connect/Disconnect against the synthetic service.
 - Submit synthetic account fields and verify the password is cleared; close with an unsubmitted password and verify it is discarded.
 - Escape closes the panel.

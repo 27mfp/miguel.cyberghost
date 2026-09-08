@@ -11,6 +11,7 @@ Column {
   property string fontFamily: Style.font.family
   property bool advanced: false
   property Component primaryActions: null
+  property Component connectionDetails: null
   readonly property var primaryFocusTarget: actions.item ? actions.item["focusTarget"] : null
   readonly property bool popupOpen: countryPicker.popupOpen
   spacing: Style.space(10)
@@ -49,9 +50,14 @@ Column {
     sourceComponent: root.primaryActions
   }
 
+  Loader {
+    width: parent.width
+    sourceComponent: root.connectionDetails
+  }
+
   Button {
     objectName: "advancedToggle"
-    text: "Advanced settings"
+    text: "Settings"
     iconText: root.advanced ? "\uf106" : "\uf107"
     fontSize: Style.font.caption
     horizontalPadding: Style.space(4)
