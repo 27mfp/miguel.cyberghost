@@ -1,5 +1,7 @@
 # 1.6.2 candidate — native WireGuard release gates
 
+Published listing: [CyberGhost VPN for Omarchy](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
+
 Scope agreed with the owner: ship native WireGuard traffic connections with country selection and automatic servers. Hide unsupported modes, rather than presenting experimental connections as stable. Omarchy is the supported baseline, but rolling versions, resolver configuration, interfaces and monitor arrangements can differ.
 
 ## Release boundaries

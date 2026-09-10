@@ -1,5 +1,7 @@
 # Installer reference
 
+Published listing: [CyberGhost VPN for Omarchy](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
+
 | Script | Purpose | Privileges |
 | --- | --- | --- |
 | `install.sh` | Guided native WireGuard dependency/account/helper setup. Does not install the vendor CLI. | Explicit terminal sudo for packages/helper. |
