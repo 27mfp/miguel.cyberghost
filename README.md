@@ -6,6 +6,13 @@ A native WireGuard VPN plugin for the Omarchy bar. Choose a country and connect 
 
 [Open the CyberGhost plugin in the Omarchy plugin directory](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
 
+## Preview
+
+<p align="center">
+  <img src="docs/screenshots/screenshot-disconnected.png" alt="CyberGhost VPN disconnected with connection details hidden" width="360">
+  <img src="docs/screenshots/screenshot_connected.png" alt="CyberGhost VPN connected to Portugal with WireGuard active" width="360">
+</p>
+
 ## Install
 
 ```bash
