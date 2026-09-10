@@ -1,5 +1,7 @@
 # CyberGhost VPN for Omarchy
 
+<p align="center"><img src="icon.svg" alt="CyberGhost VPN" width="128" height="128"></p>
+
 A native WireGuard VPN plugin for the Omarchy bar. Choose a country and connect with one click.
 
 [Open the CyberGhost plugin in the Omarchy plugin directory](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)

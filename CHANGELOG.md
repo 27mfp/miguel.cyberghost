@@ -11,6 +11,7 @@
 - Keep trusted helper presence separate from exact-version readiness so existing tunnels remain disconnectable during helper updates; skip vendor CLI execution from the privileged helper.
 - Reject stale QML status/action completions, distinguish unknown probe state from disconnected, cancel/timeout actions conservatively, and clean panels on every close path.
 - Preserve Polkit rules during helper-only updates; scope optional passwordless authorization to the installing wheel user, add digest-checked explicit revocation, fail-closed installer confirmations, and staged `fresh-install.sh` replacement.
+- Add a repository icon and refresh the native WireGuard marketplace preview and documentation screenshots.
 
 ### Earlier experimental 1.6.1 work
 

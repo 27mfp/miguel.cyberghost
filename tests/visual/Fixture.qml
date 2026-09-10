@@ -134,6 +134,8 @@ Plugin.Panel {
     property bool regBusy: false
     property string setupMsg: ""
     property string lastError: ""
+    property string statusProbeError: ""
+    property bool externalVpn: false
     property string actionStatus: ""
     property string applyHint: ""
     property bool tunnelStale: false

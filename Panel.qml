@@ -163,6 +163,7 @@ Panel {
           // -------------------------------------------------------------
           Rectangle {
             id: statusBanner
+            objectName: "statusBanner"
             readonly property bool isError: root.cyberghost.lastError !== "" || root.cyberghost.statusProbeError !== "" || root.cyberghost.externalVpn || root.cyberghost.tunnelStale
             visible: root.cyberghost.setupDone && (root.cyberghost.lastError !== "" || root.cyberghost.statusProbeError !== "" || root.cyberghost.actionStatus !== "" || root.cyberghost.applyHint !== "" || root.cyberghost.externalVpn || root.cyberghost.tunnelStale)
             width: parent.width
