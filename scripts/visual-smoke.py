@@ -98,6 +98,10 @@ def main():
         if snapshot()["controls"]["advancedToggle"]["selected"]:
             activate("advancedToggle")
         ready = capture(directory, "01-ready")
+        require(
+            not ready["controls"].get("statusBanner", {}).get("visible", False),
+            "Ready preview contains an unexpected status banner",
+        )
         activate("countryPicker")
         wait_for(lambda state: state["controls"]["countryPicker"]["popupOpen"])
         run("wtype", "Spain")
