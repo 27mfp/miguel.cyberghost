@@ -13,6 +13,7 @@ Ui.BarWidget {
   readonly property bool reduceMotion: !!setting("reduceMotion", false)
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing : false
+  readonly property var actionService: cyberghost
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -55,15 +56,21 @@ Ui.BarWidget {
     id: cyberghost
     settings: root.settings
     onSettingChanged: function (key, value) {
-      var entry = {
-        id: root.moduleName
-      }
-      for (var name in root.settings)
-        entry[name] = root.settings[name]
+      var current = root.settings || {}
+      var entry = { id: root.moduleName }
+      for (var name in current)
+        entry[name] = current[name]
       entry[key] = value
+      var acknowledged = false
+      try {
+        if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+          acknowledged = root.bar.shell.updateEntryInline(root.moduleName, entry) === true
+      } catch (e) {
+        acknowledged = false
+      }
       root.settings = entry
-      if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-        root.bar.shell.updateEntryInline(root.moduleName, entry)
+      if (!acknowledged)
+        cyberghost.lastError = "Could not save preference changes to Omarchy shell settings."
     }
   }
   Loader {
@@ -121,6 +128,10 @@ Ui.BarWidget {
     tooltipText: {
       if (!cyberghost.setupDone)
         return "CyberGhost VPN: setup incomplete — click for steps"
+      if (cyberghost.statusUnknown)
+        return "CyberGhost VPN: status unavailable — click to reconcile"
+      if (cyberghost.externalVpn)
+        return "CyberGhost VPN: another VPN is active"
       if (cyberghost.connecting)
         return "CyberGhost VPN: Connecting to " + cyberghost.countryName + " (" + cyberghost.country + ")…"
       if (cyberghost.disconnecting)
@@ -144,7 +155,7 @@ Ui.BarWidget {
           active: cyberghost.active
           connecting: cyberghost.connecting || cyberghost.disconnecting
           reducedMotion: root.reduceMotion
-          warning: cyberghost.tunnelStale || !cyberghost.setupDone
+          warning: cyberghost.tunnelStale || cyberghost.statusUnknown || cyberghost.externalVpn || !cyberghost.setupDone
         }
       }
     }
@@ -158,7 +169,9 @@ Ui.BarWidget {
         return
       }
       if (buttonCode === Qt.MiddleButton || buttonCode === Qt.RightButton) {
-        cyberghost.toggle()
+        var widgets = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : [root]
+        var owner = widgets.length > 0 && widgets[0] && widgets[0].actionService ? widgets[0].actionService : cyberghost
+        owner.toggle()
       }
     }
   }

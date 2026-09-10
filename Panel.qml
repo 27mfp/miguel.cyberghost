@@ -25,6 +25,15 @@ Panel {
   readonly property color brandYellow: "#FFCE00"
   readonly property bool reduceMotion: !!setting("reduceMotion", false)
 
+  function cleanupTransientState() {
+    // Idempotent cleanup is required for controller-driven closes, output
+    // removal and popout switches; close() is not the only lifecycle path.
+    if (preferences)
+      preferences.closePopups()
+    if (setupCard)
+      setupCard.clearPassword()
+  }
+
   onOpenedChanged: {
     if (root.opened && cyberghost) {
       // Recheck's completion handler refreshes status; avoiding a second
@@ -33,12 +42,14 @@ Panel {
       cyberghost.refreshServers()
       // Force a GeoIP lookup so the exposed/VPN IP is never stale.
       cyberghost.refreshIpInfo(true)
+    } else if (!root.opened) {
+      cleanupTransientState()
     }
   }
+  Component.onDestruction: cleanupTransientState()
 
   function close() {
-    preferences.closePopups()
-    setupCard.clearPassword()
+    cleanupTransientState()
     root.controller.hide()
   }
 
@@ -119,6 +130,10 @@ Panel {
                   return "Connecting to " + root.cyberghost.countryName + "…"
                 if (root.cyberghost.disconnecting)
                   return "Disconnecting tunnel…"
+                if (root.cyberghost.statusUnknown)
+                  return "VPN status unavailable"
+                if (root.cyberghost.externalVpn)
+                  return "Another VPN is active"
                 if (root.cyberghost.connected && root.cyberghost.tunnelStale)
                   return "Connected · handshake stale ⚠"
                 if (root.cyberghost.connected) {
@@ -148,8 +163,8 @@ Panel {
           // -------------------------------------------------------------
           Rectangle {
             id: statusBanner
-            readonly property bool isError: root.cyberghost.lastError !== "" || root.cyberghost.tunnelStale
-            visible: root.cyberghost.setupDone && (root.cyberghost.lastError !== "" || root.cyberghost.actionStatus !== "" || root.cyberghost.applyHint !== "" || root.cyberghost.tunnelStale)
+            readonly property bool isError: root.cyberghost.lastError !== "" || root.cyberghost.statusProbeError !== "" || root.cyberghost.externalVpn || root.cyberghost.tunnelStale
+            visible: root.cyberghost.setupDone && (root.cyberghost.lastError !== "" || root.cyberghost.statusProbeError !== "" || root.cyberghost.actionStatus !== "" || root.cyberghost.applyHint !== "" || root.cyberghost.externalVpn || root.cyberghost.tunnelStale)
             width: parent.width
             implicitHeight: visible ? bannerText.implicitHeight + Style.space(12) : 0
             height: implicitHeight
@@ -167,6 +182,10 @@ Panel {
               text: {
                 if (root.cyberghost.lastError !== "")
                   return root.cyberghost.lastError
+                if (root.cyberghost.statusProbeError !== "")
+                  return root.cyberghost.statusProbeError
+                if (root.cyberghost.externalVpn)
+                  return "A vendor-managed VPN is active. Disconnect it outside this plugin before connecting."
                 if (root.cyberghost.actionStatus !== "")
                   return root.cyberghost.actionStatus
                 if (root.cyberghost.tunnelStale)

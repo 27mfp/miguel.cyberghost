@@ -13,13 +13,15 @@ RULE_PATH="/etc/polkit-1/rules.d/50-cyberghost.rules"
 MARKER_DIR="$HOME/.local/state/cyberghost"
 MARKER_PATH="$MARKER_DIR/polkit-rule-installed"
 INSTALL_POLKIT=0
+REVOKE_POLKIT=0
 SNAPSHOT_DIR=""
 ROOT_STAGE_DIR=""
+STAGE_OWNED=0
 
 cleanup() {
   # The root staging directory is inaccessible to the invoking user. Use -n so
   # cleanup never opens a second password prompt after an interrupted install.
-  if [[ -n "${ROOT_STAGE_DIR:-}" ]]; then
+  if (( STAGE_OWNED )) && [[ -n "${ROOT_STAGE_DIR:-}" ]]; then
     /usr/bin/sudo -n /usr/bin/rm -rf -- "$ROOT_STAGE_DIR" 2>/dev/null || true
   fi
   if [[ -n "${SNAPSHOT_DIR:-}" ]]; then
@@ -32,14 +34,20 @@ while (($#)); do
   case "$1" in
     --no-polkit-rule | --helper-only) INSTALL_POLKIT=0 ;;
     --with-polkit-rule) INSTALL_POLKIT=1 ;;
+    --revoke-polkit-rule) REVOKE_POLKIT=1 ;;
     -h | --help)
-      printf 'Usage: %s [--with-polkit-rule|--no-polkit-rule|--helper-only]\n' "$(basename "$0")"
+      printf 'Usage: %s [--with-polkit-rule|--no-polkit-rule|--helper-only|--revoke-polkit-rule]\n' "$(basename "$0")"
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
 done
+
+if (( REVOKE_POLKIT && INSTALL_POLKIT )); then
+  echo "Choose either --with-polkit-rule or --revoke-polkit-rule, not both." >&2
+  exit 1
+fi
 
 require_regular_source() {
   local source="$1"
@@ -59,6 +67,18 @@ snapshot_source() {
   /usr/bin/chmod 0400 "$snapshot"
 }
 
+prepare_polkit_snapshot() {
+  local snapshot="$1"
+  local install_user
+  install_user=$(/usr/bin/id -un)
+  if [[ ! "$install_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Refusing to generate a Polkit rule for an unusual local username." >&2
+    exit 1
+  fi
+  /usr/bin/sed -i "s/__CYBERGHOST_INSTALL_USER__/$install_user/g" "$snapshot"
+  /usr/bin/chmod 0400 "$snapshot"
+}
+
 sha256_file() {
   local digest
   digest=$(/usr/bin/sha256sum -- "$1")
@@ -69,6 +89,41 @@ sha256_file() {
   fi
   printf '%s' "$digest"
 }
+
+revoke_polkit_rule() {
+  local digest="$1"
+  /usr/bin/sudo /usr/bin/bash - "$RULE_PATH" "$digest" <<'ROOT_REVOKE'
+set -euo pipefail
+rule_path="$1"
+expected="$2"
+if [[ ! -e "$rule_path" ]]; then
+  exit 0
+fi
+if [[ -L "$rule_path" || ! -f "$rule_path" || "$(/usr/bin/stat -c '%u' -- "$rule_path")" != 0 ]]; then
+  echo "Refusing to remove an untrusted Polkit rule: $rule_path" >&2
+  exit 1
+fi
+actual=$(/usr/bin/sha256sum -- "$rule_path")
+actual="${actual%% *}"
+if [[ "$actual" != "$expected" ]]; then
+  echo "Refusing to remove a customized Polkit rule; inspect it manually: $rule_path" >&2
+  exit 1
+fi
+/usr/bin/rm -f -- "$rule_path"
+ROOT_REVOKE
+  rm -f -- "$MARKER_PATH"
+}
+
+if (( REVOKE_POLKIT )); then
+  SNAPSHOT_DIR=$(/usr/bin/mktemp -d /tmp/cyberghost-revoke.XXXXXX)
+  snapshot_source "$DIR/50-cyberghost.rules" "$SNAPSHOT_DIR/50-cyberghost.rules"
+  prepare_polkit_snapshot "$SNAPSHOT_DIR/50-cyberghost.rules"
+  RULE_DIGEST=$(sha256_file "$SNAPSHOT_DIR/50-cyberghost.rules")
+  echo "Revoking the plugin-owned Polkit rule..."
+  revoke_polkit_rule "$RULE_DIGEST"
+  echo "Plugin-owned Polkit rule revoked."
+  exit 0
+fi
 
 copy_to_root_stage() {
   local snapshot="$1"
@@ -100,6 +155,7 @@ HELPER_DIGEST=$(sha256_file "$SNAPSHOT_DIR/cyberghost_runner.py")
 RULE_DIGEST=""
 if (( INSTALL_POLKIT )); then
   snapshot_source "$DIR/50-cyberghost.rules" "$SNAPSHOT_DIR/50-cyberghost.rules"
+  prepare_polkit_snapshot "$SNAPSHOT_DIR/50-cyberghost.rules"
   RULE_DIGEST=$(sha256_file "$SNAPSHOT_DIR/50-cyberghost.rules")
 fi
 
@@ -121,6 +177,7 @@ fi
   echo "Could not create the root staging directory at $ROOT_STAGE_DIR." >&2
   exit 1
 }
+STAGE_OWNED=1
 copy_to_root_stage "$SNAPSHOT_DIR/cyberghost_runner.py" cyberghost_runner.py
 if (( INSTALL_POLKIT )); then
   copy_to_root_stage "$SNAPSHOT_DIR/50-cyberghost.rules" 50-cyberghost.rules
@@ -133,20 +190,22 @@ if (( INSTALL_POLKIT )); then
 fi
 
 echo "Installing verified root helper..."
-/usr/bin/sudo /usr/bin/install -o root -g root -m 0755 -- "$ROOT_STAGE_DIR/cyberghost_runner.py" "$HELPER_PATH"
+# Publish each file through a same-filesystem temporary name. The staged bytes
+# were verified before this command and the final rename is atomic.
+/usr/bin/sudo /usr/bin/install -o root -g root -m 0755 -- "$ROOT_STAGE_DIR/cyberghost_runner.py" "$HELPER_PATH.tmp.$$"
+/usr/bin/sudo /usr/bin/mv -f -- "$HELPER_PATH.tmp.$$" "$HELPER_PATH"
 
 if (( INSTALL_POLKIT )); then
   echo "Installing verified optional Polkit rule..."
-  /usr/bin/sudo /usr/bin/install -D -o root -g root -m 0644 -- "$ROOT_STAGE_DIR/50-cyberghost.rules" "$RULE_PATH"
+  /usr/bin/sudo /usr/bin/install -o root -g root -m 0644 -- "$ROOT_STAGE_DIR/50-cyberghost.rules" "$RULE_PATH.tmp.$$"
+  /usr/bin/sudo /usr/bin/mv -f -- "$RULE_PATH.tmp.$$" "$RULE_PATH"
   mkdir -p "$MARKER_DIR"
   chmod 700 "$MARKER_DIR"
   printf '%s\n' 'cyberghost-polkit-rule-v1' > "$MARKER_PATH"
   chmod 600 "$MARKER_PATH"
   echo "Polkit rule installed: $RULE_PATH"
 else
-  /usr/bin/sudo /usr/bin/rm -f -- "$RULE_PATH"
-  rm -f -- "$MARKER_PATH"
-  echo "Skipped optional Polkit rule; pkexec will ask for authorization."
+  echo "Skipped optional Polkit rule; existing authorization was preserved and pkexec will ask for authorization."
 fi
 
 echo "Helper installed: $HELPER_PATH"

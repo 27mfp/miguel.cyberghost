@@ -27,6 +27,7 @@ pytest -q
 ruff check .
 ruff format --check .
 bash scripts/test-qml.sh
+python3 scripts/check_manifest.py
 python3 scripts/check_qml.py
 omarchy plugin validate "$PWD"
 shellcheck install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
@@ -49,7 +50,7 @@ Quickshell maps the shell root to `qs` at runtime. `scripts/check_qml.py` create
 
 The checker fails new/project diagnostics. It records a narrow allowlist of known host metadata limitations: exact dynamic `QObject` members used by Omarchy's style/bar/loader APIs and the missing `QProcess::ExitStatus` annotation. This is **not warning-free lint**. Full diagnostics are saved to a uniquely created temporary JSON file; missing imports, project-property errors and misspelled host members are not exempted. The exception policy has its own regression test.
 
-CI runs Python 3.9/3.12 tests, Ruff, shell syntax/ShellCheck, QML parsing and Qt behavior tests. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
+CI runs Python 3.9/3.12 tests, Ruff, shell syntax/ShellCheck, standalone manifest validation, QML parsing and Qt behavior tests. When the Omarchy validator is installed it also runs the host validator; otherwise CI reports that limitation explicitly. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
 
 ## Refactor baseline (1.6.0)
 
@@ -79,7 +80,7 @@ CI runs Python 3.9/3.12 tests, Ruff, shell syntax/ShellCheck, QML parsing and Qt
 
 Before publishing a release, also check with authorization:
 
-1. Real activation failure/timeout/DNS-failure recovery under controlled network conditions; unit tests cover these without damaging the working network.
+1. Real activation failure/timeout/DNS-failure recovery under controlled network conditions; unit tests cover these without damaging the working network. The backend now retains the generated config when cleanup is inconclusive so manual recovery is possible.
 2. Optional CLI authentication, exact-server availability and supported streaming/OpenVPN connections. The local CLI is installed but not configured; its account state was not changed. Fixture selections are not vendor integration evidence.
 3. Monitor hotplug, owner re-election and constrained-height display behavior. Narrow fixture captures do not cover every screen size.
 4. Production disable/re-enable and removal on a disposable installation. The synthetic preview uses the ordinary plugin lifecycle, but that does not establish complete production removal behavior.

@@ -127,14 +127,21 @@ def test_validate_endpoint_host():
 
 
 def test_validate_dns_servers():
-    assert runner.validate_dns_servers(["10.0.0.243", "1.1.1.1"]) == "10.0.0.243, 1.1.1.1"
-    assert runner.validate_dns_servers("10.0.0.243, 1.1.1.1") == "10.0.0.243, 1.1.1.1"
-    assert runner.validate_dns_servers("") == ""
-    assert runner.validate_dns_servers(None) == ""
+    assert runner.validate_dns_servers(["10.0.0.243", "1.1.1.1"], require_nonempty=True) == "10.0.0.243, 1.1.1.1"
+    assert runner.validate_dns_servers("10.0.0.243, 1.1.1.1", require_nonempty=True) == "10.0.0.243, 1.1.1.1"
+
+    for invalid in (None, "", " , ", [], [""], False, 0, {"dns": "1.1.1.1"}):
+        try:
+            runner.validate_dns_servers(invalid, require_nonempty=True)
+            raise AssertionError(f"Expected a non-empty DNS validation error for {invalid!r}")
+        except (ValueError, TypeError):
+            pass
+
+    assert runner.validate_dns_servers(["2001:4860:4860::8888"], require_nonempty=True) == "2001:4860:4860::8888"
 
     # Newline injection attempt in DNS
     try:
-        runner.validate_dns_servers(["10.0.0.243\nPostUp = id", "1.1.1.1"])
+        runner.validate_dns_servers(["10.0.0.243\nPostUp = id", "1.1.1.1"], require_nonempty=True)
         raise AssertionError("Expected ValueError for injected DNS")
     except ValueError:
         pass
@@ -149,8 +156,10 @@ def test_build_wg_config_routes_both_families_and_rejects_injection():
     assert "Endpoint = 1.2.3.4:1337" in cfg
     assert cfg.endswith("PersistentKeepalive = 25\n")
 
-    lean = runner.build_wg_config(SAMPLE_PRIV, "10.2.0.2", SAMPLE_PUB, "1.2.3.4", 1337)
-    assert "DNS" not in lean
+    ipv6_cfg = runner.build_wg_config(
+        SAMPLE_PRIV, "10.2.0.2", SAMPLE_PUB, "2001:db8::1", 1337, dns_servers="2001:4860:4860::8888"
+    )
+    assert "DNS = 2001:4860:4860::8888" in ipv6_cfg
 
     # Test that directive injection is strictly rejected
     try:
@@ -159,10 +168,11 @@ def test_build_wg_config_routes_both_families_and_rejects_injection():
     except ValueError:
         pass
 
-    ipv6_cfg = runner.build_wg_config(SAMPLE_PRIV, "10.2.0.2", SAMPLE_PUB, "2001:db8::1", 1337)
     assert "Endpoint = [2001:db8::1]:1337" in ipv6_cfg
 
-    ipv6_peer_cfg = runner.build_wg_config(SAMPLE_PRIV, "2001:db8::2", SAMPLE_PUB, "1.2.3.4", 1337)
+    ipv6_peer_cfg = runner.build_wg_config(
+        SAMPLE_PRIV, "2001:db8::2", SAMPLE_PUB, "1.2.3.4", 1337, dns_servers="1.1.1.1"
+    )
     assert "Address = 2001:db8::2/128" in ipv6_peer_cfg
 
     try:

@@ -19,18 +19,33 @@ TestCase {
     service.readyRequests = true
     service.readyCreds = true
     service.helperInstalled = true
+    service.helperPresent = true
     service.readyCli = true
     service.cliConfigured = true
     return service
   }
 
-  function actionCommand(service) {
+  function actionProcess(service) {
     for (var i = 0; i < service.children.length; i++) {
       var command = service.children[i].command
       if (command && command[0] === "/usr/bin/pkexec")
-        return command
+        return service.children[i]
     }
-    return []
+    return null
+  }
+
+  function actionCommand(service) {
+    var process = actionProcess(service)
+    return process ? process.command : []
+  }
+
+  function statusProcess(service) {
+    for (var i = 0; i < service.children.length; i++) {
+      var command = service.children[i].command
+      if (command && command.indexOf("status") >= 0)
+        return service.children[i]
+    }
+    return null
   }
 
   function test_connectMigratesOldExactServerToAutomaticWireGuard() {
@@ -43,6 +58,67 @@ TestCase {
     verify(command.indexOf("--server") < 0)
     compare(command[command.indexOf("--protocol") + 1], "wireguard")
     compare(service.serverSelection, "fastest")
+  }
+
+  function test_staleStatusCannotOverwriteConnectResult() {
+    var service = readyService({ defaultCountry: "PT" })
+    service.refresh()
+    var status = statusProcess(service)
+    service.connectTo("PT", "wireguard", "traffic", "", "fastest")
+    status.stdout.read('{"connected":false,"backend":null}')
+    status.running = false
+    status.exited(0)
+    var action = actionProcess(service)
+    action.stdout.read('{"ok":true,"action":"connect","backend":"wireguard"}')
+    action.running = false
+    action.exited(0)
+    compare(service.connected, true)
+    verify(service.statusGeneration > 0)
+  }
+
+  function test_staleStatusErrorDoesNotEraseActionError() {
+    var service = readyService({ defaultCountry: "PT" })
+    service.connectTo("PT", "wireguard", "traffic", "", "fastest")
+    var status = statusProcess(service)
+    status.running = false
+    status.stderr.read("old status failure")
+    status.exited(1)
+    var action = actionProcess(service)
+    action.stderr.read("not authorized")
+    action.running = false
+    action.exited(1)
+    verify(service.lastError.length > 0)
+  }
+
+  function test_malformedStatusIsUnknownNotDisconnected() {
+    var service = readyService({ defaultCountry: "PT" })
+    service.connected = true
+    service.parseStatus('{}')
+    compare(service.connected, true)
+    verify(service.statusUnknown)
+    verify(service.statusProbeError.length > 0)
+  }
+
+  function test_nonzeroActionWithSuccessJsonDoesNotConnect() {
+    var service = readyService({ defaultCountry: "PT" })
+    service.connectTo("PT", "wireguard", "traffic", "", "fastest")
+    var action = actionProcess(service)
+    action.stdout.read('{"ok":true,"action":"connect"}')
+    action.running = false
+    action.exited(1)
+    compare(service.connected, false)
+    verify(service.statusUnknown)
+  }
+
+  function test_timeoutLeavesOutcomeUnknown() {
+    var service = readyService({ defaultCountry: "PT" })
+    service.connectTo("PT", "wireguard", "traffic", "", "fastest")
+    var action = actionProcess(service)
+    action.timedOut = true
+    action.running = false
+    action.exited(1)
+    verify(service.statusUnknown)
+    verify(service.lastError.indexOf("unknown") >= 0)
   }
 
   function test_optionalInventoryDoesNotBlockDisconnect() {

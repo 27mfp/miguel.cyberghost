@@ -3,20 +3,18 @@
 #
 # Removes plugin-owned state (widget, helper/rule, native credentials), but
 # preserves the vendor CLI config, which may still satisfy legacy readiness.
-# Reinstalls from GitHub — then it's hands off: configuration (dependencies,
-# account link, root-helper installation and optional passwordless rule) is meant
-# to be done through the widget's FIRST-RUN SETUP panel. The helper step opens a
-# visible terminal and asks for sudo explicitly.
+# Reinstalls from a staged and validated source. Configuration (dependencies,
+# account link, root-helper installation and optional passwordless rule) is
+# completed through the widget's FIRST-RUN SETUP panel.
 #
 # Usage:
 #   bash fresh-install.sh [--local] [--purge-deps] [-y]
 #
 #   --local       install THIS checkout into the plugins dir instead of
 #                 cloning from GitHub (tests uncommitted edits without a push)
-#   --purge-deps  also uninstall wireguard-tools and python-requests so the
-#                 wizard's one-click Install starts from a truly bare machine.
-#   -y            no confirmation prompts.
-#   -h, --help    print this usage text.
+#   --purge-deps  also uninstall wireguard-tools and python-requests
+#   -y            no confirmation prompts
+#   -h, --help    print this usage text
 
 set -euo pipefail
 
@@ -32,6 +30,15 @@ step() { printf "\n${BOLD}==> %s${NC}\n" "$1"; }
 ok() { printf "${GREEN}✓${NC} %s\n" "$1"; }
 
 ASSUME_YES=0 FROM_LOCAL=0 PURGE_DEPS=0
+STAGE_ROOT=""
+SOURCE_DIR=""
+
+cleanup() {
+  if [[ -n "${STAGE_ROOT:-}" && -d "$STAGE_ROOT" ]]; then
+    rm -rf -- "$STAGE_ROOT"
+  fi
+}
+trap cleanup EXIT
 
 while (($#)); do
   case "$1" in
@@ -40,7 +47,7 @@ while (($#)); do
     --purge-deps) PURGE_DEPS=1 ;;
     -y | --yes) ASSUME_YES=1 ;;
     -h | --help)
-      sed -n '5,19p' "$0"
+      sed -n '5,18p' "$0"
       exit 0
       ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
@@ -56,9 +63,9 @@ done
 confirm() {
   (( ASSUME_YES )) && return 0
   local answer=""
-  read -rp "$1 [Y/n] " answer
-  # bash 5.3 misparses an =~ regex ending in "]" before "]]"; glob instead
-  [[ ${answer:-y} != [Nn]* ]]
+  # Reset is destructive: EOF, blank input and arbitrary text all refuse it.
+  read -rp "$1 [y/N] " answer || return 1
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 confirm "Reset everything and simulate a fresh CyberGhost plugin install?" || {
@@ -66,16 +73,44 @@ confirm "Reset everything and simulate a fresh CyberGhost plugin install?" || {
   exit 0
 }
 
+# Stage and validate the replacement before any installed files are removed.
+# This also makes --local safe when the script itself is executed from the
+# installed plugin directory.
+step "Staging replacement plugin"
+STAGE_ROOT=$(/usr/bin/mktemp -d /tmp/cyberghost-fresh.XXXXXX)
+SOURCE_DIR="$STAGE_ROOT/$PLUGIN_ID"
+mkdir -p "$SOURCE_DIR"
+if (( FROM_LOCAL )); then
+  cp -a "$REPO_DIR"/. "$SOURCE_DIR"/
+else
+  GIT_TERMINAL_PROMPT=0 /usr/bin/git clone --depth 1 -- "$PLUGIN_URL" "$SOURCE_DIR"
+fi
+/usr/bin/jq -e --arg id "$PLUGIN_ID" '.id == $id and .entryPoints.barWidget == "BarWidget.qml"' \
+  "$SOURCE_DIR/manifest.json" >/dev/null
+if command -v omarchy-plugin-validate >/dev/null 2>&1; then
+  omarchy-plugin-validate "$SOURCE_DIR"
+fi
+rm -rf "$SOURCE_DIR/__pycache__"
+ok "replacement staged and manifest validated"
+
 # ---------------------------------------------------------------------------
 step "Disconnecting any live VPN tunnel"
 qs ipc call "$PLUGIN_ID" disconnect >/dev/null 2>&1 || true
+connected=""
 for _ in $(seq 1 30); do
-  connected=$(/usr/bin/python3 "$REPO_DIR/cyberghost_runner.py" status --json 2>/dev/null |
-    /usr/bin/jq -r '.connected // empty' || true)
+  status_json=$(/usr/bin/python3 "$REPO_DIR/cyberghost_runner.py" status --json 2>/dev/null) || {
+    echo "WARNING: status verification failed — disconnect manually before continuing." >&2
+    exit 1
+  }
+  connected=$(printf '%s' "$status_json" | /usr/bin/jq -er \
+    'if (.connected | type) == "boolean" then (.connected | tostring) else error("missing boolean connected state") end') || {
+    echo "WARNING: status verification returned malformed JSON — aborting." >&2
+    exit 1
+  }
   [[ $connected == "false" ]] && break
   sleep 0.5
 done
-if [[ ${connected:-} != "false" ]]; then
+if [[ $connected != "false" ]]; then
   echo "WARNING: could not verify that the tunnel is down — disconnect manually before continuing." >&2
   exit 1
 fi
@@ -84,19 +119,24 @@ ok "tunnel down"
 # ---------------------------------------------------------------------------
 step "Removing plugin from Omarchy"
 omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true
-# Non-git copies get backed up instead of deleted by `plugin remove`; sweep both.
 omarchy plugin remove "$PLUGIN_ID" --yes >/dev/null 2>&1 || true
-rm -rf "${PLUGINS_DIR:?}/$PLUGIN_ID" "${PLUGINS_DIR:?}/.$PLUGIN_ID.bak."*
+# Remove only the fixed plugin target. Do not sweep unrelated Omarchy backups.
+rm -rf -- "${PLUGINS_DIR:?}/$PLUGIN_ID"
 ok "widget removed from bar and plugins dir"
 
 # ---------------------------------------------------------------------------
-step "Removing Polkit rule & root helper"
-/usr/bin/sudo /usr/bin/rm -f "$POLKIT_RULE" /usr/local/bin/cyberghost-runner && ok "polkit rule & root helper removed (widget will ask to reinstall the helper)"
-rm -f "$POLKIT_MARKER"
+step "Removing Polkit rule and root helper"
+if /usr/bin/sudo /usr/bin/rm -f -- "$POLKIT_RULE" /usr/local/bin/cyberghost-runner; then
+  rm -f -- "$POLKIT_MARKER"
+  ok "polkit rule and root helper removed"
+else
+  echo "Could not remove the root helper or Polkit rule; reset aborted." >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 step "Removing native plugin credentials (preserving the vendor CLI)"
-rm -f "$HOME/.cyberghost/native.ini"
+rm -f -- "$HOME/.cyberghost/native.ini"
 ok "Native credentials removed. Legacy config.ini is preserved and may still provide account access."
 
 # ---------------------------------------------------------------------------
@@ -110,17 +150,12 @@ if (( PURGE_DEPS )); then
 fi
 
 # ---------------------------------------------------------------------------
-if (( FROM_LOCAL )); then
-  step "Installing local checkout into plugins directory"
-  mkdir -p "$PLUGINS_DIR"
-  rm -rf "${PLUGINS_DIR:?}/$PLUGIN_ID"
-  cp -a "$REPO_DIR" "$PLUGINS_DIR/$PLUGIN_ID"
-  rm -rf "$PLUGINS_DIR/$PLUGIN_ID/__pycache__"
-else
-  step "Adding plugin from GitHub (as an external user would)"
-  omarchy plugin add "$PLUGIN_URL" --yes
-fi
-
+step "Installing staged plugin into plugins directory"
+mkdir -p "$PLUGINS_DIR"
+rm -rf -- "${PLUGINS_DIR:?}/$PLUGIN_ID"
+mv -- "$SOURCE_DIR" "${PLUGINS_DIR:?}/$PLUGIN_ID"
+SOURCE_DIR=""
+omarchy shell rescanPlugins >/dev/null 2>&1 || true
 section=$(/usr/bin/jq -r '.barWidget.defaultSection // "right"' "$PLUGINS_DIR/$PLUGIN_ID/manifest.json")
 omarchy plugin enable "$PLUGIN_ID" "$section"
 

@@ -63,6 +63,7 @@ def test_check_output_shape():
         "cli_configured",
         "credentials",
         "helper_installed",
+        "helper_present",
         "helper_version",
         "plugin_version",
         "polkit_rule_installed",

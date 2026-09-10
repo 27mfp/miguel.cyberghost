@@ -14,16 +14,19 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 
 ## Evidence and remaining gates
 
-- Earlier native WireGuard live tests passed IPv4/IPv6 tunnel routing, uncached DNS, HTTPS egress and disconnect cleanup with helper 1.6.0.
-- The polished native-only UI passed real-shell synthetic-service tests: country selection, hidden vendor controls, privacy, actual clipboard copy/restoration, settings disclosure, simulated connection, account password clearing and Escape. Nine captures were produced; normal, expanded and narrow layouts were visually reviewed. This does not replace backend or full small-screen/compositor testing.
-- 116 Python tests pass on Python 3.9 and 3.12; 28 substantive Qt tests pass. These cover preference migration, absent vendor controls, rejected unsupported requests and native-only disconnect behavior. Ruff, ShellCheck and manifest validation pass; QML lint reports 0 project diagnostics and 58 known host metadata warnings.
-- [x] Live native WireGuard connect/disconnect with installed helper 1.6.2: IPv4/IPv6 routes selected `cyberghost` table 51820; DNS servers were 10.0.0.243/10.0.0.242 with `~.`; an uncached query used the tunnel and IPv4 HTTPS egress reported PT. Disconnect removed the interface and VPN policy rules, restored both route lookups and uncached DNS to Wi-Fi, and preserved IPv6 settings (0/0) and reverse-path filtering (2).
-- [ ] Recheck final native connection without configured vendor inventory.
-- [ ] Verify native activation failure/timeout recovery and residual routes/DNS.
-- [ ] Verify concurrent multi-monitor requests and owner re-election/hotplug.
-- [ ] Clean install, upgrade, disable/re-enable and removal in a disposable environment.
-- [ ] Complete the selected Grok independent security review. Previous attempts failed due Pi runtime/dependency errors; no completed independent audit is claimed.
-- [ ] Review final diff, sync the installed checkout/helper, run final gates and inspect remote CI before tagging or advertising stability.
+- Three focused read-only audits covered backend security/lifecycle, QML runtime behavior, and installer/release safety. Their P0/P1 findings were implemented in the working tree and regression coverage was updated.
+- The native-only UI remains limited to WireGuard traffic with automatic server selection. Vendor inventory and OpenVPN/streaming/torrent controls are not exposed; a separately active vendor VPN is reported and cannot be silently managed by this plugin.
+- The backend now rejects explicit empty/invalid DNS, validates trusted WireGuard paths before `wg-quick`, uses a persistent root lifecycle lock, verifies interface/routes/rules/resolver cleanup, preserves recovery config on incomplete teardown, and skips optional vendor CLI execution in the root helper.
+- Helper-only updates preserve Polkit authorization. Explicit revocation verifies the plugin rule bytes; confirmation EOF fails closed; fresh reset stages and validates its replacement before teardown and preserves vendor `config.ini`.
+- [x] Python regression suite: 116 tests pass locally.
+- [x] Qt/QML behavior suite: 43 cases pass locally; stale status/action, malformed probes, timeout, recovery and cleanup paths have regression coverage.
+- [x] Ruff, formatting, Python compilation, JSON/standalone manifest validation, shell syntax, QML formatting, Omarchy manifest validation and `git diff --check` pass locally. QML lint reports 0 project diagnostics; only known host metadata warnings remain. ShellCheck is installed in CI but unavailable in this development environment.
+- [x] No repository files are changed by the validation commands themselves; the final diff is limited to the remediation and regression/docs changes described above.
+- [ ] Recheck final native connection without configured vendor inventory in a disposable authorized environment.
+- [ ] Verify real activation failure/timeout recovery and residual routes/DNS in that environment.
+- [ ] Verify concurrent multi-monitor requests, owner re-election and monitor hotplug in the running shell.
+- [ ] Complete disposable clean-install, upgrade, disable/re-enable and removal evidence.
+- [ ] Review remote CI and synchronize any installed checkout/helper before tagging or advertising stability.
 
 ## Deferred vendor investigation (not a release gate for native-only scope)
 

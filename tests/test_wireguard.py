@@ -47,9 +47,20 @@ def test_disconnect_cleans_native_and_cli_state():
     import io
     from contextlib import redirect_stdout
 
+    interface_up = True
+
     def bounded(command, **kwargs):
-        if command[0] == "/usr/bin/ip" and command[1:3] == ["link", "show"]:
-            return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+        nonlocal interface_up
+        if command[1:3] == ["link", "show"]:
+            if interface_up:
+                return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "", "")
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "delete"]:
+            interface_up = False
         return runner.subprocess.CompletedProcess(command, 0, "", "")
 
     output = io.StringIO()
@@ -65,14 +76,72 @@ def test_disconnect_cleans_native_and_cli_state():
     assert "VPN connection terminated." in output.getvalue()
 
 
+def test_connect_rejects_explicit_empty_dns_before_lifecycle_commands():
+    response = native_success_response(runner)
+    body = json.loads(response._cyberghost_body)
+    body["dns_servers"] = []
+    response._cyberghost_body = json.dumps(body).encode()
+    with mock.patch.object(runner, "get_credentials", return_value=("TOK", "SEC")):
+        with mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)):
+            with mock.patch.object(
+                runner, "select_native_candidates", return_value=("PT", ["lisbon-s405.cg-dialup.net"])
+            ):
+                with mock.patch.object(
+                    runner, "exchange_wireguard_key", return_value=(body, "lisbon-s405.cg-dialup.net")
+                ):
+                    with mock.patch.object(
+                        runner, "system_binary", side_effect=AssertionError("lifecycle must not start")
+                    ):
+                        try:
+                            runner.connect("PT", "traffic")
+                            raise AssertionError("explicit empty DNS must fail")
+                        except ValueError as exc:
+                            assert "DNS" in str(exc)
+
+
+def test_cleanup_reports_residual_interface_and_policy_state():
+    def bounded(command, **kwargs):
+        if command[1:3] == ["link", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+        if command[1:4] == ["route", "show", "table"]:
+            return runner.subprocess.CompletedProcess(command, 0, "default dev cyberghost table 51820\n", "")
+        if command[1:3] == ["rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "32765: not from all lookup 51820\n", "")
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 0, "DNS=1.1.1.1\n", "")
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
+
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/ip"):
+        with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+            problems = runner.cleanup_wireguard_state("/usr/bin/wg-quick", "/usr/bin/ip", config_present=True)
+    assert any("still present" in problem for problem in problems)
+    assert any("policy route" in problem for problem in problems)
+    assert any("policy rules" in problem for problem in problems)
+    assert any("resolver" in problem for problem in problems)
+
+
 def test_connect_writes_and_activates_native_tunnel():
     d = tempfile.mkdtemp()
     conf_path = os.path.join(d, "cyberghost.conf")
 
+    interface_up = False
+
     def bounded(command, **kwargs):
+        nonlocal interface_up
         if command[1] == "up":
+            interface_up = True
             return runner.subprocess.CompletedProcess(command, 0, "interface up", "")
-        return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "show"]:
+            if interface_up:
+                return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "", "")
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "delete"]:
+            interface_up = False
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
 
     requests_stub = mock.Mock()
     requests_stub.exceptions.RequestException = Exception
@@ -103,13 +172,29 @@ def test_connect_fails_closed_when_vpn_dns_cannot_be_configured():
     conf_path = os.path.join(d, "cyberghost.conf")
     calls = []
 
+    interface_up = False
+    up_attempts = 0
+
     def bounded(command, **kwargs):
+        nonlocal interface_up, up_attempts
         calls.append(command)
-        if command[1] == "up" and calls.count(command) == 1:
-            return runner.subprocess.CompletedProcess(command, 1, "", "resolvconf: command failed")
         if command[1] == "up":
+            up_attempts += 1
+            if up_attempts == 1:
+                return runner.subprocess.CompletedProcess(command, 1, "", "resolvconf: command failed")
+            interface_up = True
             return runner.subprocess.CompletedProcess(command, 0, "interface up", "")
-        return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "show"]:
+            if interface_up:
+                return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "", "")
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "delete"]:
+            interface_up = False
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
 
     requests_stub = mock.Mock()
     requests_stub.exceptions.RequestException = Exception
@@ -127,12 +212,9 @@ def test_connect_fails_closed_when_vpn_dns_cannot_be_configured():
                                     except RuntimeError as exc:
                                         assert "DNS" in str(exc)
 
-    with open(conf_path, encoding="utf-8") as config_file:
-        config_text = config_file.read()
-    assert "DNS =" in config_text
+    assert not os.path.exists(conf_path)
     assert sum(command[1] == "up" for command in calls) == 1
-    assert sum(command[1] == "down" for command in calls) == 2
-    os.unlink(conf_path)
+    assert sum(command[1] == "down" for command in calls) >= 2
     os.rmdir(d)
 
 
@@ -141,11 +223,22 @@ def test_connect_rolls_back_after_tunnel_activation_failure():
     conf_path = os.path.join(d, "cyberghost.conf")
     calls = []
 
+    interface_up = False
+
     def bounded(command, **kwargs):
+        nonlocal interface_up
         calls.append(command)
         if command[1] == "up":
             return runner.subprocess.CompletedProcess(command, 1, "", "wg-quick failed")
-        return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "show"]:
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "", "")
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        if command[1:3] == ["link", "delete"]:
+            interface_up = False
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
 
     requests_stub = mock.Mock()
     requests_stub.exceptions.RequestException = Exception
@@ -163,6 +256,6 @@ def test_connect_rolls_back_after_tunnel_activation_failure():
                                     except RuntimeError as exc:
                                         assert "wg-quick up failed" in str(exc)
 
-    assert sum(command[1] == "down" for command in calls) == 2
-    os.unlink(conf_path)
+    assert sum(command[1] == "down" for command in calls) >= 2
+    assert not os.path.exists(conf_path)
     os.rmdir(d)

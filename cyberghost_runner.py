@@ -9,6 +9,7 @@ import base64
 import binascii
 import configparser
 import contextlib
+import fcntl
 import importlib.util
 import io
 import ipaddress
@@ -32,6 +33,9 @@ WG_CONF_PATH = "/etc/wireguard/cyberghost.conf"
 INTERFACE = "cyberghost"
 HELPER_BIN_PATH = "/usr/local/bin/cyberghost-runner"
 POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
+LIFECYCLE_LOCK_PATH = "/run/lock/cyberghost.lock"
+_LIFECYCLE_LOCK_DEPTH = 0
+_LIFECYCLE_LOCK_FD = None
 POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
 POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
 PLUGIN_VERSION = "1.6.2"
@@ -382,9 +386,11 @@ def validate_endpoint_host(host: str) -> str:
     return h
 
 
-def validate_dns_servers(dns_input) -> str:
+def validate_dns_servers(dns_input, require_nonempty=False) -> str:
     """Validate a comma-separated string or list of DNS server IP addresses."""
-    if not dns_input:
+    if dns_input is None:
+        if require_nonempty:
+            raise ValueError("At least one VPN DNS server is required")
         return ""
     if isinstance(dns_input, str):
         raw_list = [item.strip() for item in dns_input.split(",") if item.strip()]
@@ -393,10 +399,16 @@ def validate_dns_servers(dns_input) -> str:
     else:
         raise ValueError("DNS servers must be a list or comma-separated string")
 
+    if require_nonempty and not raw_list:
+        raise ValueError("At least one VPN DNS server is required")
+
     validated = []
     for entry in raw_list:
         validated.append(validate_ip(entry))
-    return ", ".join(validated)
+    result = ", ".join(validated)
+    if require_nonempty and not result:
+        raise ValueError("At least one VPN DNS server is required")
+    return result
 
 
 def load_requests():
@@ -1057,7 +1069,7 @@ def build_wg_config(private_key, peer_ip, server_key, server_ip, server_port, dn
     valid_server_host = validate_endpoint_host(server_ip)
     endpoint_host = f"[{valid_server_host}]" if ":" in valid_server_host else valid_server_host
     valid_server_port = validate_port(server_port)
-    valid_dns = validate_dns_servers(dns_servers) if dns_servers else None
+    valid_dns = validate_dns_servers(dns_servers, require_nonempty=True)
     peer_prefix = "/128" if ":" in valid_peer_ip else "/32"
 
     lines = [
@@ -1116,12 +1128,18 @@ def parse_wg_show(output):
 
 
 def select_native_candidates(country_code, server_type="traffic", city=None, server=None):
-    """Select validated, bounded native WireGuard endpoint candidates."""
+    """Select validated, bounded native WireGuard endpoint candidates.
+
+    The privileged fixed helper never invokes the optional vendor CLI. It uses
+    the bounded static inventory (or an explicitly validated server selector),
+    so root-side execution is limited to native WireGuard operations.
+    """
     cc = validate_country_code(country_code)
     selected_server = validate_server_selector(server) if server else None
-    cli_servers = [] if city else get_servers_for_country(cc, server_type)
+    use_cli_inventory = os.geteuid() != 0
+    cli_servers = [] if city or not use_cli_inventory else get_servers_for_country(cc, server_type)
 
-    if selected_server:
+    if selected_server and use_cli_inventory:
         available_servers = {item["server"] for item in cli_servers}
         if selected_server not in available_servers:
             raise RuntimeError(
@@ -1210,26 +1228,251 @@ def exchange_wireguard_key(candidates, pub_key, token, secret, country_code, dea
     return addkey_data, connected_host
 
 
+def secure_directory_path(path, create=False, mode=0o700):
+    """Require a root-owned, non-writable directory ancestry for root paths."""
+    normalized = os.path.abspath(path)
+    if not normalized.startswith("/"):
+        raise RuntimeError(f"System path must be absolute: {path}")
+
+    current = "/"
+    for component in normalized.strip("/").split("/"):
+        if not component:
+            continue
+        current = os.path.join(current, component)
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            if not create or current != normalized:
+                raise RuntimeError(f"Trusted system directory is missing: {current}") from None
+            os.mkdir(current, mode)
+            os.chmod(current, mode)
+            info = os.lstat(current)
+        except OSError as exc:
+            raise RuntimeError(f"Could not inspect system directory {current}: {exc}") from exc
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            raise RuntimeError(f"System directory must not be a symlink or non-directory: {current}")
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError(f"System directory is not trusted: {current}")
+    return normalized
+
+
+def secure_wireguard_config(path=None):
+    """Validate the generated config before any privileged consumer reads it."""
+    path = path or WG_CONF_PATH
+    parent = os.path.dirname(os.path.abspath(path))
+    if os.geteuid() == 0:
+        try:
+            secure_directory_path(parent)
+        except RuntimeError:
+            # The final /etc/wireguard directory is allowed to be absent on a
+            # fresh host; write_wireguard_config creates only that directory.
+            if os.path.lexists(parent):
+                raise
+            return False
+    if not os.path.lexists(path):
+        return False
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise RuntimeError(f"Could not inspect WireGuard config: {exc}") from exc
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise RuntimeError("WireGuard config must be a regular file, not a symlink")
+    if os.geteuid() == 0 and (info.st_uid != 0 or info.st_mode & 0o077 or info.st_nlink != 1):
+        raise RuntimeError("WireGuard config must be a private, single-link root-owned file")
+    return True
+
+
+@contextlib.contextmanager
+def lifecycle_lock(timeout=30):
+    """Serialize all root-side mutations of the single global tunnel."""
+    global _LIFECYCLE_LOCK_DEPTH, _LIFECYCLE_LOCK_FD
+    if os.geteuid() != 0:
+        yield
+        return
+
+    if _LIFECYCLE_LOCK_DEPTH:
+        _LIFECYCLE_LOCK_DEPTH += 1
+        try:
+            yield
+        finally:
+            _LIFECYCLE_LOCK_DEPTH -= 1
+        return
+
+    secure_directory_path(os.path.dirname(LIFECYCLE_LOCK_PATH))
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(LIFECYCLE_LOCK_PATH, flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"Could not open the CyberGhost lifecycle lock: {exc}") from exc
+
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError("CyberGhost lifecycle lock is not a trusted root-owned file")
+        os.fchmod(fd, 0o600)
+        deadline = time.monotonic() + max(0.1, timeout)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Another CyberGhost VPN operation is already in progress") from None
+                time.sleep(0.1)
+        _LIFECYCLE_LOCK_FD = fd
+        _LIFECYCLE_LOCK_DEPTH = 1
+        try:
+            yield
+        finally:
+            _LIFECYCLE_LOCK_DEPTH = 0
+            _LIFECYCLE_LOCK_FD = None
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _interface_state(ip_binary):
+    """Return True/False/None for present/absent/unknown interface state."""
+    try:
+        result = run_bounded([ip_binary, "link", "show", INTERFACE], timeout=5, max_output_bytes=8 * 1024)
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
+        return None
+    if result.returncode == 0:
+        return INTERFACE in (result.stdout or "")
+    detail = f"{result.stdout or ''}\n{result.stderr or ''}"
+    if result.returncode == 1 and re.search(r"does not exist|cannot find|not found|no such device", detail, re.I):
+        return False
+    return None
+
+
+def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=False):
+    """Verify the side effects that wg-quick is responsible for removing."""
+    problems = []
+    if not ip_binary:
+        problems.append("ip is unavailable, so interface and route cleanup cannot be verified")
+        return problems
+
+    interface_state = _interface_state(ip_binary)
+    if interface_state is None:
+        problems.append("WireGuard interface state could not be verified")
+    elif interface_state:
+        problems.append(f"interface {INTERFACE} is still present")
+
+    try:
+        route_result = run_bounded([ip_binary, "route", "show", "table", "51820"], timeout=5, max_output_bytes=8 * 1024)
+        if route_result.returncode != 0:
+            problems.append("WireGuard policy route table could not be verified")
+        elif (route_result.stdout or "").strip():
+            problems.append("WireGuard policy routes remain in table 51820")
+
+        rule_result = run_bounded([ip_binary, "rule", "show"], timeout=5, max_output_bytes=8 * 1024)
+        if rule_result.returncode != 0:
+            problems.append("WireGuard policy rules could not be verified")
+        elif re.search(r"(?:lookup|fwmark)\s+51820\b", rule_result.stdout or ""):
+            problems.append("WireGuard policy rules remain")
+    except (OSError, subprocess.TimeoutExpired, RuntimeError):
+        problems.append("WireGuard routing state could not be verified")
+
+    if resolver_binary:
+        try:
+            resolver_result = run_bounded([resolver_binary, "-l", INTERFACE], timeout=5, max_output_bytes=8 * 1024)
+            if resolver_result.returncode == 0 and (resolver_result.stdout or "").strip():
+                problems.append("VPN resolver state remains registered")
+            elif resolver_result.returncode not in (0, 1):
+                problems.append("VPN resolver state could not be verified")
+        except (OSError, subprocess.TimeoutExpired, RuntimeError):
+            problems.append("VPN resolver state could not be verified")
+    elif require_resolver:
+        problems.append("resolvconf is unavailable, so VPN DNS cleanup cannot be verified")
+
+    return problems
+
+
+def cleanup_wireguard_state(wg_quick, ip_binary, config_present=False):
+    """Tear down the tunnel and return only verified residual-state errors."""
+    initial_state = _interface_state(ip_binary) if ip_binary else None
+    try:
+        resolver_binary = system_binary("resolvconf")
+    except (FileNotFoundError, RuntimeError):
+        resolver_binary = None
+    require_resolver = config_present or initial_state is True
+
+    if wg_quick:
+        try:
+            down_result = run_bounded([wg_quick, "down", INTERFACE], timeout=20, max_output_bytes=8 * 1024)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError):
+            down_result = None
+    else:
+        down_result = None
+
+    if ip_binary:
+        try:
+            delete_result = run_bounded(
+                [ip_binary, "link", "delete", "dev", INTERFACE], timeout=10, max_output_bytes=8 * 1024
+            )
+        except (OSError, subprocess.TimeoutExpired, RuntimeError):
+            delete_result = None
+    else:
+        delete_result = None
+
+    problems = verify_wireguard_cleanup(ip_binary, resolver_binary, require_resolver)
+    # wg-quick and `ip link delete` commonly return non-zero for an already
+    # absent interface. Verified absence makes those benign; unknown state does not.
+    if problems:
+        if down_result is None:
+            problems.insert(0, "wg-quick down could not be completed")
+        elif down_result.returncode != 0:
+            problems.insert(0, clean_command_error(down_result.stderr or down_result.stdout, "wg-quick down failed"))
+        if delete_result is None:
+            problems.insert(0, "interface deletion could not be completed")
+        elif delete_result.returncode != 0 and initial_state is True:
+            problems.insert(
+                0, clean_command_error(delete_result.stderr or delete_result.stdout, "interface deletion failed")
+            )
+    return problems
+
+
+def remove_wireguard_config():
+    if not os.path.lexists(WG_CONF_PATH):
+        return
+    secure_wireguard_config()
+    try:
+        os.unlink(WG_CONF_PATH)
+    except OSError as exc:
+        raise RuntimeError(f"Could not remove WireGuard config: {exc}") from exc
+    if os.path.lexists(WG_CONF_PATH):
+        raise RuntimeError("WireGuard config remained after removal")
+
+
 def write_wireguard_config(private_key, peer_ip, server_key, server_ip, server_port, dns_servers=None):
-    """Atomically write the validated root-owned WireGuard configuration."""
+    """Atomically write a validated, trusted WireGuard configuration."""
     cfg = build_wg_config(
         private_key,
         peer_ip,
         server_key,
         server_ip,
         server_port,
-        dns_servers=dns_servers,
+        dns_servers=validate_dns_servers(dns_servers, require_nonempty=True),
     )
     conf_dir = os.path.dirname(WG_CONF_PATH)
-    os.makedirs(conf_dir, exist_ok=True)
+    if os.geteuid() == 0:
+        secure_directory_path(conf_dir, create=True, mode=0o700)
+    else:
+        os.makedirs(conf_dir, exist_ok=True)
+    if os.path.lexists(WG_CONF_PATH):
+        secure_wireguard_config()
     temp_name = None
     try:
         with tempfile.NamedTemporaryFile("w", dir=conf_dir, delete=False, prefix=".cyberghost_conf_") as tf:
             os.chmod(tf.name, 0o600)
             temp_name = tf.name
             tf.write(cfg)
+            tf.flush()
+            os.fsync(tf.fileno())
         os.replace(temp_name, WG_CONF_PATH)
         temp_name = None
+        if os.geteuid() == 0:
+            secure_wireguard_config()
     finally:
         if temp_name:
             try:
@@ -1267,6 +1510,12 @@ def activate_wireguard(wg_quick, deadline):
 
 
 def connect(country_code="PT", server_type="traffic", city=None, config_path=None, server=None):
+    """Serialize the complete native transaction, including key exchange."""
+    with lifecycle_lock(timeout=NATIVE_CONNECT_BUDGET_SECONDS):
+        return _connect_impl(country_code, server_type, city, config_path, server)
+
+
+def _connect_impl(country_code="PT", server_type="traffic", city=None, config_path=None, server=None):
     """Establish a native WireGuard tunnel within one bounded operation budget."""
     deadline = time.monotonic() + NATIVE_CONNECT_BUDGET_SECONDS
     token, secret = get_credentials(config_path)
@@ -1275,30 +1524,55 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
     cc, candidates = select_native_candidates(country_code, server_type, city, server)
     addkey_data, connected_host = exchange_wireguard_key(candidates, pub_key, token, secret, cc, deadline)
 
-    # Strictly validate all response fields from the API before generating the config
-    raw_dns = addkey_data.get("dns_servers", ["10.0.0.243", "10.0.0.242", "1.1.1.1"])
-    dns_servers_str = validate_dns_servers(raw_dns)
+    # A missing field gets the documented compatibility defaults. An explicit
+    # empty field is invalid: never activate without a VPN DNS configuration.
+    if "dns_servers" in addkey_data:
+        raw_dns = addkey_data["dns_servers"]
+    else:
+        raw_dns = ["10.0.0.243", "10.0.0.242", "1.1.1.1"]
+    dns_servers_str = validate_dns_servers(raw_dns, require_nonempty=True)
     raw_server_ip = addkey_data.get("server_ip") or connected_host
     server_ip = validate_endpoint_host(raw_server_ip)
     server_port = validate_port(addkey_data.get("server_port", 1337))
     peer_ip = validate_ip(addkey_data.get("peer_ip", ""))
     server_key = validate_wireguard_key(addkey_data.get("server_key", ""))
 
-    # Clean up any leftover interface first to avoid collisions. Keep the
-    # backend's operation budget shorter than the UI's timeout so the caller
-    # receives a definitive result before the UI gives up.
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise RuntimeError("WireGuard connection attempt timed out before tunnel setup")
-    wg_quick = system_binary("wg-quick")
-    run_bounded(
-        [wg_quick, "down", INTERFACE],
-        timeout=min(20, remaining),
-        max_output_bytes=8 * 1024,
-    )
 
-    write_wireguard_config(priv_key, peer_ip, server_key, server_ip, server_port, dns_servers_str)
-    activate_wireguard(wg_quick, deadline)
+    with lifecycle_lock(timeout=min(30, remaining)):
+        config_present = secure_wireguard_config()
+        try:
+            ip_binary = system_binary("ip")
+            wg_quick = system_binary("wg-quick")
+        except (FileNotFoundError, RuntimeError) as exc:
+            raise RuntimeError(f"WireGuard lifecycle tools are unavailable: {clean_command_error(exc)}") from exc
+
+        cleanup_problems = cleanup_wireguard_state(wg_quick, ip_binary, config_present)
+        if cleanup_problems:
+            raise RuntimeError("Cannot safely replace the existing WireGuard state: " + "; ".join(cleanup_problems))
+
+        write_wireguard_config(priv_key, peer_ip, server_key, server_ip, server_port, dns_servers_str)
+        try:
+            activate_wireguard(wg_quick, deadline)
+            if _interface_state(ip_binary) is not True:
+                raise RuntimeError("wg-quick reported success but the CyberGhost interface is not present")
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+            rollback_problems = cleanup_wireguard_state(wg_quick, ip_binary, True)
+            if rollback_problems:
+                raise RuntimeError(
+                    f"{clean_command_error(exc, 'WireGuard activation failed')}; "
+                    f"rollback incomplete: {'; '.join(rollback_problems)}"
+                ) from exc
+            try:
+                remove_wireguard_config()
+            except RuntimeError as remove_error:
+                raise RuntimeError(
+                    f"{clean_command_error(exc, 'WireGuard activation failed')}; "
+                    f"rollback completed but config cleanup failed: {remove_error}"
+                ) from exc
+            raise
 
     print("VPN connection established.")
     print(f"Connected to {cc} via {connected_host} (IP: {server_ip})")
@@ -1313,54 +1587,20 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
 
 
 def disconnect():
-    try:
-        ip_binary = system_binary("ip")
-    except (FileNotFoundError, RuntimeError) as exc:
-        ip_binary = None
-        sys.stderr.write(f"Native interface probe unavailable: {clean_command_error(exc)}\n")
-    try:
-        wg_quick = system_binary("wg-quick")
-    except (FileNotFoundError, RuntimeError) as exc:
-        wg_quick = None
-        sys.stderr.write(f"WireGuard cleanup unavailable: {clean_command_error(exc)}\n")
-
-    was_up = False
-    if ip_binary:
+    with lifecycle_lock(timeout=30):
         try:
-            ip_res = run_bounded([ip_binary, "link", "show", INTERFACE], timeout=5, max_output_bytes=8 * 1024)
-            was_up = ip_res.returncode == 0 and INTERFACE in (ip_res.stdout or "")
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
-            sys.stderr.write(f"Native interface probe unavailable: {clean_command_error(exc)}\n")
+            ip_binary = system_binary("ip")
+            wg_quick = system_binary("wg-quick")
+        except (FileNotFoundError, RuntimeError) as exc:
+            raise RuntimeError(f"WireGuard lifecycle tools are unavailable: {clean_command_error(exc)}") from exc
 
-    down_error = None
-    if wg_quick:
-        try:
-            down_res = run_bounded([wg_quick, "down", INTERFACE], timeout=20, max_output_bytes=8 * 1024)
-            if down_res.returncode != 0:
-                down_error = clean_command_error(down_res.stderr or down_res.stdout, "wg-quick down failed")
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
-            down_error = clean_command_error(exc, "wg-quick down failed")
+        config_present = secure_wireguard_config()
+        was_up = _interface_state(ip_binary) is True
+        cleanup_problems = cleanup_wireguard_state(wg_quick, ip_binary, config_present)
+        if cleanup_problems:
+            raise RuntimeError("Could not verify WireGuard cleanup: " + "; ".join(cleanup_problems))
+        remove_wireguard_config()
 
-    delete_error = None
-    if ip_binary:
-        try:
-            delete_res = run_bounded(
-                [ip_binary, "link", "delete", "dev", INTERFACE], timeout=10, max_output_bytes=8 * 1024
-            )
-            if delete_res.returncode != 0:
-                delete_error = clean_command_error(delete_res.stderr or delete_res.stdout, "interface cleanup failed")
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
-            delete_error = clean_command_error(exc, "interface cleanup failed")
-
-    if was_up and down_error and delete_error:
-        raise RuntimeError(f"Could not disconnect the WireGuard tunnel: {down_error}; {delete_error}")
-
-    # Native-only release: never stop a separately managed vendor VPN.
-    if os.path.exists(WG_CONF_PATH):
-        try:
-            os.remove(WG_CONF_PATH)
-        except OSError as exc:
-            sys.stderr.write(f"WireGuard config cleanup warning: {clean_command_error(exc)}\n")
     if was_up:
         print("VPN connection terminated.")
     else:
@@ -1557,6 +1797,7 @@ def check():
         "cli_configured": cli_account_configured(),
         "credentials": False,
         "helper_installed": secure_helper_installed(),
+        "helper_present": secure_helper_present(),
         "helper_version": installed_helper_version(),
         "plugin_version": PLUGIN_VERSION,
         # /etc/polkit-1/rules.d is commonly root:polkitd mode 750, so a normal
@@ -1574,10 +1815,11 @@ def check():
 
 
 def secure_system_file(path, executable=False):
-    """Only trust regular, root-owned, non-writable installed system files."""
+    """Only trust regular files below a root-owned, non-writable ancestry."""
     try:
+        secure_directory_path(os.path.dirname(os.path.abspath(path)))
         file_stat = os.lstat(path)
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != 0 or file_stat.st_mode & 0o022:
         return False
@@ -1645,6 +1887,11 @@ def installed_helper_version():
         return ""
     match = re.search(rb'^PLUGIN_VERSION = "([^"]+)"$', source, re.MULTILINE)
     return match.group(1).decode("ascii", errors="replace") if match else ""
+
+
+def secure_helper_present():
+    """Return whether the fixed helper is trusted enough for recovery cleanup."""
+    return secure_system_file(HELPER_BIN_PATH, executable=True)
 
 
 def secure_helper_installed():
