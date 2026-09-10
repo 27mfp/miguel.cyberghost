@@ -66,10 +66,18 @@ Item {
   property bool staleNotified: false
   property string lastBackend: ""
   property int statusPollCount: 0
+  property int statusGeneration: 0
+  property bool statusRefreshPending: false
+  property bool statusUnknown: false
+  property bool externalVpn: false
 
   property string actionStatus: ""
   property string lastError: ""
+  property string statusProbeError: ""
   property string applyHint: ""
+  property string actionKind: ""
+  property int actionGeneration: 0
+  property bool actionTerminating: false
   property string rawStatusText: ""
 
   // ---- In-panel setup wizard state ----
@@ -96,7 +104,7 @@ Item {
   property real lastIpFetchAt: 0
 
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
-  readonly property bool busy: actionProcess.running || setup.busy || connecting || disconnecting
+  readonly property bool busy: actionProcess.running || actionTerminating || setup.busy || connecting || disconnecting
 
   // ---- Onboarding readiness (from runner `check --json`) ----
   property alias readyWg: setup.readyWg
@@ -107,11 +115,13 @@ Item {
   property alias readyCreds: setup.readyCreds
   property alias readyPolkit: setup.readyPolkit
   property alias helperInstalled: setup.helperInstalled
+  property alias helperPresent: setup.helperPresent
   property alias helperVersion: setup.helperVersion
   property alias pluginVersion: setup.pluginVersion
   // The fixed root helper is mandatory: the UI must never execute mutable
   // plugin code through pkexec. The Polkit rule remains optional.
   readonly property bool setupDone: readyWg && readyDns && readyRequests && readyCreds && helperInstalled
+  readonly property bool recoveryAvailable: helperPresent
 
   readonly property string setupCardState: ServiceUtils.setupState(readyWg && readyDns, readyRequests, readyCreds, helperInstalled, helperVersion, pluginVersion)
 
@@ -218,15 +228,20 @@ Item {
   }
 
   function refresh() {
-    if (!statusProcess.running) {
+    if (statusProcess.running) {
+      statusRefreshPending = true
+    } else {
+      statusRefreshPending = false
       statusOutput = ""
       statusError = ""
       statusPollCount += 1
       var shouldProbeCli = connected || lastBackend === "cyberghostvpn" || statusPollCount % 3 === 1
+      statusProcess.requestGeneration = statusGeneration
       statusProcess.command = ["/usr/bin/python3", root.runnerPath, "status", "--json"]
       if (!shouldProbeCli)
         statusProcess.command.push("--no-cli")
       statusProcess.running = true
+      statusTimeoutTimer.restart()
     }
     // Only hit the GeoIP API while connected (and throttled); the panel
     // forces a fresh lookup when it opens so the exposed IP stays current.
@@ -269,8 +284,14 @@ Item {
       actionStatus = ""
       return
     }
-    if (actionProcess.running)
+    if (actionProcess.running || actionTerminating)
       return
+    if (externalVpn) {
+      lastError = "A vendor-managed VPN is active. Disconnect it outside this plugin before connecting."
+      actionStatus = ""
+      sendNotification("CyberGhost VPN", lastError, "normal")
+      return
+    }
     if (!helperInstalled) {
       lastError = "Install the root helper from FIRST-RUN SETUP before connecting."
       actionStatus = ""
@@ -314,6 +335,9 @@ Item {
     }
 
     lastError = ""
+    statusProbeError = ""
+    statusGeneration++
+    statusRefreshPending = true
     applyHint = ""
     var serverLabel = serverSelection === "fastest" ? "automatic server" : serverSelection
     actionStatus = "Connecting to " + countryName + " (" + country + ", " + serverLabel + ")…"
@@ -331,26 +355,67 @@ Item {
       connectArgs = connectArgs.concat(["--streaming-service", streamingService])
     root.actionOutput = ""
     root.actionError = ""
+    actionKind = "connect"
+    actionGeneration++
+    actionProcess.requestGeneration = actionGeneration
+    actionProcess.requestKind = actionKind
     actionProcess.command = execCmd.concat(connectArgs)
     actionProcess.running = true
   }
 
-  function disconnect() {
-    if (actionProcess.running)
+  function cancelAction() {
+    if (!actionProcess.running || actionKind === "")
       return
-    if (!helperInstalled) {
-      lastError = "Install the root helper before disconnecting this plugin's tunnel."
+    root.statusUnknown = true
+    root.statusGeneration++
+    root.statusRefreshPending = true
+    root.lastError = "VPN operation cancelled; the outcome is unknown. Reconciliation is in progress."
+    root.actionStatus = ""
+    root.connecting = false
+    root.disconnecting = false
+    root._desired = -1
+    // Invalidate the completion before terminating the local pkexec process;
+    // a late child result must not announce a success for the cancelled epoch.
+    root.actionGeneration++
+    root.actionKind = ""
+    root.actionTerminating = true
+    actionProcess.timedOut = false
+    actionProcess.running = false
+    delayedRefreshTimer.restart()
+  }
+
+  function disconnect() {
+    if (actionProcess.running || actionTerminating) {
+      if (actionProcess.running && connecting)
+        cancelAction()
+      return
+    }
+    if (externalVpn) {
+      lastError = "The active VPN is managed by cyberghostvpn. Disconnect it outside this plugin."
+      actionStatus = ""
+      sendNotification("CyberGhost VPN", lastError, "normal")
+      return
+    }
+    if (!helperPresent && !helperInstalled) {
+      lastError = "The trusted helper is missing; reinstall it before disconnecting this plugin's tunnel."
       actionStatus = ""
       sendNotification("CyberGhost VPN", lastError, "normal")
       return
     }
 
     lastError = ""
+    statusProbeError = ""
+    statusGeneration++
+    statusRefreshPending = true
     applyHint = ""
     actionStatus = "Disconnecting CyberGhost VPN…"
     disconnecting = true
     connecting = false
     _desired = 0
+    actionKind = "disconnect"
+    actionGeneration++
+    actionProcess.requestGeneration = actionGeneration
+    actionProcess.requestKind = actionKind
     actionTimeoutTimer.restart()
 
     var execCmd = ["/usr/bin/pkexec", root.helperPath]
@@ -444,6 +509,8 @@ Item {
 
   Process {
     id: statusProcess
+    property int requestGeneration: -1
+    property bool timedOut: false
     command: ["/usr/bin/python3", root.runnerPath, "status", "--json"]
     stdout: SplitParser {
       onRead: function (line) {
@@ -456,16 +523,27 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      statusTimeoutTimer.stop()
+      var requestGeneration = statusProcess.requestGeneration
+      var timedOut = statusProcess.timedOut
+      statusProcess.timedOut = false
+      var current = requestGeneration === root.statusGeneration
       var out = String(root.statusOutput || "").substring(0, 4096).trim()
-      if (exitCode === 0) {
-        root.parseStatus(out)
-      } else {
-        var err = String(root.statusError || "").substring(0, 512).trim()
-        if (err !== "")
-          root.lastError = err.substring(0, 120)
+      if (current) {
+        if (exitCode === 0 && !timedOut) {
+          root.parseStatus(out)
+        } else {
+          root.statusUnknown = true
+          var err = String(root.statusError || "").substring(0, 512).trim()
+          root.statusProbeError = timedOut ? "VPN status check timed out; current state is unknown." : (err !== "" ? err.substring(0, 120) : "VPN status check failed; current state is unknown.")
+        }
       }
       root.statusOutput = ""
       root.statusError = ""
+      if (root.statusRefreshPending) {
+        root.statusRefreshPending = false
+        root.refresh()
+      }
     }
   }
 
@@ -508,6 +586,9 @@ Item {
 
   Process {
     id: actionProcess
+    property int requestGeneration: -1
+    property string requestKind: ""
+    property bool timedOut: false
     stdout: SplitParser {
       onRead: function (line) {
         root.actionOutput = ServiceUtils.appendBounded(root.actionOutput, line, 8192)
@@ -520,29 +601,53 @@ Item {
     }
     onExited: function (exitCode) {
       actionTimeoutTimer.stop()
-      var wasDisconnecting = root.disconnecting
-      root.connecting = false
-      root.disconnecting = false
-      root._desired = -1
+      var requestGeneration = actionProcess.requestGeneration
+      var expectedAction = actionProcess.requestKind
+      var timedOut = actionProcess.timedOut
+      actionProcess.timedOut = false
+      var current = requestGeneration === root.actionGeneration && expectedAction === root.actionKind
+      root.actionTerminating = false
 
       var out = String(root.actionOutput || "").substring(0, 8192).trim()
       var err = String(root.actionError || "").substring(0, 8192).trim()
       var result = ServiceUtils.parseActionResult(out)
-      var expectedAction = wasDisconnecting ? "disconnect" : "connect"
+      if (!current) {
+        // A late completion from an operation that was superseded or timed out
+        // cannot be trusted to describe the current tunnel.
+        root.actionOutput = ""
+        root.actionError = ""
+        return
+      }
 
-      if (result !== null) {
+      root.connecting = false
+      root.disconnecting = false
+      root._desired = -1
+      root.actionKind = ""
+
+      if (timedOut) {
+        root.statusUnknown = true
+        root.actionStatus = ""
+        root.lastError = "VPN operation timed out; the outcome is unknown. Reconciliation is in progress."
+        root.sendNotification("Connection status unknown", root.lastError, "critical")
+      } else if (result !== null) {
         if (result.action !== expectedAction) {
           root.lastError = "Helper returned an unexpected result."
           root.actionStatus = ""
           root.sendNotification("Connection Failed", root.lastError, "critical")
-        } else if (result.ok && result.action === "disconnect") {
+        } else if (exitCode === 0 && result.ok && result.action === "disconnect") {
           root.connected = false
+          root.externalVpn = false
+          root.statusUnknown = false
+          root.statusProbeError = ""
           root.actionStatus = ""
           root.lastError = ""
           root.sendNotification("CyberGhost VPN Disconnected", "VPN tunnel disconnected. Public IP exposed.", "normal")
           root.refreshIpInfo(true)
-        } else if (result.ok) {
+        } else if (exitCode === 0 && result.ok && result.action === "connect") {
           root.connected = true
+          root.externalVpn = false
+          root.statusUnknown = false
+          root.statusProbeError = ""
           root.actionStatus = ""
           root.lastError = ""
           root.applyHint = ""
@@ -557,20 +662,23 @@ Item {
           root.publicOrg = ""
           root.refreshIpInfo(true)
         } else {
+          root.statusUnknown = true
           root.lastError = ServiceUtils.cleanProcessError(String(result.error || ""), "Operation failed")
           root.actionStatus = ""
           if (/not authorized|dismissed/i.test(root.lastError))
             root.lastError = "Authentication cancelled"
-          else
-            root.sendNotification("Connection Failed", root.lastError, "critical")
+          root.sendNotification("Connection Failed", root.lastError, "critical")
         }
       } else {
         // Compatibility fallback for a helper older than the structured JSON
         // protocol. The setup card reports the stale helper so it can be
         // replaced, but an in-flight old process still gets a useful result.
         var isEstablished = /VPN connection established|Wireguard connection found|connection established/i.test(out)
-        if (exitCode === 0 && isEstablished) {
+        if (exitCode === 0 && expectedAction === "connect" && isEstablished) {
           root.connected = true
+          root.externalVpn = false
+          root.statusUnknown = false
+          root.statusProbeError = ""
           root.actionStatus = ""
           root.lastError = ""
           root.applyHint = ""
@@ -583,25 +691,26 @@ Item {
           root.publicCountry = ""
           root.publicOrg = ""
           root.refreshIpInfo(true)
-        } else if (exitCode === 0 && wasDisconnecting) {
+        } else if (exitCode === 0 && expectedAction === "disconnect" && /VPN connection terminated|no vpn connections found/i.test(out)) {
           root.connected = false
+          root.externalVpn = false
+          root.statusUnknown = false
+          root.statusProbeError = ""
           root.actionStatus = ""
           root.lastError = ""
           root.sendNotification("CyberGhost VPN Disconnected", "VPN tunnel disconnected. Public IP exposed.", "normal")
           root.refreshIpInfo(true)
-        } else if (exitCode === 0) {
-          root.actionStatus = ""
-          root.lastError = ""
         } else {
+          root.statusUnknown = true
           root.lastError = ServiceUtils.cleanProcessError(err || out, "Command failed (code " + exitCode + ")")
           if (/not authorized|dismissed/i.test(root.lastError))
             root.lastError = "Authentication cancelled"
-          else
-            root.sendNotification("Connection Failed", root.lastError, "critical")
+          root.sendNotification("Connection Failed", root.lastError, "critical")
           root.actionStatus = ""
         }
       }
 
+      actionProcess.requestKind = ""
       delayedRefreshTimer.restart()
       root.actionOutput = ""
       root.actionError = ""
@@ -611,13 +720,26 @@ Item {
   // ---- Output Parsers ----
   function parseStatus(output) {
     rawStatusText = output.substring(0, 2048).trim()
+    if (rawStatusText === "") {
+      statusUnknown = true
+      statusProbeError = "VPN status response was empty; current state is unknown."
+      return
+    }
     var isConnected = false
+    var reportedConnected = false
 
     // Preferred: structured JSON from the runner's `status --json`.
     try {
       var data = JSON.parse(rawStatusText)
-      isConnected = data && typeof data.connected === "boolean" ? data.connected : false
-      lastBackend = data && typeof data.backend === "string" ? data.backend.substring(0, 32) : ""
+      if (!data || typeof data.connected !== "boolean") {
+        statusUnknown = true
+        statusProbeError = "VPN status response was invalid; current state is unknown."
+        return
+      }
+      reportedConnected = data.connected
+      lastBackend = typeof data.backend === "string" ? data.backend.substring(0, 32) : ""
+      externalVpn = reportedConnected && lastBackend === "cyberghostvpn"
+      isConnected = reportedConnected && !externalVpn
       if (isConnected) {
         endpoint = String(data.endpoint || "").substring(0, 64).trim()
         transferText = String(data.transfer || "").substring(0, 64).trim()
@@ -630,7 +752,9 @@ Item {
     } catch (e) {
       // Fallback: human-readable output (older runner or error text).
       var lower = rawStatusText.toLowerCase()
-      isConnected = lower.indexOf("vpn connection found") !== -1 || lower.indexOf("wireguard connection found") !== -1 || lower.indexOf("connection established") !== -1 || lower.indexOf("interface: cyberghost") !== -1
+      reportedConnected = lower.indexOf("vpn connection found") !== -1 || lower.indexOf("wireguard connection found") !== -1 || lower.indexOf("connection established") !== -1 || lower.indexOf("interface: cyberghost") !== -1
+      isConnected = reportedConnected && lower.indexOf("via cyberghostvpn") === -1
+      externalVpn = reportedConnected && !isConnected
       if (!isConnected) {
         endpoint = ""
         transferText = ""
@@ -642,6 +766,8 @@ Item {
     }
 
     var wasConnected = connected
+    statusUnknown = false
+    statusProbeError = ""
     connected = isConnected
 
     if (isConnected && !wasConnected) {
@@ -660,8 +786,10 @@ Item {
       }
     }
 
-    if (isConnected) {
-      lastError = ""
+    if (externalVpn) {
+      lastError = "A vendor-managed VPN is active. Disconnect it outside this plugin before connecting."
+      actionStatus = ""
+    } else if (isConnected) {
       actionStatus = ""
     }
   }
@@ -694,16 +822,45 @@ Item {
   // ---- Timers ----
   Timer {
     id: actionTimeoutTimer
-    // The backend's bounded actions finish within 120 seconds. Leave a small
-    // margin for pkexec/terminal authorization without declaring a still-live
-    // process failed.
+    // The backend is bounded to 120 seconds. A pkexec dialog can still remain
+    // open, so terminate the unprivileged process after a small margin and
+    // explicitly report an unknown outcome. The helper's lifecycle lock keeps
+    // a late privileged child from racing a subsequent action.
     interval: 155000
     repeat: false
     onTriggered: {
-      if (root.connecting || root.disconnecting) {
-        root.lastError = ""
-        root.actionStatus = "Still waiting for the VPN helper…"
-        root.refresh()
+      if (root.actionKind === "")
+        return
+      root.statusUnknown = true
+      root.statusGeneration++
+      root.statusRefreshPending = true
+      root.lastError = "VPN operation timed out; the outcome is unknown. Reconciliation is in progress."
+      root.actionStatus = ""
+      root.connecting = false
+      root.disconnecting = false
+      root._desired = -1
+      if (actionProcess.running) {
+        actionProcess.timedOut = true
+        root.actionGeneration++
+        root.actionKind = ""
+        root.actionTerminating = true
+        actionProcess.running = false
+      } else {
+        actionProcess.requestKind = ""
+        root.actionKind = ""
+      }
+      delayedRefreshTimer.restart()
+    }
+  }
+
+  Timer {
+    id: statusTimeoutTimer
+    interval: 20000
+    repeat: false
+    onTriggered: {
+      if (statusProcess.running) {
+        statusProcess.timedOut = true
+        statusProcess.running = false
       }
     }
   }

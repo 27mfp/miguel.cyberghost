@@ -12,9 +12,10 @@ say() { printf "%b\n" "$1"; }
 
 confirm() {
   local answer=""
-  read -rp "$1 [Y/n] " answer
-  # bash 5.3 misparses an =~ regex ending in "]" before "]]"; glob instead
-  [[ ${answer:-y} != [Nn]* ]]
+  # EOF, blank input and arbitrary text are refusals. Installation changes
+  # require an explicit affirmative response.
+  read -rp "$1 [y/N] " answer || return 1
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 have_pacman_pkg_installed() {
@@ -42,13 +43,13 @@ install_polkit_rule() {
   fi
 
   local answer=""
-  read -rp "Allow passwordless VPN actions for wheel members? [y/N] " answer
-  if [[ $answer == [Yy]* ]]; then
+  read -rp "Allow passwordless VPN actions for wheel members? [y/N] " answer || answer=""
+  if [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
     bash "$DIR/install-helper.sh" --with-polkit-rule
     say "${GREEN}✓${NC} Root helper and optional Polkit rule installed"
   else
     bash "$DIR/install-helper.sh" --no-polkit-rule
-    say "${GREEN}✓${NC} Root helper installed; Polkit authorization remains enabled"
+    say "${GREEN}✓${NC} Root helper installed; existing Polkit authorization was preserved"
   fi
 }
 
@@ -83,6 +84,7 @@ try:
     print(f" {tick('requests')} Python requests (key negotiation)")
     print(f" {tick('credentials')} CyberGhost account credentials")
     print(f" {tick('helper_installed')} Root helper binary (/usr/local/bin/cyberghost-runner)")
+    print(f" {tick('helper_present')} Trusted helper present (recovery cleanup)")
     print(f" {tick('polkit_rule_installed')} Polkit rule (50-cyberghost.rules)")
 except Exception:
     print(" Check status unavailable")

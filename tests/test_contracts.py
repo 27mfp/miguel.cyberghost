@@ -127,6 +127,33 @@ def test_root_helper_rejects_non_lifecycle_actions():
         runner.sys.argv = original_argv
 
 
+def test_root_helper_skips_optional_vendor_inventory():
+    with mock.patch.object(runner.os, "geteuid", return_value=0):
+        with mock.patch.object(
+            runner, "get_servers_for_country", side_effect=AssertionError("vendor CLI must not run as root")
+        ):
+            country, candidates = runner.select_native_candidates("PT", "traffic")
+    assert country == "PT"
+    assert candidates
+
+
+def test_wireguard_config_symlink_is_rejected_before_cleanup():
+    directory = pathlib.Path(tempfile.mkdtemp())
+    target = directory / "real.conf"
+    target.write_text("[Interface]\n", encoding="utf-8")
+    link = directory / "cyberghost.conf"
+    link.symlink_to(target)
+    with mock.patch.object(runner, "WG_CONF_PATH", str(link)):
+        try:
+            runner.secure_wireguard_config()
+            raise AssertionError("config symlink must be rejected")
+        except RuntimeError as exc:
+            assert "symlink" in str(exc)
+    link.unlink()
+    target.unlink()
+    directory.rmdir()
+
+
 def test_root_helper_rejects_custom_config():
     with mock.patch.object(runner, "installed_helper_invocation", return_value=True):
         args = mock.Mock(

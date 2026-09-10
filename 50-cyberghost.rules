@@ -1,7 +1,8 @@
 /* Polkit rule for CyberGhost VPN Omarchy plugin.
  *
- * Allows members of the wheel group to run the root-owned helper without a
- * password prompt. The helper itself accepts only fixed connect/disconnect
+ * Allows only the installing wheel user to run the root-owned helper without
+ * a password prompt. install-helper.sh substitutes the current username for
+ * __CYBERGHOST_INSTALL_USER__. The helper itself accepts only fixed connect/disconnect
  * lifecycle operations and derives the caller's config from PKEXEC_UID; it
  * rejects all other actions and custom paths.
  *
@@ -10,12 +11,13 @@
  *
  * Install with the repository installer, which snapshots and verifies both
  * files before installing them as root:
- *   bash ./install-helper.sh
+ *   bash ./install-helper.sh --with-polkit-rule
  */
 polkit.addRule(function(action, subject) {
     if (action.id === "org.freedesktop.policykit.exec" &&
         action.lookup("program") === "/usr/local/bin/cyberghost-runner" &&
-        subject.isInGroup("wheel")) {
+        subject.isInGroup("wheel") &&
+        subject.user === "__CYBERGHOST_INSTALL_USER__") {
         return polkit.Result.YES;
     }
 });

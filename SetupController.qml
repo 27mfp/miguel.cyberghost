@@ -29,6 +29,7 @@ Item {
   property bool readyCreds: false
   property bool readyPolkit: false
   property bool helperInstalled: false
+  property bool helperPresent: false
   property string helperVersion: ""
   property string pluginVersion: ""
   function recheck() {
@@ -41,6 +42,7 @@ Item {
     depsError = ""
     setupMsg = "Installing system packages (authorize in the dialog)…"
     depsProcess.running = true
+    depsTimeoutTimer.restart()
   }
 
   function openHelperInstaller(withPolkit) {
@@ -76,11 +78,13 @@ Item {
       "password": password
     })
     registerProcess.running = true
+    registerTimeoutTimer.restart()
   }
 
   // ---- Setup wizard processes ----
   Process {
     id: depsProcess
+    property bool timedOut: false
     command: ["/usr/bin/pkexec", "/usr/bin/pacman", "-S", "--needed", "--noconfirm", "wireguard-tools", "python-requests"].concat(root.readyDns ? [] : ["openresolv"])
     stdout: SplitParser {
       onRead: function (line) {
@@ -93,10 +97,15 @@ Item {
       }
     }
     onExited: function (exitCode) {
-      if (exitCode === 0) {
+      depsTimeoutTimer.stop()
+      var timedOut = depsProcess.timedOut
+      depsProcess.timedOut = false
+      if (timedOut) {
+        root.setupMsg = "Dependency installation timed out. Check pacman and try again."
+      } else if (exitCode === 0) {
         root.setupMsg = "Packages installed."
         root.sendNotification("CyberGhost VPN", "Dependencies installed.", "normal")
-      } else {
+      } else if (!timedOut) {
         root.setupMsg = ServiceUtils.cleanProcessError(root.depsError, "Could not install dependencies. Check pacman and try again.")
       }
       root.depsError = ""
@@ -128,6 +137,7 @@ Item {
 
   Process {
     id: registerProcess
+    property bool timedOut: false
     command: ["/usr/bin/python3", root.runnerPath, "register"]
     property string pendingCredentials: ""
     stdinEnabled: true
@@ -146,12 +156,17 @@ Item {
       }
     }
     onExited: function (exitCode) {
+      registerTimeoutTimer.stop()
+      var timedOut = registerProcess.timedOut
+      registerProcess.timedOut = false
       root.regBusy = false
       var out = String(root.registerOutput || "")
       var err = String(root.registerError || "")
       registerProcess.pendingCredentials = ""
       registerProcess.environment = ({})
-      if (exitCode === 0) {
+      if (timedOut) {
+        root.setupMsg = "Account linking timed out. Check your network and try again."
+      } else if (exitCode === 0) {
         root.setupMsg = ""
         root.registered()
         root.sendNotification("CyberGhost VPN", "Account linked. Setup will be rechecked.", "normal")
@@ -191,12 +206,37 @@ Item {
       root.readyCreds = !!d.credentials
       root.readyPolkit = !!d.helper_installed && !!d.polkit_rule_installed
       root.helperInstalled = !!d.helper_installed
+      root.helperPresent = !!d.helper_present || root.helperInstalled
       root.helperVersion = String(d.helper_version || "")
       root.pluginVersion = String(d.plugin_version || "")
       if (!root.readyPolkit && root.polkitStatus === "Passwordless connect enabled.")
         root.polkitStatus = ""
       root.checkOutput = ""
       root.checked()
+    }
+  }
+
+  Timer {
+    id: depsTimeoutTimer
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      if (depsProcess.running) {
+        depsProcess.timedOut = true
+        depsProcess.running = false
+      }
+    }
+  }
+
+  Timer {
+    id: registerTimeoutTimer
+    interval: 45000
+    repeat: false
+    onTriggered: {
+      if (registerProcess.running) {
+        registerProcess.timedOut = true
+        registerProcess.running = false
+      }
     }
   }
 }

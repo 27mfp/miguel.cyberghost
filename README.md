@@ -38,11 +38,11 @@ Automatic selection can use live vendor inventory if already available, otherwis
 
 - Native HTTPS verifies certificates and hostnames; WireGuard configuration fields are validated.
 - Native routing covers IPv4 and IPv6. DNS setup must succeed; there is no DNS-less retry.
-- Activation failures/timeouts attempt cleanup. Cleanup failures can still require manual recovery.
+- Activation failures/timeouts attempt cleanup and verify the interface, policy routes/rules and resolver state. Inconclusive cleanup is reported and the generated config is retained for recovery.
 - **This is not a kill switch.** Traffic is not blocked after disconnection. Tunnel/handshake status is diagnostic, not proof of anonymity or leak protection.
 - Public-IP lookup contacts `ipwho.is`. Privacy mode masks displayed values, not that request.
 - Only the fixed `/usr/local/bin/cyberghost-runner` is invoked through Polkit. It accepts restricted lifecycle requests, not registration or arbitrary configuration paths.
-- Helper installation verifies a staged snapshot. Commands, HTTP responses and execution time are bounded.
+- Helper installation verifies a staged snapshot. Commands, HTTP responses and execution time are bounded. Snapshot hashes establish integrity of the trusted checkout, not release provenance; use an independently verified release source when that distinction matters.
 - A VPN started separately through the vendor CLI is not managed by the native-only release. Disconnect such a session before upgrading from an experimental version.
 
 ### Optional passwordless authorization
@@ -59,7 +59,7 @@ An explicit opt-in is available under Settings or with:
 bash install-helper.sh --with-polkit-rule
 ```
 
-This permits processes running as `wheel` members to invoke the fixed helper without another prompt. It is not required. Updating the helper preserves an already-installed rule; it does not revoke authorization.
+This permits only the installing user, while that user remains a `wheel` member, to invoke the fixed helper without another prompt. It is not required. Updating the helper preserves an already-installed rule; it does not revoke authorization. To explicitly revoke the plugin-owned rule, use `bash install-helper.sh --revoke-polkit-rule`; customized rules are refused rather than deleted.
 
 ## Update and remove
 
@@ -70,7 +70,7 @@ bash ~/.config/omarchy/plugins/miguel.cyberghost/install-helper.sh
 
 Version 1.6.2 requires helper capability 8. The panel detects incompatible helpers and offers an update.
 
-Disconnect before removing the plugin. See [installer reference](INSTALLER.md) for helper/rule removal. Preserve `~/.cyberghost/config.ini` if another client uses it. `fresh-install.sh` is a destructive development reset, not an upgrade.
+Disconnect before removing the plugin. See [installer reference](INSTALLER.md) for helper/rule removal. Preserve `~/.cyberghost/config.ini` if another client uses it. `fresh-install.sh` stages and validates its replacement first, requires explicit confirmation, and is a destructive development reset—not an upgrade.
 
 ## Development and release checks
 

@@ -36,6 +36,7 @@ jobs:
         run: |
           python -m py_compile cyberghost_runner.py
           python -m json.tool manifest.json >/dev/null
+          python scripts/check_manifest.py
           for file in install.sh install-helper.sh fresh-install.sh scripts/*.sh; do
             bash -n "$file"
           done
@@ -46,6 +47,11 @@ jobs:
             /usr/lib/qt6/bin/qmlformat "$file" >/dev/null
           done
           bash scripts/test-qml.sh
+          if command -v omarchy-plugin-validate >/dev/null 2>&1; then
+            omarchy-plugin-validate "$PWD"
+          else
+            echo "Omarchy validator unavailable on Ubuntu; standalone manifest validation ran above."
+          fi
           # Installed Omarchy + Quickshell metadata is needed for real import
           # linting. Run scripts/check_qml.py on the target machine; the test
           # doubles above are not evidence of full shell integration.

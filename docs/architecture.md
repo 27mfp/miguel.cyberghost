@@ -32,7 +32,7 @@ The Python helper intentionally remains a **self-contained installed file**. Spl
 
 The manifest declares only `bar-widget`; `BarWidget.qml` loads the nested `Panel.qml`. No extra panel kind or second Quickshell process is created. The host bar identity and anchor are forwarded, including `opened`, `closeForPopoutSwitch` and `popoutSwitchClosing`.
 
-The host creates one widget (and service) per monitor. Only the first widget in `bar.moduleWidgets()` enables the plugin IPC handler; refresh broadcasts to the monitor widgets. This fixes duplicate target registration without pretending the service is a singleton. Monitor hotplug/re-election remains a separate integration check.
+The host creates one widget (and service) per monitor. Only the first widget in `bar.moduleWidgets()` enables the plugin IPC handler, and direct middle/right-click actions route to that same first service; refresh broadcasts to the monitor widgets. The fixed root helper also serializes the global tunnel lifecycle with a persistent `/run/lock/cyberghost.lock`, so external helper invocations cannot mutate the shared config concurrently. Monitor hotplug/re-election remains a separate integration check.
 
 `ConnectionSettings` accepts a primary-action Component between Country and Advanced, exposing that slot's `focusTarget` to the panel. Closing explicitly closes child popups and clears an unsubmitted setup password. GeoIP requests carry the tunnel-state generation so an old result cannot describe a new connection.
 
@@ -54,8 +54,8 @@ The development-only visual fixture is a separate temporary panel plugin with sy
 
 There is no kill switch. No claim is made that default routes or a fresh handshake prove leak protection. DNS presence is checked during setup; actual DNS configuration must still succeed during activation.
 
-The fixed helper is version/capability checked. A helper mismatch is an update state, not a missing-account state. Optional authorization is explicit in both terminal and GUI installers.
+The fixed helper is version/capability checked, while trusted helper presence remains available for disconnect recovery after an update mismatch. Optional authorization is explicit in both terminal and GUI installers; helper-only updates preserve an existing rule and explicit revocation verifies the rule bytes before removal.
 
-Status and optional inventory work no longer block Disconnect. Inventory results are validated against the captured country/protocol/mode before application. Selecting a country alone cannot reconnect. Backend live authentication, provider availability, DNS behavior and tunnel routing still require real-machine integration validation.
+Status and optional inventory work no longer block Disconnect. Status polls and action completions carry generations, stale results are discarded, action timeouts/cancellation report unknown state, and a failed probe is rendered separately from disconnected. Inventory results are validated against the captured country/protocol/mode before application. Selecting a country alone cannot reconnect. Backend live authentication, provider availability, DNS behavior and tunnel routing still require real-machine integration validation.
 
 `active: false` in the local plugin-list output was initially misread as a widget failure. Inspection of Omarchy's `shell.qml` shows it denotes selection of a full-bar plugin. For this bar widget, validate enabled state and actual summon/hide behavior instead.

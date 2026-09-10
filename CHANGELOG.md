@@ -6,6 +6,11 @@
 - Reject unsupported IPC/helper connection requests. Native status/disconnect no longer manage separately started vendor VPNs.
 - Remove vendor CLI installation prompts. Target Omarchy while retaining prerequisite checks for differing versions and resolver/network setups.
 - Require helper capability 8. Experimental vendor compatibility work below is retained for development, not advertised as a supported release feature.
+- Fail closed on explicit empty/invalid API DNS, validate root-owned WireGuard directories/configs before lifecycle commands, and atomically write mode-0600 config files.
+- Serialize native connect/disconnect with a persistent root lifecycle lock; verify interface, policy-route/rule and resolver cleanup and retain recovery config when cleanup is inconclusive.
+- Keep trusted helper presence separate from exact-version readiness so existing tunnels remain disconnectable during helper updates; skip vendor CLI execution from the privileged helper.
+- Reject stale QML status/action completions, distinguish unknown probe state from disconnected, cancel/timeout actions conservatively, and clean panels on every close path.
+- Preserve Polkit rules during helper-only updates; scope optional passwordless authorization to the installing wheel user, add digest-checked explicit revocation, fail-closed installer confirmations, and staged `fresh-install.sh` replacement.
 
 ### Earlier experimental 1.6.1 work
 

@@ -171,6 +171,27 @@ Column {
     }
   }
 
+  Text {
+    visible: root.visible && root.service.connected && !root.service.helperPresent
+    width: parent.width
+    text: "A VPN tunnel is still reported active, but the fixed helper is missing. Reinstall the helper to recover it."
+    textFormat: Text.PlainText
+    color: Color.urgent
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    wrapMode: Text.WordWrap
+  }
+
+  Button {
+    visible: root.visible && root.service.connected && root.service.helperPresent
+    text: "Disconnect existing tunnel"
+    focusable: true
+    bordered: true
+    enabled: !root.service.busy
+    foreground: root.foreground
+    onClicked: root.service.disconnect()
+  }
+
   Button {
     visible: root.visible
     text: "Recheck setup"
