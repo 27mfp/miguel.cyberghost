@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
   <title id="title">CyberGhost VPN</title>
-  <desc id="desc">A yellow ghost wearing a dark visor on a midnight blue background.</desc>
-  <rect width="512" height="512" rx="112" fill="#171923"/>
-  <rect x="14" y="14" width="484" height="484" rx="100" fill="none" stroke="#8ea2ff" stroke-width="12"/>
-  <path fill="#ffd42a" d="M132 246V186c0-78 55-126 124-126s124 48 124 126v60l1 110c-1 22-17 38-37 38-18 0-30-10-44-28-12 21-27 34-44 34s-32-13-44-34c-14 18-26 28-44 28-20 0-36-16-37-38z"/>
-  <path fill="#171923" d="M161 190c12-23 38-36 65-36h72c27 0 53 13 65 36l-8 51h-77l-8-13-8 13h-77z"/>
-  <path fill="#ffd42a" d="M252 177h8v52h-8z"/>
-  <path fill="#171923" d="M225 289c18 13 44 13 62 0 3-2 7 1 6 5-2 16-17 28-37 28s-35-12-37-28c-1-4 3-7 6-5z"/>
-  <path fill="#8ea2ff" d="M117 414h278" stroke="#8ea2ff" stroke-width="8" stroke-linecap="round" opacity=".7"/>
+  <desc id="desc">The CyberGhost VPN ghost icon used in the Omarchy bar.</desc>
+  <path fill="#FFCE00" d="M12 45C12 5 30 0 50 0C70 0 88 5 88 45v35Q75 100 63 84Q50 100 37 84Q25 100 12 80z"/>
+  <g fill="#171923">
+    <rect x="22" y="32" width="23" height="18" rx="7.2" transform="rotate(5 33.5 41)"/>
+    <rect x="55" y="32" width="23" height="18" rx="7.2" transform="rotate(-5 66.5 41)"/>
+    <rect x="42" y="34" width="16" height="6"/>
+    <rect x="42" y="60" width="18" height="5" rx="2.5" transform="rotate(4 51 62.5)"/>
+  </g>
 </svg>
