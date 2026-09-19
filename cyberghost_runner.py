@@ -161,6 +161,12 @@ CITY_MAP = {
     "ZA": "johannesburg",
 }
 
+# The vendor's city spelling and its dialup hostname prefix are not always the
+# same. Keep CITY_MAP suitable for CLI inventory queries, and override only the
+# endpoint prefix where the live inventory differs (Ukraine currently returns
+# kiev-s401-iNN hosts for the city displayed as Kyiv).
+DIALUP_CITY_MAP = {**CITY_MAP, "UA": "kiev"}
+
 _HANDSHAKE_UNITS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 
 
@@ -1148,8 +1154,8 @@ def select_native_candidates(country_code, server_type="traffic", city=None, ser
 
     if city:
         city_slug = _slug(city)
-    elif cc in CITY_MAP:
-        city_slug = CITY_MAP[cc]
+    elif cc in DIALUP_CITY_MAP:
+        city_slug = DIALUP_CITY_MAP[cc]
     elif cli_servers:
         city_slug = _slug(cli_servers[0]["city"])
     else:
@@ -1360,9 +1366,16 @@ def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=F
 
     try:
         route_result = run_bounded([ip_binary, "route", "show", "table", "51820"], timeout=5, max_output_bytes=8 * 1024)
-        if route_result.returncode != 0:
+        route_detail = f"{route_result.stdout or ''}\n{route_result.stderr or ''}"
+        # iproute2 returns exit 2 when a policy table has never been created or
+        # has already been removed. That is positive evidence of an empty table,
+        # not an unverifiable cleanup failure.
+        route_table_absent = route_result.returncode == 2 and re.search(
+            r"FIB table does not exist|table .* does not exist", route_detail, re.I
+        )
+        if route_result.returncode != 0 and not route_table_absent:
             problems.append("WireGuard policy route table could not be verified")
-        elif (route_result.stdout or "").strip():
+        elif route_result.returncode == 0 and (route_result.stdout or "").strip():
             problems.append("WireGuard policy routes remain in table 51820")
 
         rule_result = run_bounded([ip_binary, "rule", "show"], timeout=5, max_output_bytes=8 * 1024)

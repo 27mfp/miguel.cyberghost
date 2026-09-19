@@ -20,8 +20,8 @@ TestCase {
     service.readyCreds = true
     service.helperInstalled = true
     service.helperPresent = true
-    service.readyCli = true
-    service.cliConfigured = true
+    service.readyCli = false
+    service.cliConfigured = false
     return service
   }
 
@@ -46,6 +46,37 @@ TestCase {
         return service.children[i]
     }
     return null
+  }
+
+  function inventoryProcess(service) {
+    for (var i = 0; i < service.children.length; i++) {
+      var child = service.children[i]
+      for (var j = 0; child.children && j < child.children.length; j++) {
+        var command = child.children[j].command
+        if (command && command.indexOf("servers") >= 0)
+          return child.children[j]
+      }
+    }
+    return null
+  }
+
+  function test_liveInventoryServerIsPassedToRootHelper() {
+    var service = readyService({ defaultCountry: "EG" })
+    service.readyCli = true
+    service.cliConfigured = true
+    service.connectTo("EG", "wireguard", "traffic", "", "fastest")
+    compare(actionProcess(service), null)
+    verify(service.resolvingAutomaticServer)
+
+    var inventory = inventoryProcess(service)
+    verify(inventory !== null)
+    inventory.stdout.read('[{"server":"cairo-s12-i07","city":"Cairo","load":14}]')
+    inventory.running = false
+    inventory.exited(0)
+
+    var command = actionCommand(service)
+    compare(command[command.indexOf("--server") + 1], "cairo-s12-i07")
+    compare(service.serverSelection, "fastest")
   }
 
   function test_connectMigratesOldExactServerToAutomaticWireGuard() {
