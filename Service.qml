@@ -76,6 +76,7 @@ Item {
   property string statusProbeError: ""
   property string applyHint: ""
   property string actionKind: ""
+  property bool resolvingAutomaticServer: false
   property int actionGeneration: 0
   property bool actionTerminating: false
   property string rawStatusText: ""
@@ -104,7 +105,7 @@ Item {
   property real lastIpFetchAt: 0
 
   readonly property int refreshIntervalSec: Math.max(5, Math.min(60, parseInt(setting("refreshIntervalSec", 8), 10) || 8))
-  readonly property bool busy: actionProcess.running || actionTerminating || setup.busy || connecting || disconnecting
+  readonly property bool busy: actionProcess.running || actionTerminating || setup.busy || resolvingAutomaticServer || connecting || disconnecting
 
   // ---- Onboarding readiness (from runner `check --json`) ----
   property alias readyWg: setup.readyWg
@@ -216,7 +217,9 @@ Item {
     countryName: root.countryName
     protocol: root.protocol
     mode: root.serverType
-    cliAvailable: false // No vendor inventory dependency in the WireGuard release.
+    // Inventory lookup is unprivileged. The selected, strictly validated host
+    // is then passed to the fixed root helper, avoiding stale per-country maps.
+    cliAvailable: root.readyCli && root.cliConfigured
     runnerPath: root.runnerPath
     onLoaded: function (options) {
       var found = options.some(function (item) {
@@ -224,6 +227,11 @@ Item {
       })
       if (!found)
         root.setServerSelection("fastest")
+      if (root.resolvingAutomaticServer) {
+        root.resolvingAutomaticServer = false
+        var liveServer = options.length > 1 ? String(options[1].value || "") : ""
+        root.startNativeConnect(liveServer)
+      }
     }
   }
 
@@ -336,10 +344,33 @@ Item {
 
     lastError = ""
     statusProbeError = ""
+    applyHint = ""
+
+    // Resolve the lowest-load live server before entering the privileged path.
+    // This keeps vendor code out of the root helper while avoiding brittle
+    // hard-coded rack/city names for every country.
+    if (readyCli && cliConfigured) {
+      resolvingAutomaticServer = true
+      actionStatus = "Finding a live server in " + countryName + "…"
+      inventory.refresh()
+      return
+    }
+    startNativeConnect("")
+  }
+
+  function startNativeConnect(liveServer) {
+    if (actionProcess.running || actionTerminating)
+      return
+    var resolvedServer = String(liveServer || "").trim().toLowerCase()
+    if (resolvedServer !== "" && !ServiceUtils.isValidServerSelector(resolvedServer)) {
+      lastError = "CyberGhost returned an invalid server name."
+      actionStatus = ""
+      return
+    }
+
     statusGeneration++
     statusRefreshPending = true
-    applyHint = ""
-    var serverLabel = serverSelection === "fastest" ? "automatic server" : serverSelection
+    var serverLabel = resolvedServer !== "" ? resolvedServer : "automatic server"
     actionStatus = "Connecting to " + countryName + " (" + country + ", " + serverLabel + ")…"
     connecting = true
     disconnecting = false
@@ -348,11 +379,8 @@ Item {
 
     var execCmd = ["/usr/bin/pkexec", root.helperPath]
     var connectArgs = ["connect", "--country", country, "--protocol", protocol, "--server-type", serverType, "--json"]
-    if (protocol === "wireguard" && serverType === "traffic" && serverSelection !== "fastest") {
-      connectArgs = connectArgs.concat(["--server", serverSelection])
-    }
-    if (serverType === "streaming")
-      connectArgs = connectArgs.concat(["--streaming-service", streamingService])
+    if (resolvedServer !== "")
+      connectArgs = connectArgs.concat(["--server", resolvedServer])
     root.actionOutput = ""
     root.actionError = ""
     actionKind = "connect"

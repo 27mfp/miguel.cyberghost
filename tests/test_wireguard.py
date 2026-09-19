@@ -99,6 +99,24 @@ def test_connect_rejects_explicit_empty_dns_before_lifecycle_commands():
                             assert "DNS" in str(exc)
 
 
+def test_cleanup_accepts_absent_policy_route_table():
+    def bounded(command, **kwargs):
+        if command[1:3] == ["link", "show"]:
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1:4] == ["route", "show", "table"]:
+            return runner.subprocess.CompletedProcess(command, 2, "", "Error: ipv4: FIB table does not exist.\n")
+        if command[1:3] == ["rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "", "")
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 1, "", "Switch -l not supported.")
+        return runner.subprocess.CompletedProcess(command, 1, "", "already absent")
+
+    with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+        problems = runner.cleanup_wireguard_state("/usr/bin/wg-quick", "/usr/bin/ip", config_present=True)
+
+    assert problems == []
+
+
 def test_cleanup_reports_residual_interface_and_policy_state():
     def bounded(command, **kwargs):
         if command[1:3] == ["link", "show"]:

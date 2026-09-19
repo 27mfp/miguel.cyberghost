@@ -3,6 +3,7 @@
 import os
 import re
 import tempfile
+from unittest import mock
 
 from runner_support import ROOT, SAMPLE_PRIV, SAMPLE_PUB, load_runner
 
@@ -16,6 +17,17 @@ def test_city_map_covers_countries_js():
     mapped = set(runner.CITY_MAP)
     missing = codes - mapped
     assert not missing, f"Countries.js codes missing from CITY_MAP: {sorted(missing)}"
+
+
+def test_ukraine_uses_live_dialup_hostname_spelling():
+    """CyberGhost displays Kyiv but publishes its WireGuard hosts as kiev-* names."""
+    with mock.patch.object(runner.os, "geteuid", return_value=0):
+        country, candidates = runner.select_native_candidates("UA")
+
+    assert country == "UA"
+    assert candidates[0] == "kiev-s405-i01.cg-dialup.net"
+    assert "kiev-s401-i01.cg-dialup.net" in candidates
+    assert not any(candidate.startswith("kyiv-") for candidate in candidates)
 
 
 def test_validate_wireguard_key():
