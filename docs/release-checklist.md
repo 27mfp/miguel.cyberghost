@@ -1,4 +1,4 @@
-# 1.6.2 candidate — native WireGuard release gates
+# 1.6.3 — native WireGuard release gates
 
 Published listing: [CyberGhost VPN for Omarchy](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
 
@@ -11,8 +11,8 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 - IPC rejects unsupported requests; the runner rejects vendor-dependent connection modes before backend dispatch.
 - Status and disconnect manage the native tunnel only, not a separately started vendor VPN.
 - Guided installation does not offer the vendor CLI or OpenVPN compatibility launcher.
-- Optional existing vendor inventory can still assist native endpoint selection; fallback candidates remain available.
-- Helper capability 8 requires an explicit helper update before using this candidate.
+- A configured vendor CLI supplies live endpoint inventory through an unprivileged lookup; validated fallback candidates remain available when inventory is unavailable.
+- Helper capability 8 requires an explicit helper update after installing this release.
 
 ## Evidence and remaining gates
 
@@ -20,8 +20,8 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 - The native-only UI remains limited to WireGuard traffic with automatic server selection. Vendor inventory and OpenVPN/streaming/torrent controls are not exposed; a separately active vendor VPN is reported and cannot be silently managed by this plugin.
 - The backend now rejects explicit empty/invalid DNS, validates trusted WireGuard paths before `wg-quick`, uses a persistent root lifecycle lock, verifies interface/routes/rules/resolver cleanup, preserves recovery config on incomplete teardown, and skips optional vendor CLI execution in the root helper.
 - Helper-only updates preserve Polkit authorization. Explicit revocation verifies the plugin rule bytes; confirmation EOF fails closed; fresh reset stages and validates its replacement before teardown and preserves vendor `config.ini`.
-- [x] Python regression suite: 121 tests pass locally.
-- [x] Qt/QML behavior suite: 32 cases pass locally; stale status/action, malformed probes, timeout, recovery and cleanup paths have regression coverage.
+- [x] Python regression suite: 123 tests pass locally.
+- [x] Qt/QML behavior suite: 33 cases pass locally; live inventory handoff, stale status/action, malformed probes, timeout, recovery and cleanup paths have regression coverage.
 - [x] Ruff, formatting, Python compilation, JSON/standalone manifest validation, shell syntax, QML formatting, Omarchy manifest validation and `git diff --check` pass locally. QML lint reports 0 project diagnostics; only known host metadata warnings remain. ShellCheck passes in CI and via the disposable Docker check used here.
 - [x] No repository files are changed by the validation commands themselves; the final diff is limited to the remediation and regression/docs changes described above.
 - [ ] Recheck final native connection without configured vendor inventory in a disposable authorized environment.

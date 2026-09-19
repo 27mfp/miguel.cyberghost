@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased — 1.6.2 native WireGuard candidate
+## 1.6.3
+
+- Resolve automatic WireGuard endpoints from CyberGhost's live, unprivileged server inventory before entering the privileged helper, avoiding stale per-country rack and city names.
+- Correct Ukraine's displayed `Kyiv` / endpoint `kiev` naming mismatch in the static fallback inventory.
+- Treat an absent iproute2 policy table as verified-clean state so stale WireGuard configuration can be replaced safely.
+- Add regression coverage for live endpoint handoff, Ukraine fallback names, and absent policy-route cleanup.
+
+## 1.6.2
 
 - Restrict release connections to native WireGuard traffic mode. Remove vendor-dependent controls from the panel and manifest, and migrate saved experimental selections to automatic WireGuard.
 - Reject unsupported IPC/helper connection requests. Native status/disconnect no longer manage separately started vendor VPNs.

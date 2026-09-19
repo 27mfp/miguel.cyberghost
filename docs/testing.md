@@ -1,6 +1,6 @@
 # Tests and verification
 
-For the current native-only 1.6.2 candidate, see the [release gates and live findings](release-checklist.md). Historical evidence below does not certify the newer candidate or optional CLI connections.
+For the current native-only 1.6.3 release, see the [release gates and live findings](release-checklist.md). Historical evidence below does not certify the newer candidate or optional CLI connections.
 
 ## What changed in the test strategy
 
