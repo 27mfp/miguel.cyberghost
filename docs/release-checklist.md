@@ -28,7 +28,7 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 - [ ] Verify real activation failure/timeout recovery and residual routes/DNS in that environment.
 - [ ] Verify concurrent multi-monitor requests, owner re-election and monitor hotplug in the running shell.
 - [ ] Complete disposable clean-install, upgrade, disable/re-enable and removal evidence.
-- [x] Review remote CI and synchronize any installed checkout/helper before tagging or advertising stability. GitHub Actions run `34488189656` passed on commit `238b4e8`; the installed checkout and helper were verified against the published remediation.
+- [x] Review remote CI before tagging or advertising stability. GitHub Actions run `35439589048` passed on release-preparation commit `7cd3176`; the installed checkout/helper update remains an explicit post-update step.
 
 ## Deferred vendor investigation (not a release gate for native-only scope)
 
