@@ -40,6 +40,38 @@ def test_reject_symlink_config():
         assert "symlink" in str(e).lower()
 
 
+def test_reject_fifo_config_without_blocking():
+    # The root helper reads this path while holding the lifecycle lock. A FIFO
+    # must be rejected immediately, not block open() until a writer appears.
+    import subprocess
+    import sys
+
+    from runner_support import ROOT
+
+    d = tempfile.mkdtemp()
+    fifo_path = os.path.join(d, "native.ini")
+    os.mkfifo(fifo_path, 0o600)
+    script = (
+        "import importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('r', sys.argv[1])\n"
+        "r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)\n"
+        "try:\n"
+        "    r.get_credentials(sys.argv[2])\n"
+        "except RuntimeError as e:\n"
+        "    print(e)\n"
+    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", script, str(ROOT / "cyberghost_runner.py"), fifo_path],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError("get_credentials blocked opening a FIFO config") from exc
+    assert "regular file" in result.stdout
+
+
 def test_check_output_shape():
     import io
     from contextlib import redirect_stdout
@@ -47,30 +79,31 @@ def test_check_output_shape():
     buf = io.StringIO()
     with mock.patch.object(runner, "system_binary_available", return_value=False):
         with mock.patch.object(runner.importlib.util, "find_spec", return_value=object()):
-            with mock.patch.object(runner, "get_credentials", side_effect=RuntimeError("not configured")):
-                with mock.patch.object(runner, "secure_helper_installed", return_value=False):
-                    with mock.patch.object(runner, "installed_helper_version", return_value=""):
+            with mock.patch.object(runner, "load_account", side_effect=RuntimeError("not configured")):
+                with mock.patch.object(runner, "nm_available", return_value=True):
+                    with mock.patch.object(runner, "nm_permission", return_value="yes"):
                         with mock.patch.object(runner, "secure_system_file", return_value=False):
                             with mock.patch.object(runner, "user_polkit_marker_installed", return_value=False):
                                 with redirect_stdout(buf):
                                     runner.check()
     data = json.loads(buf.getvalue())
     expected_keys = {
-        "wg_tools",
-        "dns_tools",
+        "nm",
+        "nm_permission",
         "requests",
         "cli",
         "cli_configured",
         "credentials",
-        "helper_installed",
-        "helper_present",
-        "helper_version",
+        "account",
+        "account_source",
+        "server_list",
+        "legacy_helper",
+        "legacy_polkit_rule",
         "plugin_version",
-        "polkit_rule_installed",
     }
     assert set(data) == expected_keys
     for key, value in data.items():
-        if key in {"helper_version", "plugin_version"}:
+        if key in {"plugin_version", "nm_permission", "account", "account_source", "server_list"}:
             assert isinstance(value, str)
         else:
             assert isinstance(value, bool)
@@ -116,7 +149,9 @@ def test_register_uses_api_response_and_never_persists_password():
         item._cyberghost_body = json.dumps(body).encode()
         return item
 
-    with mock.patch.dict(os.environ, {"CG_USERNAME": "user@example.com", "CG_PASSWORD": "secret"}, clear=False):
+    with mock.patch.dict(
+        os.environ, {"CG_USERNAME": "user@example.com", "CG_PASSWORD": "hunter2-never-stored"}, clear=False
+    ):
         with mock.patch.object(runner, "user_config_path", return_value=config_path):
             with mock.patch.object(runner.socket, "gethostname", return_value="test-host"):
                 with mock.patch.object(
@@ -125,6 +160,7 @@ def test_register_uses_api_response_and_never_persists_password():
                     side_effect=[
                         response(200, {"jwt": "jwt-token"}),
                         response(201, {"name": "test-host", "token": "TOK", "tokenSecret": "SEC"}),
+                        response(200, {"id": 424242}),
                     ],
                 ):
                     runner.register()
@@ -134,6 +170,12 @@ def test_register_uses_api_response_and_never_persists_password():
     assert cfg.get("account", "username") == "user@example.com"
     assert not cfg.has_option("account", "password")
     assert cfg.get("device", "secret") == "SEC"
+    # The session token is kept for the live server list; the password never is.
+    assert cfg.get("session", "jwt") == "jwt-token"
+    assert cfg.get("session", "user_id") == "424242"
+    with open(config_path) as saved:
+        assert "hunter2-never-stored" not in saved.read()
+    assert os.stat(config_path).st_mode & 0o777 == 0o600
     # register() must scrub the env vars it consumed so they cannot leak
     # into a later subprocess or a captured traceback.
     assert "CG_USERNAME" not in os.environ

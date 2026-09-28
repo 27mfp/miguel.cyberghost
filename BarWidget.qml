@@ -130,8 +130,8 @@ Ui.BarWidget {
         return "CyberGhost VPN: setup incomplete — click for steps"
       if (cyberghost.statusUnknown)
         return "CyberGhost VPN: status unavailable — click to reconcile"
-      if (cyberghost.externalVpn)
-        return "CyberGhost VPN: another VPN is active"
+      if (cyberghost.legacyTunnel)
+        return "CyberGhost VPN: previous helper tunnel active — click to disconnect"
       if (cyberghost.connecting)
         return "CyberGhost VPN: Connecting to " + cyberghost.countryName + " (" + cyberghost.country + ")…"
       if (cyberghost.disconnecting)
@@ -155,7 +155,7 @@ Ui.BarWidget {
           active: cyberghost.active
           connecting: cyberghost.connecting || cyberghost.disconnecting
           reducedMotion: root.reduceMotion
-          warning: cyberghost.tunnelStale || cyberghost.statusUnknown || cyberghost.externalVpn || !cyberghost.setupDone
+          warning: cyberghost.tunnelStale || cyberghost.statusUnknown || cyberghost.legacyTunnel || !cyberghost.setupDone
         }
       }
     }

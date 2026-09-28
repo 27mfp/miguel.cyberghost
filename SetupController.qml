@@ -3,59 +3,66 @@ import Quickshell
 import Quickshell.Io
 import "ServiceUtils.js" as ServiceUtils
 
-// Account / package / helper setup has independent process lifetimes.
+// Account / package / legacy-cleanup setup has independent process lifetimes.
 Item {
   id: root
   required property string runnerPath
-  required property string installerPath
+  required property string legacyCleanupPath
   signal checked
   signal registered
   signal sendNotification(string title, string body, string urgency)
   readonly property bool depsBusy: depsProcess.running
-  readonly property bool polkitBusy: helperInstallerProcess.running
-  readonly property bool busy: depsBusy || polkitBusy || regBusy
+  readonly property bool legacyCleanupBusy: legacyCleanupProcess.running
+  readonly property bool busy: depsBusy || legacyCleanupBusy || regBusy
   property bool regBusy: false
   property string setupMsg: ""
-  property string depsError: ""
-  property string polkitStatus: ""
+  property string legacyStatus: ""
   property string registerOutput: ""
   property string registerError: ""
   property string checkOutput: ""
-  property bool readyWg: false
-  property bool readyDns: false
+  property bool readyNm: false
+  // NetworkManager Polkit result for network-control/settings.modify.own:
+  // "yes", "auth" (the shell's Polkit agent asks) or "no".
+  property string nmPermission: ""
   property bool readyRequests: false
   property bool readyCli: false
   property bool cliConfigured: false
   property bool readyCreds: false
-  property bool readyPolkit: false
-  property bool helperInstalled: false
-  property bool helperPresent: false
-  property string helperVersion: ""
+  // Signed-in identity for the Account section; "native" is the plugin's own
+  // login, "legacy" comes from the vendor CLI config the plugin never deletes.
+  property string accountName: ""
+  property string accountSource: ""
+  property string serverList: ""
+  property bool legacyHelper: false
+  property bool legacyPolkitRule: false
   property string pluginVersion: ""
   function recheck() {
     if (!checkProcess.running)
       checkProcess.running = true
   }
+
+  // Privileged steps use Omarchy's own convention: a visible, themed floating
+  // terminal (as the network panel does for custom DNS and the bar does for
+  // updates), so sudo prompts and output are never hidden from the user.
+  readonly property string terminalLauncher: "omarchy-launch-floating-terminal-with-presentation"
+
   function installDeps() {
     if (depsProcess.running)
       return
-    depsError = ""
-    setupMsg = "Installing system packages (authorize in the dialog)…"
+    setupMsg = "Finish installing in the terminal; setup is rechecked when it closes."
     depsProcess.running = true
-    depsTimeoutTimer.restart()
   }
 
-  function openHelperInstaller(withPolkit) {
-    if (helperInstallerProcess.running)
+  function openLegacyCleanup() {
+    if (legacyCleanupProcess.running)
       return
-    polkitStatus = ""
-    setupMsg = "A terminal installer was opened. Complete it there; setup will be rechecked when the terminal closes."
-    helperInstallerProcess.environment = ({
-        "CYBERGHOST_PLUGIN_DIR": root.installerPath.replace(/\/install-helper\.sh$/, ""),
-        "CYBERGHOST_HELPER_OPTION": withPolkit === true ? "--with-polkit-rule" : "--no-polkit-rule"
+    legacyStatus = "Finish the removal in the terminal; setup is rechecked when it closes."
+    // The script path reaches bash through the environment, never through
+    // the command string, so no quoting of the plugin directory is needed.
+    legacyCleanupProcess.environment = ({
+        "CYBERGHOST_LEGACY_CLEANUP": root.legacyCleanupPath
       })
-    helperInstallerProcess.command = ["omarchy-launch-terminal", "bash", "-lc", "cd -- \"$CYBERGHOST_PLUGIN_DIR\" && bash ./install-helper.sh \"$CYBERGHOST_HELPER_OPTION\"; rc=$?; printf '\\nInstaller exited with code %s. Press Enter to close.\\n' \"$rc\"; read -r"]
-    helperInstallerProcess.running = true
+    legacyCleanupProcess.running = true
   }
 
   function registerAccount(username, password) {
@@ -68,7 +75,8 @@ Item {
     regBusy = true
     registerOutput = ""
     registerError = ""
-    setupMsg = "Linking your CyberGhost account…"
+    // The Link button shows progress; setupMsg is reserved for the outcome.
+    setupMsg = ""
     // Credentials travel once over stdin, never argv, environment or disk.
     registerProcess.environment = ({
         "CG_DEVICE_NAME": Quickshell.env("HOSTNAME") || "omarchy"
@@ -84,54 +92,22 @@ Item {
   // ---- Setup wizard processes ----
   Process {
     id: depsProcess
-    property bool timedOut: false
-    command: ["/usr/bin/pkexec", "/usr/bin/pacman", "-S", "--needed", "--noconfirm", "wireguard-tools", "python-requests"].concat(root.readyDns ? [] : ["openresolv"])
-    stdout: SplitParser {
-      onRead: function (line) {
-        root.depsError = ServiceUtils.appendBounded(root.depsError, line, 4096)
-      }
-    }
-    stderr: SplitParser {
-      onRead: function (line) {
-        root.depsError = ServiceUtils.appendBounded(root.depsError, line, 4096)
-      }
-    }
+    objectName: "depsProcess"
+    command: [root.terminalLauncher, "omarchy-pkg-add python-requests"]
     onExited: function (exitCode) {
-      depsTimeoutTimer.stop()
-      var timedOut = depsProcess.timedOut
-      depsProcess.timedOut = false
-      if (timedOut) {
-        root.setupMsg = "Dependency installation timed out. Check pacman and try again."
-      } else if (exitCode === 0) {
-        root.setupMsg = "Packages installed."
-        root.sendNotification("CyberGhost VPN", "Dependencies installed.", "normal")
-      } else if (!timedOut) {
-        root.setupMsg = ServiceUtils.cleanProcessError(root.depsError, "Could not install dependencies. Check pacman and try again.")
-      }
-      root.depsError = ""
+      root.setupMsg = exitCode === 0 ? "" : "The package terminal could not be opened. Run: omarchy pkg add python-requests"
       root.recheck()
     }
   }
 
   Process {
-    id: helperInstallerProcess
+    id: legacyCleanupProcess
+    objectName: "legacyCleanupProcess"
+    command: [root.terminalLauncher, "bash \"$CYBERGHOST_LEGACY_CLEANUP\""]
     onExited: function (exitCode) {
-      // The installer is a long-running interactive script in a terminal; we
-      // get the terminal's exit code (0 if the user closed it normally, even
-      // if the install failed mid-way). Treat any 0 exit as "recheck now" so
-      // the user does not have to remember to come back and click the
-      // Recheck button. Non-zero exits still surface a manual message.
-      if (exitCode === 0) {
-        root.polkitStatus = "Installer closed. Rechecking setup…"
-        root.setupMsg = "Rechecking setup after the helper installer closed…"
-        // give the runner a beat to flush new state on disk before probing it
-        root.recheck()
-      } else {
-        var message = "Installer exited with code " + exitCode + ". Run install-helper.sh from the plugin directory to retry."
-        root.polkitStatus = message
-        root.setupMsg = message
-      }
-      helperInstallerProcess.environment = ({})
+      root.legacyStatus = exitCode === 0 ? "" : "The cleanup terminal could not be opened. Run scripts/remove-legacy-helper.sh from the plugin directory."
+      legacyCleanupProcess.environment = ({})
+      root.recheck()
     }
   }
 
@@ -183,6 +159,7 @@ Item {
   // ---- Processes ----
   Process {
     id: checkProcess
+    objectName: "checkProcess"
     command: ["/usr/bin/python3", root.runnerPath, "check", "--json"]
     stdout: SplitParser {
       onRead: function (line) {
@@ -198,33 +175,20 @@ Item {
       } catch (e) {
         // An unavailable or older runner leaves the readiness flags false.
       }
-      root.readyWg = !!d.wg_tools
-      root.readyDns = !!d.dns_tools
+      root.readyNm = !!d.nm
+      root.nmPermission = typeof d.nm_permission === "string" ? d.nm_permission.substring(0, 8) : ""
       root.readyRequests = !!d.requests
       root.readyCli = !!d.cli
       root.cliConfigured = !!d.cli_configured
       root.readyCreds = !!d.credentials
-      root.readyPolkit = !!d.helper_installed && !!d.polkit_rule_installed
-      root.helperInstalled = !!d.helper_installed
-      root.helperPresent = !!d.helper_present || root.helperInstalled
-      root.helperVersion = String(d.helper_version || "")
+      root.accountName = typeof d.account === "string" ? d.account.substring(0, 256) : ""
+      root.accountSource = typeof d.account_source === "string" ? d.account_source.substring(0, 16) : ""
+      root.serverList = d.server_list === "live" || d.server_list === "probe" ? d.server_list : ""
+      root.legacyHelper = !!d.legacy_helper
+      root.legacyPolkitRule = !!d.legacy_polkit_rule
       root.pluginVersion = String(d.plugin_version || "")
-      if (!root.readyPolkit && root.polkitStatus === "Passwordless connect enabled.")
-        root.polkitStatus = ""
       root.checkOutput = ""
       root.checked()
-    }
-  }
-
-  Timer {
-    id: depsTimeoutTimer
-    interval: 180000
-    repeat: false
-    onTriggered: {
-      if (depsProcess.running) {
-        depsProcess.timedOut = true
-        depsProcess.running = false
-      }
     }
   }
 
