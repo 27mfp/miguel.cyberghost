@@ -475,4 +475,23 @@ TestCase {
     service.logout()
     verify(!sync.running)
   }
+
+  function test_aCheckDuringAnActionDoesNotRestartTheSync() {
+    var service = readyService({ defaultCountry: "PT" })
+    var check = named(service, "checkProcess")
+    var sync = named(service, "syncProcess")
+    service.connectTo("PT", "wireguard", "traffic", "", "fastest")
+    verify(actionProcess(service).running)
+    // Opening the panel mid-connect runs a check; it must not restart the sync.
+    service.checkOutput = JSON.stringify({ nm: true, nm_permission: "yes", requests: true, credentials: true, server_list: "live" })
+    check.exited(0)
+    verify(!sync.running)
+    var action = actionProcess(service)
+    action.stdout.read('{"ok":true,"action":"connect","backend":"networkmanager","country":"PT"}')
+    action.running = false
+    action.exited(0)
+    service.checkOutput = JSON.stringify({ nm: true, nm_permission: "yes", requests: true, credentials: true, server_list: "live" })
+    check.exited(0)
+    verify(sync.running)
+  }
 }

@@ -165,6 +165,7 @@ Item {
     id: setup
     runnerPath: root.runnerPath
     legacyCleanupPath: root.legacyCleanupPath
+    syncAllowed: !actionProcess.running && !root.actionTerminating
     onRegistered: root.lastError = ""
     onChecked: {
       root.refreshServers()

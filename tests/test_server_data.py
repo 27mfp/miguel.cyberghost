@@ -162,21 +162,45 @@ def test_sync_fills_every_requested_country_at_a_steady_pace(account, monkeypatc
     assert sleeps == [runner.SYNC_PACE_SECONDS] * 2
 
 
-@pytest.mark.parametrize("status", [429, 401])
-def test_sync_stops_at_rate_limits_backs_off_and_resumes_later(account, status):
-    replies = [LOCATION, response(200, rows("Lisbon-S405-i01")), response(status, {})]
+def test_rate_limit_backs_off_then_resumes(account):
+    replies = [LOCATION, response(200, rows("Lisbon-S405-i01")), response(429, {})]
     with mock.patch.object(runner, "api_request", side_effect=replies):
         first = runner.sync_servers(["PT", "UA", "IT"])
-    assert first == {"synced": 1, "failed": 0, "remaining": 2, "stopped": f"HTTP {status}"}
+    assert first == {"synced": 1, "failed": 0, "remaining": 2, "stopped": "HTTP 429"}
     # Reopening the panel right away must not hit the account again.
     with mock.patch.object(runner, "api_request", side_effect=AssertionError("restarted during backoff")):
         assert runner.sync_servers(["PT", "UA", "IT"])["stopped"] == "backing off"
-    later = runner.time.time() + runner.SYNC_BACKOFF_SECONDS[status] + 1
+    later = runner.time.time() + runner.SYNC_BACKOFF_SECONDS[429] + 1
     replies = [LOCATION, response(200, rows("Kiev-S401-i01")), response(200, rows("Milano-S402-i01"))]
     with mock.patch.object(runner, "api_request", side_effect=replies) as call:
         second = runner.sync_servers(["PT", "UA", "IT"], now=later)
     assert second == {"synced": 2, "failed": 0, "remaining": 0, "stopped": ""}
     assert "filter_country=PT" not in " ".join(c.args[1] for c in call.call_args_list)  # fresh: skipped
+
+
+def test_a_rejected_session_is_never_used_again(account):
+    replies = [LOCATION, response(401, {})]
+    with mock.patch.object(runner, "api_request", side_effect=replies):
+        assert runner.sync_servers(["PT"])["stopped"] == "HTTP 401"
+    assert not runner.session_usable(account["jwt"])  # even though its exp is far away
+    later = runner.time.time() + runner.SYNC_BACKOFF_SECONDS[401] + 1
+    with mock.patch.object(runner, "api_request", side_effect=AssertionError("rejected token was sent")):
+        assert runner.sync_servers(["PT"], now=later)["stopped"] == "no session"
+        assert runner.live_server_inventory("PT", account) is None
+
+
+@pytest.mark.parametrize("status", [429, 401])
+def test_location_rate_limits_and_rejections_also_back_off(account, status):
+    with mock.patch.object(runner, "api_request", side_effect=[response(status, {})]):
+        assert runner.sync_servers(["PT"])["stopped"] == f"HTTP {status}"
+    with mock.patch.object(runner, "api_request", side_effect=AssertionError("no backoff recorded")):
+        assert runner.sync_servers(["PT"])["stopped"] in ("backing off", "no session")
+
+
+def test_a_new_session_after_relinking_is_usable_again(account):
+    runner.reject_session(account["jwt"])
+    assert not runner.session_usable(account["jwt"])
+    assert runner.session_usable(jwt(exp=4_000_000_001))
 
 
 def test_one_network_error_does_not_end_the_sync(account, capsys):

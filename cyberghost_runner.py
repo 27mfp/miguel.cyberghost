@@ -205,6 +205,8 @@ SYNC_LOCK_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "sync.lock")
 SYNC_PACE_SECONDS = 5
 SYNC_REFRESH_SECONDS = 7 * 86400
 SYNC_STATE_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "sync-state.json")
+LIFECYCLE_LOCK_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "lifecycle.lock")
+LIFECYCLE_LOCK_WAIT_SECONDS = 30
 # After a rate limit or rejected session, wait before any automatic restart.
 SYNC_BACKOFF_SECONDS = {429: 15 * 60, 401: 60 * 60}
 MAX_SERVER_LIST_BYTES = 2 * 1024 * 1024
@@ -1135,8 +1137,33 @@ def jwt_expiry(jwt):
         return None
 
 
+def _session_fingerprint(jwt):
+    import hashlib
+
+    return hashlib.sha256(jwt.encode("utf-8")).hexdigest()[:32]
+
+
+def reject_session(jwt):
+    """Remember that CyberGhost refused this token (401), even without an exp."""
+    path = _sync_state_path()
+    try:
+        state = _read_server_list(path)
+        state["rejected_session"] = _session_fingerprint(jwt)
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", dir=os.path.dirname(path), delete=False, prefix=".sync_", encoding="utf-8"
+        ) as tf:
+            json.dump(state, tf)
+            temp_name = tf.name
+        os.replace(temp_name, path)
+    except OSError:
+        pass
+
+
 def session_usable(jwt, now=None):
     if not jwt:
+        return False
+    if _read_server_list(_sync_state_path()).get("rejected_session") == _session_fingerprint(jwt):
         return False
     expiry = jwt_expiry(jwt)
     return expiry is None or expiry > (now if now is not None else time.time()) + 60
@@ -1166,18 +1193,25 @@ def _number(value):
 
 def account_location(jwt):
     """User id plus CyberGhost's IP-based location, which its server filter requires."""
+    return account_location_status(jwt)[1]
+
+
+def account_location_status(jwt):
+    """(HTTP status, location or None), so callers can react to 401/429."""
     res = api_request(
         "GET", "/my/account?fields=(id,location)&language=en", jwt=jwt, budget=LIVE_INVENTORY_BUDGET_SECONDS
     )
+    if res.status_code == 401:
+        reject_session(jwt)
     if res.status_code != 200:
-        return None
+        return res.status_code, None
     data = response_json(res)
     location = data.get("location") if isinstance(data.get("location"), dict) else {}
     latitude, longitude = _number(str(location.get("latitude", ""))), _number(str(location.get("longitude", "")))
     user_id = str(data.get("id", ""))
     if latitude is None or longitude is None or not user_id.isdigit():
-        return None
-    return user_id, latitude, longitude
+        return res.status_code, None
+    return res.status_code, (user_id, latitude, longitude)
 
 
 def parse_live_inventory(data, max_items=8192):
@@ -1270,6 +1304,8 @@ def live_server_inventory(country_code, session):
     except (OSError, RuntimeError, ValueError) as exc:
         sys.stderr.write(f"Live server list unavailable: {clean_command_error(exc)}\n")
         return None
+    if status_code == 401:
+        reject_session(jwt)
     if names is None:
         # 401: session expired; 429: rate limited. The fallback still connects.
         sys.stderr.write(f"Live server list unavailable (HTTP {status_code}); probing servers instead.\n")
@@ -1291,10 +1327,13 @@ def _block_sync(seconds, now):
     """Remember a backoff so repeated panel opens cannot restart a limited sync."""
     path = _sync_state_path()
     try:
+        state = _read_server_list(path)
+        state["blocked_until"] = int(now + seconds)
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             "w", dir=os.path.dirname(path), delete=False, prefix=".sync_", encoding="utf-8"
         ) as tf:
-            json.dump({"blocked_until": int(now + seconds)}, tf)
+            json.dump(state, tf)
             temp_name = tf.name
         os.replace(temp_name, path)
     except OSError:
@@ -1351,9 +1390,12 @@ def sync_servers(country_codes=None, pace=SYNC_PACE_SECONDS, refresh=SYNC_REFRES
         if not todo:
             return result(remaining=0)
         try:
-            where = account_location(jwt)
+            location_status, where = account_location_status(jwt)
         except (OSError, RuntimeError, ValueError) as exc:
             return result(remaining=len(todo), stopped=clean_command_error(exc))
+        if location_status in (401, 429):
+            _block_sync(SYNC_BACKOFF_SECONDS[location_status], time.time())
+            return result(remaining=len(todo), stopped=f"HTTP {location_status}")
         if where is None:
             return result(remaining=len(todo), stopped="no location")
         for index, code in enumerate(todo):
@@ -1365,6 +1407,8 @@ def sync_servers(country_codes=None, pace=SYNC_PACE_SECONDS, refresh=SYNC_REFRES
                 # A timeout or reset on one country must not end the run.
                 status_code, names = None, None
             if status_code in (401, 429):
+                if status_code == 401:
+                    reject_session(jwt)
                 _block_sync(SYNC_BACKOFF_SECONDS[status_code], time.time())
                 return result(synced, failed, len(todo) - index, f"HTTP {status_code}")
             if names is None:
@@ -1727,9 +1771,21 @@ def nm_profile_exists():
     return connection_uuid() in (result.stdout or "").split()
 
 
+def nm_state_or_none():
+    """Our connection's state, or None when NetworkManager cannot be queried."""
+    try:
+        return nm_active_state()
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired, RuntimeError):
+        return None
+
+
 def legacy_tunnel_active(ip_binary):
-    """The interface exists but is not our NetworkManager connection."""
-    return _interface_state(ip_binary) is True and nm_active_state() == ""
+    """The interface exists but is not our NetworkManager connection.
+
+    With NetworkManager unreachable our in-memory profile cannot be active, so
+    any cyberghost interface must come from the pre-1.7 helper.
+    """
+    return _interface_state(ip_binary) is True and not nm_state_or_none()
 
 
 def nm_remove_profile(ip_binary):
@@ -1909,7 +1965,12 @@ def disconnect():
         raise RuntimeError("iproute2 is required to verify the VPN interface") from exc
     if legacy_tunnel_active(ip_binary):
         raise LegacyTunnelError(LEGACY_TUNNEL_MESSAGE)
-    was_up = nm_active_state() != ""
+    state = nm_state_or_none()
+    if state is None and _interface_state(ip_binary) is False:
+        # Nothing to remove, and NetworkManager is not there to ask.
+        print("No VPN connections found.")
+        return {"backend": "networkmanager", "connected": False}
+    was_up = bool(state)
     problems = nm_remove_profile(ip_binary)
     if problems:
         raise RuntimeError("Could not verify VPN cleanup: " + "; ".join(problems))
@@ -1951,7 +2012,7 @@ def nm_endpoint():
 
 
 def status(as_json=False):
-    state = nm_active_state()
+    state = nm_state_or_none() or ""
     link = _interface_state(system_binary("ip"))
     if state:
         backend = "networkmanager"
@@ -2261,6 +2322,39 @@ def validate_request(args):
     return args
 
 
+class OperationCancelled(RuntimeError):
+    """SIGTERM from the panel's cancel: fail normally so rollback runs."""
+
+
+def _cancel_on_sigterm(signum, frame):
+    raise OperationCancelled("Operation cancelled")
+
+
+@contextlib.contextmanager
+def lifecycle_lock(wait=LIFECYCLE_LOCK_WAIT_SECONDS):
+    """Serialize connect, disconnect and logout for this user.
+
+    A cancelled or timed-out action may still be rolling back; the next one
+    waits for it instead of racing it on the same NetworkManager profile.
+    """
+    path = os.path.join(invoking_user().pw_dir, LIFECYCLE_LOCK_RELATIVE_PATH)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Another CyberGhost VPN operation is still finishing. Try again.") from None
+                time.sleep(0.2)
+        yield
+    finally:
+        os.close(fd)
+
+
 def main():
     parser = argparse.ArgumentParser(description="CyberGhost WireGuard Controller")
     parser.add_argument(
@@ -2296,6 +2390,13 @@ def main():
         if args.action in ACTIONS:
 
             def run_action():
+                # A cancel (SIGTERM) becomes a normal failure: run_bounded kills
+                # the running nmcli group and nm_activate rolls the profile back.
+                signal.signal(signal.SIGTERM, _cancel_on_sigterm)
+                with lifecycle_lock():
+                    return perform_action()
+
+            def perform_action():
                 if args.action == "connect":
                     return connect(args.country, args.server_type, args.city, args.config, args.server)
                 if args.action == "logout":

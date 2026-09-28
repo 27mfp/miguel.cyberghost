@@ -378,10 +378,63 @@ def test_status_disconnected():
     assert data == {"connected": False, "backend": None, "state": "", "interface": None}
 
 
-def test_status_fails_when_networkmanager_is_unreadable():
-    with mock.patch.object(runner, "nmcli", return_value=completed(8, "", "Error: NetworkManager is not running.")):
-        with pytest.raises(RuntimeError, match="NetworkManager is not running"):
-            runner.status(True)
+def test_networkmanager_down_still_reveals_a_legacy_tunnel():
+    # Pre-1.7 users may not run NetworkManager; their helper tunnel must stay
+    # visible so the panel can offer the legacy disconnect.
+    down = completed(8, "", "Error: NetworkManager is not running.")
+    with mock.patch.object(runner, "nmcli", return_value=down):
+        with mock.patch.object(runner, "system_binary", side_effect=lambda name: f"/usr/bin/{name}"):
+            with mock.patch.object(runner, "_interface_state", return_value=True):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    runner.status(True)
+                assert runner.json.loads(buf.getvalue())["backend"] == "legacy"
+                with pytest.raises(runner.LegacyTunnelError):
+                    runner.disconnect()
+            with mock.patch.object(runner, "_interface_state", return_value=False):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    runner.status(True)
+                    assert runner.disconnect() == {"backend": "networkmanager", "connected": False}
+                assert '"connected": false' in buf.getvalue()
+
+
+def test_missing_nmcli_is_not_a_crash():
+    with mock.patch.object(runner, "nmcli", side_effect=FileNotFoundError("nmcli")):
+        assert runner.nm_state_or_none() is None
+
+
+def test_lifecycle_operations_are_serialized(isolated_home):
+    import fcntl
+    import os
+
+    path = isolated_home / ".cache" / "cyberghost" / "lifecycle.lock"
+    path.parent.mkdir(parents=True)
+    holder = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(RuntimeError, match="still finishing"):
+            with runner.lifecycle_lock(wait=0.3):
+                raise AssertionError("ran while another operation held the lock")
+    finally:
+        os.close(holder)
+    with runner.lifecycle_lock(wait=0.3):
+        pass  # free again once the other operation ends
+
+
+def test_cancel_becomes_a_normal_failure_so_rollback_runs():
+    nm = FakeNetworkManager()
+
+    def cancelled_up(args, timeout=15, input_data=None):
+        if args[0] == "--wait":
+            runner._cancel_on_sigterm(15, None)  # SIGTERM arrives during activation
+        return nm.nmcli(args, timeout, input_data)
+
+    with mock.patch.object(runner, "nmcli", side_effect=cancelled_up):
+        with mock.patch.object(runner, "_interface_state", side_effect=lambda ip: nm.link):
+            with pytest.raises(RuntimeError, match="cancelled"):
+                runner.nm_activate(profile_args(), SAMPLE_PRIV, "/usr/bin/ip", runner.time.monotonic() + 60)
+    assert not nm.profile  # rolled back, not left half-created
 
 
 @pytest.mark.parametrize(
