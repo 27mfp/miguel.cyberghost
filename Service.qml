@@ -77,6 +77,18 @@ Item {
   property string applyHint: ""
   property string actionKind: ""
   property bool resolvingAutomaticServer: false
+  onReadyCliChanged: {
+    if (resolvingAutomaticServer && !readyCli) {
+      resolvingAutomaticServer = false
+      startNativeConnect("")
+    }
+  }
+  onCliConfiguredChanged: {
+    if (resolvingAutomaticServer && !cliConfigured) {
+      resolvingAutomaticServer = false
+      startNativeConnect("")
+    }
+  }
   property int actionGeneration: 0
   property bool actionTerminating: false
   property string rawStatusText: ""
@@ -292,7 +304,7 @@ Item {
       actionStatus = ""
       return
     }
-    if (actionProcess.running || actionTerminating)
+    if (actionProcess.running || actionTerminating || resolvingAutomaticServer)
       return
     if (externalVpn) {
       lastError = "A vendor-managed VPN is active. Disconnect it outside this plugin before connecting."
@@ -361,6 +373,13 @@ Item {
   function startNativeConnect(liveServer) {
     if (actionProcess.running || actionTerminating)
       return
+    // State can change while the unprivileged inventory lookup is running.
+    if (externalVpn || !helperInstalled || !setupDone) {
+      lastError = externalVpn ? "A vendor-managed VPN is active. Disconnect it outside this plugin before connecting."
+        : "Complete first-run setup before connecting."
+      actionStatus = ""
+      return
+    }
     var resolvedServer = String(liveServer || "").trim().toLowerCase()
     if (resolvedServer !== "" && !ServiceUtils.isValidServerSelector(resolvedServer)) {
       lastError = "CyberGhost returned an invalid server name."
@@ -413,6 +432,11 @@ Item {
   }
 
   function disconnect() {
+    // A late inventory result must not turn this disconnect into a connect.
+    if (resolvingAutomaticServer) {
+      resolvingAutomaticServer = false
+      actionStatus = ""
+    }
     if (actionProcess.running || actionTerminating) {
       if (actionProcess.running && connecting)
         cancelAction()

@@ -30,7 +30,9 @@ def test_disconnected_native_helper_does_not_stop_separate_vendor_vpn():
     def bounded(command, **kwargs):
         if command[1:3] == ["link", "show"]:
             return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
-        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+        if command[1] in ("-4", "-6") and (
+            command[2:5] == ["route", "show", "table"] or command[2:4] == ["rule", "show"]
+        ):
             return runner.subprocess.CompletedProcess(command, 0, "", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 1, "", "not found")

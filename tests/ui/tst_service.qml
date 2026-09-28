@@ -79,6 +79,63 @@ TestCase {
     compare(service.serverSelection, "fastest")
   }
 
+  function test_disconnectDuringInventoryDoesNotReconnect() {
+    var service = readyService({ defaultCountry: "EG" })
+    service.readyCli = true
+    service.cliConfigured = true
+    service.connectTo("EG", "wireguard", "traffic", "", "fastest")
+    var inventory = inventoryProcess(service)
+    verify(service.resolvingAutomaticServer)
+
+    service.disconnect()
+    compare(service.resolvingAutomaticServer, false)
+    var action = actionProcess(service)
+    verify(action.command.indexOf("disconnect") >= 0)
+    action.stdout.read('{"ok":true,"action":"disconnect","backend":"wireguard"}')
+    action.running = false
+    action.exited(0)
+
+    inventory.stdout.read('[{"server":"cairo-s12-i07","city":"Cairo","load":14}]')
+    inventory.running = false
+    inventory.exited(0)
+    verify(action.command.indexOf("connect") < 0)
+    compare(service.connected, false)
+  }
+
+  function test_cliLossDuringInventoryFallsBackWithoutStayingBusy() {
+    var service = readyService({ defaultCountry: "EG" })
+    service.readyCli = true
+    service.cliConfigured = true
+    service.connectTo("EG", "wireguard", "traffic", "", "fastest")
+    var inventory = inventoryProcess(service)
+    verify(service.resolvingAutomaticServer)
+
+    service.readyCli = false
+    compare(service.resolvingAutomaticServer, false)
+    var action = actionProcess(service)
+    verify(action.command.indexOf("connect") >= 0)
+    verify(action.command.indexOf("--server") < 0)
+
+    inventory.running = false
+    inventory.exited(1)
+    compare(action.command.filter(function (value) { return value === "connect" }).length, 1)
+  }
+
+  function test_inventoryCannotConnectAfterExternalVpnAppears() {
+    var service = readyService({ defaultCountry: "EG" })
+    service.readyCli = true
+    service.cliConfigured = true
+    service.connectTo("EG", "wireguard", "traffic", "", "fastest")
+    var inventory = inventoryProcess(service)
+    service.externalVpn = true
+
+    inventory.stdout.read('[{"server":"cairo-s12-i07","city":"Cairo","load":14}]')
+    inventory.running = false
+    inventory.exited(0)
+    compare(actionProcess(service), null)
+    verify(service.lastError.indexOf("vendor-managed VPN") >= 0)
+  }
+
   function test_connectMigratesOldExactServerToAutomaticWireGuard() {
     var service = readyService({
       defaultCountry: "PT",

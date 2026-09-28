@@ -240,9 +240,12 @@ def run_bounded(
                     raise RuntimeError(f"Command output exceeded {max_output_bytes} bytes")
                 buffers[key.data].extend(chunk)
 
+        # A child may close both output streams and continue running. Keep the
+        # same deadline while waiting for its exit as while reading its output.
+        exit_code = process.wait(timeout=max(0, deadline - time.monotonic()))
         return subprocess.CompletedProcess(
             argv,
-            process.wait(),
+            exit_code,
             buffers["stdout"].decode("utf-8", errors="replace"),
             buffers["stderr"].decode("utf-8", errors="replace"),
         )
@@ -1351,7 +1354,29 @@ def _interface_state(ip_binary):
     return None
 
 
-def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=False):
+def _wireguard_fwmark():
+    """Read the table selected by wg-quick before the interface is removed."""
+    try:
+        result = run_bounded(
+            [system_binary("wg"), "show", INTERFACE, "fwmark"], timeout=5, max_output_bytes=256
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired, RuntimeError):
+        return None
+    value = (result.stdout or "").strip()
+    if result.returncode != 0 or not re.fullmatch(r"(?:0x[0-9a-fA-F]+|[0-9]+)", value):
+        return None
+    mark = int(value, 16 if value.lower().startswith("0x") else 10)
+    return mark if 0 < mark <= 0xFFFFFFFF else None
+
+
+def _policy_rule_uses_mark(output, mark):
+    for value in re.findall(r"(?:lookup|fwmark)\s+(0x[0-9a-fA-F]+|[0-9]+)\b", output or "", re.I):
+        if int(value, 16 if value.lower().startswith("0x") else 10) == mark:
+            return True
+    return False
+
+
+def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=False, route_table=51820):
     """Verify the side effects that wg-quick is responsible for removing."""
     problems = []
     if not ip_binary:
@@ -1364,27 +1389,32 @@ def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=F
     elif interface_state:
         problems.append(f"interface {INTERFACE} is still present")
 
-    try:
-        route_result = run_bounded([ip_binary, "route", "show", "table", "51820"], timeout=5, max_output_bytes=8 * 1024)
-        route_detail = f"{route_result.stdout or ''}\n{route_result.stderr or ''}"
-        # iproute2 returns exit 2 when a policy table has never been created or
-        # has already been removed. That is positive evidence of an empty table,
-        # not an unverifiable cleanup failure.
-        route_table_absent = route_result.returncode == 2 and re.search(
-            r"FIB table does not exist|table .* does not exist", route_detail, re.I
-        )
-        if route_result.returncode != 0 and not route_table_absent:
-            problems.append("WireGuard policy route table could not be verified")
-        elif route_result.returncode == 0 and (route_result.stdout or "").strip():
-            problems.append("WireGuard policy routes remain in table 51820")
+    for family in ("-4", "-6"):
+        try:
+            route_result = run_bounded(
+                [ip_binary, family, "route", "show", "table", str(route_table)],
+                timeout=5,
+                max_output_bytes=8 * 1024,
+            )
+            route_detail = f"{route_result.stdout or ''}\n{route_result.stderr or ''}"
+            # iproute2 returns exit 2 when a policy table has been removed.
+            route_table_absent = route_result.returncode == 2 and re.search(
+                r"FIB table does not exist|table .* does not exist", route_detail, re.I
+            )
+            if route_result.returncode != 0 and not route_table_absent:
+                problems.append(f"WireGuard {family} policy route table could not be verified")
+            elif route_result.returncode == 0 and (route_result.stdout or "").strip():
+                problems.append(f"WireGuard {family} policy routes remain in table {route_table}")
 
-        rule_result = run_bounded([ip_binary, "rule", "show"], timeout=5, max_output_bytes=8 * 1024)
-        if rule_result.returncode != 0:
-            problems.append("WireGuard policy rules could not be verified")
-        elif re.search(r"(?:lookup|fwmark)\s+51820\b", rule_result.stdout or ""):
-            problems.append("WireGuard policy rules remain")
-    except (OSError, subprocess.TimeoutExpired, RuntimeError):
-        problems.append("WireGuard routing state could not be verified")
+            rule_result = run_bounded(
+                [ip_binary, family, "rule", "show"], timeout=5, max_output_bytes=8 * 1024
+            )
+            if rule_result.returncode != 0:
+                problems.append(f"WireGuard {family} policy rules could not be verified")
+            elif _policy_rule_uses_mark(rule_result.stdout, route_table):
+                problems.append(f"WireGuard {family} policy rules remain")
+        except (OSError, subprocess.TimeoutExpired, RuntimeError):
+            problems.append(f"WireGuard {family} routing state could not be verified")
 
     if resolver_binary:
         try:
@@ -1404,6 +1434,7 @@ def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=F
 def cleanup_wireguard_state(wg_quick, ip_binary, config_present=False):
     """Tear down the tunnel and return only verified residual-state errors."""
     initial_state = _interface_state(ip_binary) if ip_binary else None
+    route_table = _wireguard_fwmark() if initial_state is True else None
     try:
         resolver_binary = system_binary("resolvconf")
     except (FileNotFoundError, RuntimeError):
@@ -1428,7 +1459,9 @@ def cleanup_wireguard_state(wg_quick, ip_binary, config_present=False):
     else:
         delete_result = None
 
-    problems = verify_wireguard_cleanup(ip_binary, resolver_binary, require_resolver)
+    problems = verify_wireguard_cleanup(ip_binary, resolver_binary, require_resolver, route_table or 51820)
+    if initial_state is True and route_table is None and (down_result is None or down_result.returncode != 0):
+        problems.append("WireGuard policy table could not be identified after failed teardown")
     # wg-quick and `ip link delete` commonly return non-zero for an already
     # absent interface. Verified absence makes those benign; unknown state does not.
     if problems:

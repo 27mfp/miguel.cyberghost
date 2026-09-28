@@ -5,6 +5,8 @@
 - Resolve automatic WireGuard endpoints from CyberGhost's live, unprivileged server inventory before entering the privileged helper, avoiding stale per-country rack and city names.
 - Correct Ukraine's displayed `Kyiv` / endpoint `kiev` naming mismatch in the static fallback inventory.
 - Treat an absent iproute2 policy table as verified-clean state so stale WireGuard configuration can be replaced safely.
+- Cancel pending server lookup on disconnect, fall back when CLI readiness changes, and reject partial inventory output from a failed lookup.
+- Enforce subprocess deadlines after output streams close and verify both IPv4 and IPv6 cleanup against the WireGuard-selected policy table.
 - Add regression coverage for live endpoint handoff, Ukraine fallback names, and absent policy-route cleanup.
 
 ## 1.6.2
