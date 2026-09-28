@@ -1460,6 +1460,8 @@ def cleanup_wireguard_state(wg_quick, ip_binary, config_present=False):
         delete_result = None
 
     problems = verify_wireguard_cleanup(ip_binary, resolver_binary, require_resolver, route_table or 51820)
+    if initial_state is True and (down_result is None or down_result.returncode != 0) and not problems:
+        problems.append("wg-quick down failed for an active tunnel; other cleanup cannot be confirmed")
     if initial_state is True and route_table is None and (down_result is None or down_result.returncode != 0):
         problems.append("WireGuard policy table could not be identified after failed teardown")
     # wg-quick and `ip link delete` commonly return non-zero for an already

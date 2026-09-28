@@ -178,6 +178,33 @@ def test_cleanup_checks_selected_table_and_ipv6_policy_state():
     assert policy_tables == ["51821", "51821"]
 
 
+def test_cleanup_rejects_failed_teardown_of_active_tunnel_even_after_link_deletion():
+    interface_up = True
+
+    def bounded(command, **kwargs):
+        nonlocal interface_up
+        if command[1:4] == ["show", runner.INTERFACE, "fwmark"]:
+            return runner.subprocess.CompletedProcess(command, 0, "51820\n", "")
+        if command[1:3] == ["link", "show"]:
+            if interface_up:
+                return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1] == "down":
+            return runner.subprocess.CompletedProcess(command, 1, "", "teardown failed")
+        if command[1:3] == ["link", "delete"]:
+            interface_up = False
+        if command[1] == "-l":
+            return runner.subprocess.CompletedProcess(command, 1, "", "not found")
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
+
+    with mock.patch.object(runner, "system_binary", side_effect=lambda name: "/usr/bin/" + name):
+        with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+            problems = runner.cleanup_wireguard_state("/usr/bin/wg-quick", "/usr/bin/ip", config_present=True)
+
+    assert any("teardown failed" in problem for problem in problems)
+    assert any("other cleanup cannot be confirmed" in problem for problem in problems)
+
+
 def test_connect_writes_and_activates_native_tunnel():
     d = tempfile.mkdtemp()
     conf_path = os.path.join(d, "cyberghost.conf")
