@@ -40,6 +40,14 @@ Item {
   property bool legacyHelper: false
   property bool legacyPolkitRule: false
   property string pluginVersion: ""
+  // A connect needs the rate limit for its own live lookup, and a logout must
+  // not leave a sync running on the old session. Countries already fetched
+  // are skipped when the sync resumes on a later check.
+  function stopServerSync() {
+    if (syncProcess.running)
+      syncProcess.running = false
+  }
+
   function recheck() {
     if (!checkProcess.running)
       checkProcess.running = true

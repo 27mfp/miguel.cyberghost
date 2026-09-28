@@ -407,6 +407,7 @@ Item {
     actionTimeoutTimer.restart()
 
     pendingCountry = country
+    setup.stopServerSync()
     var connectArgs = ["/usr/bin/python3", root.runnerPath, "connect", "--country", country, "--protocol", protocol, "--server-type", serverType, "--json"]
     if (resolvedServer !== "")
       connectArgs = connectArgs.concat(["--server", resolvedServer])
@@ -495,6 +496,7 @@ Item {
     statusProbeError = ""
     statusGeneration++
     statusRefreshPending = true
+    setup.stopServerSync()
     actionStatus = connected ? "Disconnecting and logging out…" : "Logging out…"
     disconnecting = connected
     _desired = connected ? 0 : _desired

@@ -155,7 +155,7 @@ def test_sync_fills_every_requested_country_at_a_steady_pace(account, monkeypatc
     ]
     with mock.patch.object(runner, "api_request", side_effect=replies):
         result = runner.sync_servers(["PT", "GL", "UA"])
-    assert result == {"synced": 3, "remaining": 0, "stopped": ""}
+    assert result == {"synced": 3, "failed": 0, "remaining": 0, "stopped": ""}
     assert runner.known_servers("PT") == ["lisbon-s405-i01"]
     assert runner.known_servers("GL") == []  # an empty list is recorded as "no servers"
     assert runner.known_servers("UA") == ["kiev-s401-i01"]
@@ -163,22 +163,53 @@ def test_sync_fills_every_requested_country_at_a_steady_pace(account, monkeypatc
 
 
 @pytest.mark.parametrize("status", [429, 401])
-def test_sync_stops_at_rate_limits_and_resumes_later(account, status):
+def test_sync_stops_at_rate_limits_backs_off_and_resumes_later(account, status):
     replies = [LOCATION, response(200, rows("Lisbon-S405-i01")), response(status, {})]
     with mock.patch.object(runner, "api_request", side_effect=replies):
         first = runner.sync_servers(["PT", "UA", "IT"])
-    assert first == {"synced": 1, "remaining": 2, "stopped": f"HTTP {status}"}
+    assert first == {"synced": 1, "failed": 0, "remaining": 2, "stopped": f"HTTP {status}"}
+    # Reopening the panel right away must not hit the account again.
+    with mock.patch.object(runner, "api_request", side_effect=AssertionError("restarted during backoff")):
+        assert runner.sync_servers(["PT", "UA", "IT"])["stopped"] == "backing off"
+    later = runner.time.time() + runner.SYNC_BACKOFF_SECONDS[status] + 1
     replies = [LOCATION, response(200, rows("Kiev-S401-i01")), response(200, rows("Milano-S402-i01"))]
     with mock.patch.object(runner, "api_request", side_effect=replies) as call:
-        second = runner.sync_servers(["PT", "UA", "IT"])
-    assert second == {"synced": 2, "remaining": 0, "stopped": ""}
+        second = runner.sync_servers(["PT", "UA", "IT"], now=later)
+    assert second == {"synced": 2, "failed": 0, "remaining": 0, "stopped": ""}
     assert "filter_country=PT" not in " ".join(c.args[1] for c in call.call_args_list)  # fresh: skipped
+
+
+def test_one_network_error_does_not_end_the_sync(account, capsys):
+    replies = [LOCATION, OSError("connection reset"), response(200, rows("Kiev-S401-i01"))]
+    with mock.patch.object(runner, "api_request", side_effect=replies):
+        result = runner.sync_servers(["PT", "UA"])
+    assert result == {"synced": 1, "failed": 1, "remaining": 0, "stopped": ""}
+    assert runner.known_servers("PT") is None and runner.known_servers("UA") == ["kiev-s401-i01"]
+    progress = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [step["progress"] for step in progress] == [1, 2]  # attempts reach the total
+
+
+def test_sync_stops_when_the_user_logs_out(account, monkeypatch):
+    calls = {"n": 0}
+    real = runner.load_account
+
+    def account_then_logout(*args):
+        calls["n"] += 1
+        if calls["n"] > 2:  # start + first pre-request check, then logged out
+            raise RuntimeError("Configuration file not found")
+        return real()
+
+    monkeypatch.setattr(runner, "load_account", account_then_logout)
+    replies = [LOCATION, response(200, rows("Lisbon-S405-i01"))]
+    with mock.patch.object(runner, "api_request", side_effect=replies):
+        result = runner.sync_servers(["PT", "UA", "IT"])
+    assert result == {"synced": 1, "failed": 0, "remaining": 2, "stopped": "logged out"}
 
 
 def test_sync_refreshes_only_stale_countries(account):
     runner.remember_servers("PT", ["lisbon-s405-i01"])
     with mock.patch.object(runner, "api_request", side_effect=AssertionError("nothing is stale")):
-        assert runner.sync_servers(["PT"]) == {"synced": 0, "remaining": 0, "stopped": ""}
+        assert runner.sync_servers(["PT"]) == {"synced": 0, "failed": 0, "remaining": 0, "stopped": ""}
     later = runner.time.time() + runner.SYNC_REFRESH_SECONDS + 60
     replies = [LOCATION, response(200, rows("Lisbon-S406-i02"))]
     with mock.patch.object(runner, "api_request", side_effect=replies):

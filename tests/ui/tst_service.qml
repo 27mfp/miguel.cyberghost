@@ -460,4 +460,19 @@ TestCase {
     sync.exited(0)
     compare(service.syncProgress, "")
   }
+
+  function test_connectAndLogoutStopTheServerSync() {
+    var service = readyService({ defaultCountry: "PT" })
+    var sync = named(service, "syncProcess")
+    sync.running = true
+    service.connectTo("PT", "wireguard", "traffic", "", "fastest")
+    verify(!sync.running)
+    var action = actionProcess(service)
+    action.stdout.read('{"ok":true,"action":"connect","backend":"networkmanager","country":"PT"}')
+    action.running = false
+    action.exited(0)
+    sync.running = true
+    service.logout()
+    verify(!sync.running)
+  }
 }

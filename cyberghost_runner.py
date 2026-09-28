@@ -204,6 +204,9 @@ SERVER_CACHE_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "servers.json"
 SYNC_LOCK_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "sync.lock")
 SYNC_PACE_SECONDS = 5
 SYNC_REFRESH_SECONDS = 7 * 86400
+SYNC_STATE_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "sync-state.json")
+# After a rate limit or rejected session, wait before any automatic restart.
+SYNC_BACKOFF_SECONDS = {429: 15 * 60, 401: 60 * 60}
 MAX_SERVER_LIST_BYTES = 2 * 1024 * 1024
 # Probing every known server of a large country would be slow and noisy.
 PROBE_SAMPLE_SIZE = 48
@@ -1275,55 +1278,107 @@ def live_server_inventory(country_code, session):
     return names or None
 
 
+def _sync_state_path():
+    return os.path.join(invoking_user().pw_dir, SYNC_STATE_RELATIVE_PATH)
+
+
+def _sync_blocked_until():
+    until = _read_server_list(_sync_state_path()).get("blocked_until")
+    return until if isinstance(until, (int, float)) and not isinstance(until, bool) else 0
+
+
+def _block_sync(seconds, now):
+    """Remember a backoff so repeated panel opens cannot restart a limited sync."""
+    path = _sync_state_path()
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=os.path.dirname(path), delete=False, prefix=".sync_", encoding="utf-8"
+        ) as tf:
+            json.dump({"blocked_until": int(now + seconds)}, tf)
+            temp_name = tf.name
+        os.replace(temp_name, path)
+    except OSError:
+        pass
+
+
+def _session_still_current(jwt):
+    """Stop syncing once the user logs out or links a different session."""
+    try:
+        return load_account(None)["jwt"] == jwt
+    except (OSError, RuntimeError, configparser.Error):
+        return False
+
+
 def sync_servers(country_codes=None, pace=SYNC_PACE_SECONDS, refresh=SYNC_REFRESH_SECONDS, now=None):
     """Fill the user's cache from their own account, one country at a time.
 
-    Paced to stay under CyberGhost's rate limit; stops at the first 429 or
-    401 and resumes on a later run. Countries refreshed recently are skipped.
+    Paced to stay under CyberGhost's rate limit. A 429 or 401 stops the run and
+    records a backoff, so reopening the panel cannot keep the account limited.
+    Countries refreshed recently are skipped; a failed country is retried on a
+    later run. The run also stops as soon as the login it started with is gone.
     """
+
+    def result(synced=0, failed=0, remaining=None, stopped=""):
+        return {"synced": synced, "failed": failed, "remaining": remaining, "stopped": stopped}
+
     try:
         account = load_account(None)
     except (OSError, RuntimeError, configparser.Error):
-        return {"synced": 0, "remaining": None, "stopped": "no account"}
+        return result(stopped="no account")
     jwt = account["jwt"]
     if not session_usable(jwt):
-        return {"synced": 0, "remaining": None, "stopped": "no session"}
+        return result(stopped="no session")
+    clock = now if now is not None else time.time()
+    if _sync_blocked_until() > clock:
+        return result(stopped="backing off")
     lock_path = os.path.join(invoking_user().pw_dir, SYNC_LOCK_RELATIVE_PATH)
     os.makedirs(os.path.dirname(lock_path), mode=0o700, exist_ok=True)
     lock = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    synced = failed = 0
     try:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return {"synced": 0, "remaining": None, "stopped": "already running"}
-        now = now if now is not None else time.time()
+            return result(stopped="already running")
         codes = country_codes or sorted(code for code in CITY_MAP if code != "UK")
         cached = _read_server_list(server_cache_path()).get("countries", {})
         todo = []
         for code in codes:
             entry = cached.get(code) if isinstance(cached, dict) else None
             updated = entry.get("updated") if isinstance(entry, dict) else None
-            if not isinstance(updated, (int, float)) or now - updated > refresh:
+            if not isinstance(updated, (int, float)) or clock - updated > refresh:
                 todo.append(code)
         if not todo:
-            return {"synced": 0, "remaining": 0, "stopped": ""}
-        where = account_location(jwt)
+            return result(remaining=0)
+        try:
+            where = account_location(jwt)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return result(remaining=len(todo), stopped=clean_command_error(exc))
         if where is None:
-            return {"synced": 0, "remaining": len(todo), "stopped": "no location"}
-        synced = 0
+            return result(remaining=len(todo), stopped="no location")
         for index, code in enumerate(todo):
-            status_code, names = fetch_country_servers(code, jwt, where)
+            if not _session_still_current(jwt):
+                return result(synced, failed, len(todo) - index, "logged out")
+            try:
+                status_code, names = fetch_country_servers(code, jwt, where)
+            except (OSError, RuntimeError, ValueError):
+                # A timeout or reset on one country must not end the run.
+                status_code, names = None, None
             if status_code in (401, 429):
-                return {"synced": synced, "remaining": len(todo) - index, "stopped": f"HTTP {status_code}"}
-            if names is not None:
+                _block_sync(SYNC_BACKOFF_SECONDS[status_code], time.time())
+                return result(synced, failed, len(todo) - index, f"HTTP {status_code}")
+            if names is None:
+                failed += 1  # unreadable or failed: retried on a later run
+            else:
                 remember_servers(code, names)
                 synced += 1
-                print(json.dumps({"progress": synced, "total": len(todo), "country": code}), flush=True)
+            # Progress counts attempts, so it always reaches the total.
+            print(json.dumps({"progress": index + 1, "total": len(todo), "country": code}), flush=True)
             if index + 1 < len(todo):
                 time.sleep(pace)
-        return {"synced": synced, "remaining": 0, "stopped": ""}
+        return result(synced, failed, 0)
     except (OSError, RuntimeError, ValueError) as exc:
-        return {"synced": 0, "remaining": None, "stopped": clean_command_error(exc)}
+        return result(synced, failed, None, clean_command_error(exc))
     finally:
         os.close(lock)
 
