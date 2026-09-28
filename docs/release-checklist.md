@@ -20,7 +20,7 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 - The native-only UI remains limited to WireGuard traffic with automatic server selection. Vendor inventory and OpenVPN/streaming/torrent controls are not exposed; a separately active vendor VPN is reported and cannot be silently managed by this plugin.
 - The backend now rejects explicit empty/invalid DNS, validates trusted WireGuard paths before `wg-quick`, uses a persistent root lifecycle lock, verifies interface/routes/rules/resolver cleanup, preserves recovery config on incomplete teardown, and skips optional vendor CLI execution in the root helper.
 - Helper-only updates preserve Polkit authorization. Explicit revocation verifies the plugin rule bytes; confirmation EOF fails closed; fresh reset stages and validates its replacement before teardown and preserves vendor `config.ini`.
-- [x] Python regression suite: 125 tests pass locally, including subprocess exit deadlines and IPv6/selected-table cleanup checks.
+- [x] Python regression suite: 126 tests pass locally, including subprocess exit deadlines and IPv6/selected-table cleanup checks.
 - [x] Qt/QML behavior suite: 36 UI cases and 11 utility cases pass locally, including pending lookup cancellation, readiness changes, and late external-VPN detection.
 - [x] Python compilation, JSON/standalone manifest validation, shell syntax, ShellCheck, QML formatting, Omarchy manifest validation, `git diff --check`, and QML lint pass locally. QML lint reports 0 project diagnostics; only known host metadata warnings remain.
 - [ ] Rerun Ruff and CI on the updated commit before publishing.
