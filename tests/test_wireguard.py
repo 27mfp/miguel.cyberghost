@@ -10,6 +10,12 @@ from runner_support import SAMPLE_PRIV, SAMPLE_PUB, load_runner, native_success_
 runner = load_runner()
 
 
+def policy_query(command):
+    return command[1] in ("-4", "-6") and (
+        command[2:5] == ["route", "show", "table"] or command[2:4] == ["rule", "show"]
+    )
+
+
 def test_status_json_structure():
     import io
     from contextlib import redirect_stdout
@@ -55,7 +61,7 @@ def test_disconnect_cleans_native_and_cli_state():
             if interface_up:
                 return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
             return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
-        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+        if policy_query(command):
             return runner.subprocess.CompletedProcess(command, 0, "", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 1, "", "not found")
@@ -103,16 +109,17 @@ def test_cleanup_accepts_absent_policy_route_table():
     def bounded(command, **kwargs):
         if command[1:3] == ["link", "show"]:
             return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
-        if command[1:4] == ["route", "show", "table"]:
+        if command[1] in ("-4", "-6") and command[2:5] == ["route", "show", "table"]:
             return runner.subprocess.CompletedProcess(command, 2, "", "Error: ipv4: FIB table does not exist.\n")
-        if command[1:3] == ["rule", "show"]:
+        if command[1] in ("-4", "-6") and command[2:4] == ["rule", "show"]:
             return runner.subprocess.CompletedProcess(command, 0, "", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 1, "", "Switch -l not supported.")
         return runner.subprocess.CompletedProcess(command, 1, "", "already absent")
 
-    with mock.patch.object(runner, "run_bounded", side_effect=bounded):
-        problems = runner.cleanup_wireguard_state("/usr/bin/wg-quick", "/usr/bin/ip", config_present=True)
+    with mock.patch.object(runner, "system_binary", return_value="/usr/bin/resolvconf"):
+        with mock.patch.object(runner, "run_bounded", side_effect=bounded):
+            problems = runner.cleanup_wireguard_state("/usr/bin/wg-quick", "/usr/bin/ip", config_present=True)
 
     assert problems == []
 
@@ -121,9 +128,9 @@ def test_cleanup_reports_residual_interface_and_policy_state():
     def bounded(command, **kwargs):
         if command[1:3] == ["link", "show"]:
             return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
-        if command[1:4] == ["route", "show", "table"]:
+        if command[1] in ("-4", "-6") and command[2:5] == ["route", "show", "table"]:
             return runner.subprocess.CompletedProcess(command, 0, "default dev cyberghost table 51820\n", "")
-        if command[1:3] == ["rule", "show"]:
+        if command[1] in ("-4", "-6") and command[2:4] == ["rule", "show"]:
             return runner.subprocess.CompletedProcess(command, 0, "32765: not from all lookup 51820\n", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 0, "DNS=1.1.1.1\n", "")
@@ -136,6 +143,39 @@ def test_cleanup_reports_residual_interface_and_policy_state():
     assert any("policy route" in problem for problem in problems)
     assert any("policy rules" in problem for problem in problems)
     assert any("resolver" in problem for problem in problems)
+
+
+def test_cleanup_checks_selected_table_and_ipv6_policy_state():
+    interface_up = True
+
+    def bounded(command, **kwargs):
+        nonlocal interface_up
+        if command[1:4] == ["show", runner.INTERFACE, "fwmark"]:
+            return runner.subprocess.CompletedProcess(command, 0, "0xca6d\n", "")
+        if command[1:3] == ["link", "show"]:
+            if interface_up:
+                return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
+            return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
+        if command[1:3] == ["link", "delete"]:
+            interface_up = False
+        if command[1:4] == ["-6", "route", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "default dev cyberghost\n", "")
+        if command[1:4] == ["-6", "rule", "show"]:
+            return runner.subprocess.CompletedProcess(command, 0, "32765: not fwmark 0xca6d lookup 51821\n", "")
+        return runner.subprocess.CompletedProcess(command, 0, "", "")
+
+    with mock.patch.object(runner, "system_binary", side_effect=lambda name: "/usr/bin/" + name):
+        with mock.patch.object(runner, "run_bounded", side_effect=bounded) as execute:
+            problems = runner.cleanup_wireguard_state("/usr/bin/wg-quick", "/usr/bin/ip", config_present=True)
+
+    assert any("-6 policy routes remain" in problem for problem in problems)
+    assert any("-6 policy rules remain" in problem for problem in problems)
+    policy_tables = [
+        call.args[0][-1]
+        for call in execute.call_args_list
+        if call.args[0][1:4] in (["-4", "route", "show"], ["-6", "route", "show"])
+    ]
+    assert policy_tables == ["51821", "51821"]
 
 
 def test_connect_writes_and_activates_native_tunnel():
@@ -153,7 +193,7 @@ def test_connect_writes_and_activates_native_tunnel():
             if interface_up:
                 return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
             return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
-        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+        if policy_query(command):
             return runner.subprocess.CompletedProcess(command, 0, "", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 1, "", "not found")
@@ -206,7 +246,7 @@ def test_connect_fails_closed_when_vpn_dns_cannot_be_configured():
             if interface_up:
                 return runner.subprocess.CompletedProcess(command, 0, "3: cyberghost: <POINTOPOINT>\n", "")
             return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
-        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+        if policy_query(command):
             return runner.subprocess.CompletedProcess(command, 0, "", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 1, "", "not found")
@@ -250,7 +290,7 @@ def test_connect_rolls_back_after_tunnel_activation_failure():
             return runner.subprocess.CompletedProcess(command, 1, "", "wg-quick failed")
         if command[1:3] == ["link", "show"]:
             return runner.subprocess.CompletedProcess(command, 1, "", 'Device "cyberghost" does not exist.')
-        if command[1:4] == ["route", "show", "table"] or command[1:3] == ["rule", "show"]:
+        if policy_query(command):
             return runner.subprocess.CompletedProcess(command, 0, "", "")
         if command[1] == "-l":
             return runner.subprocess.CompletedProcess(command, 1, "", "not found")

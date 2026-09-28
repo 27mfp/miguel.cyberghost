@@ -55,9 +55,11 @@ Item {
         return
       }
       var rows = []
-      try {
-        rows = JSON.parse(root.output)
-      } catch (e) {}
+      if (exitCode === 0) {
+        try {
+          rows = JSON.parse(root.output)
+        } catch (e) {}
+      }
       root.options = Logic.serverOptions(rows, root.countryName)
       if (root.options.length === 1)
         root.error = Logic.cleanProcessError(root.errors, "No exact servers returned. Automatic selection remains available.")

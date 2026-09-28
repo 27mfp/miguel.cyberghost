@@ -194,6 +194,19 @@ def test_run_bounded_timeout_kills_child_and_does_not_block_on_stdin():
         pass
 
 
+def test_run_bounded_timeout_after_child_closes_output_streams():
+    started = time.monotonic()
+    try:
+        runner.run_bounded(
+            [sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(2)"],
+            timeout=0.1,
+        )
+        raise AssertionError("Expected subprocess timeout after output streams closed")
+    except runner.subprocess.TimeoutExpired:
+        pass
+    assert time.monotonic() - started < 1
+
+
 def test_read_response_bounded_closes_and_limits_body():
     response = mock.Mock()
     response.headers = {}
