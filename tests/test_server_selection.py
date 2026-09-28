@@ -11,8 +11,8 @@ runner = load_runner()
 
 @pytest.fixture(autouse=True)
 def no_snapshot(monkeypatch):
-    # These tests cover the live list and the guessed pool; the bundled
-    # snapshot has its own tests in test_server_data.py.
+    # These tests cover the live list and the guessed pool; the user's
+    # server cache has its own tests in test_server_data.py.
     monkeypatch.setattr(runner, "known_servers", lambda *args, **kwargs: None)
 
 

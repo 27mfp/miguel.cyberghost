@@ -440,4 +440,24 @@ TestCase {
     compare(service.rxRate, -1)
     compare(service.rxBytes, 10)
   }
+
+  function test_liveSessionStartsTheBackgroundServerSync() {
+    var service = createTemporaryObject(factory, this, {})
+    var check = named(service, "checkProcess")
+    var sync = named(service, "syncProcess")
+    service.checkOutput = JSON.stringify({ nm: true, nm_permission: "yes", requests: true, credentials: true, server_list: "probe" })
+    check.exited(0)
+    verify(!sync.running)
+    service.checkOutput = JSON.stringify({ nm: true, nm_permission: "yes", requests: true, credentials: true, server_list: "live" })
+    check.exited(0)
+    verify(sync.running)
+    compare(sync.command[2], "sync-servers")
+    sync.stdout.read('{"progress": 12, "total": 94, "country": "CZ"}')
+    compare(service.syncProgress, "12/94")
+    sync.stdout.read('{"synced": 94, "remaining": 0, "stopped": ""}')
+    compare(service.syncProgress, "12/94")
+    sync.running = false
+    sync.exited(0)
+    compare(service.syncProgress, "")
+  }
 }

@@ -148,6 +148,8 @@ Item {
   property alias accountName: setup.accountName
   property alias accountSource: setup.accountSource
   property alias serverList: setup.serverList
+  readonly property bool syncingServers: setup.syncingServers
+  readonly property string syncProgress: setup.syncProgress
   property alias legacyHelper: setup.legacyHelper
   property alias legacyPolkitRule: setup.legacyPolkitRule
   property alias pluginVersion: setup.pluginVersion

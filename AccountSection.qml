@@ -90,7 +90,7 @@ Column {
         // A live session reads CyberGhost's own server list; once it expires
         // connects still work by probing, and linking again refreshes it.
         // Short enough to fit the panel's narrowest width without eliding.
-        text: (root.pluginLogin ? "This device" : "CyberGhost CLI config") + (root.service.serverList === "live" ? " · live servers" : (root.service.serverList === "probe" && root.pluginLogin ? " · relink for live servers" : ""))
+        text: (root.pluginLogin ? "This device" : "CyberGhost CLI config") + (root.service.syncingServers ? " · syncing servers " + root.service.syncProgress : (root.service.serverList === "live" ? " · live servers" : (root.service.serverList === "probe" && root.pluginLogin ? " · relink to refresh servers" : "")))
         textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily

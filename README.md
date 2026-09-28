@@ -36,7 +36,7 @@ That's it: connecting uses NetworkManager, which Omarchy already runs, and its P
 - **Account → Log out** forgets this device's login (`~/.cyberghost/native.ini`) after a second confirming click, disconnecting first if needed. An account from the CyberGhost CLI's own `config.ini` is shown but left alone. Logging out does not remove the device from your CyberGhost account; do that on CyberGhost's website if you no longer use it.
 - Left-click opens the panel; middle- and right-click toggle the VPN.
 
-Server selection is automatic, in this order: the vendor CLI's inventory if installed; CyberGhost's own live server list (least loaded first) while your login session is valid, which is about a day after **Link account**; otherwise the real server names in the bundled `servers.json` (or your local cache of the last live list), probed for the fastest reachable host. No setup is needed on a new machine. To check which countries are reachable from your network (no account or tunnel involved):
+Server selection is automatic, in this order: the vendor CLI's inventory if installed; CyberGhost's own live server list (least loaded first) while your login session is valid (about a day after **Link account**); otherwise real server names from your local cache, probed for the fastest reachable host. While the session is valid, the plugin fills that cache for every country in the background, from your own account. The Account section shows "syncing servers" with its progress. Nothing needs to be set up or refreshed by hand. Linking your account again refreshes the list.
 
 ```bash
 python3 ~/.config/omarchy/plugins/miguel.cyberghost/cyberghost_runner.py probe --all

@@ -13,6 +13,7 @@ import binascii
 import concurrent.futures
 import configparser
 import contextlib
+import fcntl
 import importlib.util
 import io
 import ipaddress
@@ -179,7 +180,7 @@ DIALUP_CITY_MAP = {
     "IL": "jerusalem",
     "KZ": "astana",
     "MA": "rabat",
-    # From CyberGhost's own list (servers.json): Bosnia is served from Travnik
+    # From CyberGhost's own server list: Bosnia is served from Travnik
     # and China from Shenzhen (the old "hongkong" guess landed in Hong Kong).
     "BA": "travnik",
     "CN": "shenzhen",
@@ -195,11 +196,14 @@ ENDPOINT_PROBE_BUDGET_SECONDS = 4.0
 ENDPOINT_PROBE_TIMEOUT_SECONDS = 2.5
 ENDPOINT_PROBE_GRACE_SECONDS = 1.0
 LIVE_INVENTORY_BUDGET_SECONDS = 6
-# Real server names: a bundled snapshot of CyberGhost's list (regenerated with
-# scripts/update-servers.py) and a per-user cache refreshed by live lookups.
-BUNDLED_SERVERS_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "servers.json")
+# Real server names live in a per-user cache built from the user's own
+# account: connects refresh their country, and a paced background sync fills
+# every country while the login session (about a day) is valid. Nothing is
+# bundled or shared between users.
 SERVER_CACHE_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "servers.json")
-SERVER_CACHE_MAX_AGE_SECONDS = 30 * 86400
+SYNC_LOCK_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "sync.lock")
+SYNC_PACE_SECONDS = 5
+SYNC_REFRESH_SECONDS = 7 * 86400
 MAX_SERVER_LIST_BYTES = 2 * 1024 * 1024
 # Probing every known server of a large country would be slow and noisy.
 PROBE_SAMPLE_SIZE = 48
@@ -1055,25 +1059,18 @@ def server_cache_path():
     return os.path.join(invoking_user().pw_dir, SERVER_CACHE_RELATIVE_PATH)
 
 
-def known_servers(country_code, now=None):
-    """Real server names for a country: a fresh cache entry, else the bundle.
+def known_servers(country_code):
+    """Real server names for a country from the user's cache.
 
-    None means the country is not in the snapshot; an empty list means
-    CyberGhost listed no WireGuard servers there when it was generated.
+    None means the country has not been fetched yet; an empty list means
+    CyberGhost listed no WireGuard servers there. Entries never expire:
+    names drift slowly and every connect probes them before use.
     """
     cc = validate_country_code(country_code)
-    now = now if now is not None else time.time()
     cached = _read_server_list(server_cache_path()).get("countries", {}).get(cc)
-    if isinstance(cached, dict):
-        updated = cached.get("updated")
-        if isinstance(updated, (int, float)) and 0 <= now - updated <= SERVER_CACHE_MAX_AGE_SECONDS:
-            names = expand_server_names(cached.get("servers"))
-            if names:
-                return names
-    bundled = _read_server_list(BUNDLED_SERVERS_PATH).get("countries", {})
-    if cc not in bundled:
+    if not isinstance(cached, dict) or not isinstance(cached.get("servers"), dict):
         return None
-    return expand_server_names(bundled.get(cc))
+    return expand_server_names(cached["servers"])
 
 
 def remember_servers(country_code, names):
@@ -1204,6 +1201,9 @@ def parse_live_inventory(data, max_items=8192):
                     candidate = value.strip().lower()
                     if candidate.endswith(".cg-dialup.net"):
                         candidate = candidate[: -len(".cg-dialup.net")]
+                    # Some display names drop the rack's "s" ("Nairobi-401-i01")
+                    # while DNS keeps it (nairobi-s401-i01.cg-dialup.net).
+                    candidate = re.sub(r"^([a-z0-9]+(?:-[a-z0-9]+)*?)-(\d+)-i(\d+)$", r"\1-s\2-i\3", candidate)
                     try:
                         name = validate_server_selector(candidate)
                         break
@@ -1221,6 +1221,35 @@ def parse_live_inventory(data, max_items=8192):
     return sorted(found, key=lambda host: (is_nospy(host), found[host], host))
 
 
+def fetch_country_servers(country_code, jwt, where):
+    """One filters/74 request. Returns (HTTP status, names or None).
+
+    names is [] only when CyberGhost returned an empty list, which means the
+    country has no WireGuard servers; any other unusable body is None.
+    """
+    cc = validate_country_code(country_code)
+    user_id, latitude, longitude = where
+    path = (
+        f"/my/servers/filters/74?filter_protocol=wireguard&filter_country={cc}"
+        f"&filter_user_id={user_id}&filter_user_latitude={latitude}&filter_user_longitude={longitude}"
+    )
+    res = api_request(
+        "GET", path, jwt=jwt, budget=LIVE_INVENTORY_BUDGET_SECONDS, max_bytes=MAX_INVENTORY_RESPONSE_BYTES
+    )
+    if res.status_code != 200:
+        return res.status_code, None
+    try:
+        data = json.loads(getattr(res, "_cyberghost_body", b"").decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return res.status_code, None
+    if not isinstance(data, list):
+        return res.status_code, None
+    names = parse_live_inventory(data)
+    if data and not names:
+        return res.status_code, None  # rows we could not read: not "no servers"
+    return res.status_code, names
+
+
 def live_server_inventory(country_code, session):
     """CyberGhost's own server list for a country, lowest load first, or None."""
     jwt = (session or {}).get("jwt", "")
@@ -1234,37 +1263,77 @@ def live_server_inventory(country_code, session):
         if where is None:
             sys.stderr.write("Live server list unavailable (no account location); probing servers instead.\n")
             return None
-        user_id, latitude, longitude = where
-        path = (
-            f"/my/servers/filters/74?filter_protocol=wireguard&filter_country={cc}"
-            f"&filter_user_id={user_id}&filter_user_latitude={latitude}&filter_user_longitude={longitude}"
-        )
-        res = api_request(
-            "GET", path, jwt=jwt, budget=LIVE_INVENTORY_BUDGET_SECONDS, max_bytes=MAX_INVENTORY_RESPONSE_BYTES
-        )
+        status_code, names = fetch_country_servers(cc, jwt, where)
     except (OSError, RuntimeError, ValueError) as exc:
         sys.stderr.write(f"Live server list unavailable: {clean_command_error(exc)}\n")
         return None
-    if res.status_code != 200:
-        # 401 means the session expired; the probe fallback still connects.
-        sys.stderr.write(f"Live server list unavailable (HTTP {res.status_code}); probing servers instead.\n")
+    if names is None:
+        # 401: session expired; 429: rate limited. The fallback still connects.
+        sys.stderr.write(f"Live server list unavailable (HTTP {status_code}); probing servers instead.\n")
         return None
-    try:
-        data = json.loads(getattr(res, "_cyberghost_body", b"").decode("utf-8"))
-    except (UnicodeError, ValueError):
-        return None
-    names = parse_live_inventory(data)
-    if names:
-        remember_servers(cc, names)
+    remember_servers(cc, names)
     return names or None
+
+
+def sync_servers(country_codes=None, pace=SYNC_PACE_SECONDS, refresh=SYNC_REFRESH_SECONDS, now=None):
+    """Fill the user's cache from their own account, one country at a time.
+
+    Paced to stay under CyberGhost's rate limit; stops at the first 429 or
+    401 and resumes on a later run. Countries refreshed recently are skipped.
+    """
+    try:
+        account = load_account(None)
+    except (OSError, RuntimeError, configparser.Error):
+        return {"synced": 0, "remaining": None, "stopped": "no account"}
+    jwt = account["jwt"]
+    if not session_usable(jwt):
+        return {"synced": 0, "remaining": None, "stopped": "no session"}
+    lock_path = os.path.join(invoking_user().pw_dir, SYNC_LOCK_RELATIVE_PATH)
+    os.makedirs(os.path.dirname(lock_path), mode=0o700, exist_ok=True)
+    lock = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"synced": 0, "remaining": None, "stopped": "already running"}
+        now = now if now is not None else time.time()
+        codes = country_codes or sorted(code for code in CITY_MAP if code != "UK")
+        cached = _read_server_list(server_cache_path()).get("countries", {})
+        todo = []
+        for code in codes:
+            entry = cached.get(code) if isinstance(cached, dict) else None
+            updated = entry.get("updated") if isinstance(entry, dict) else None
+            if not isinstance(updated, (int, float)) or now - updated > refresh:
+                todo.append(code)
+        if not todo:
+            return {"synced": 0, "remaining": 0, "stopped": ""}
+        where = account_location(jwt)
+        if where is None:
+            return {"synced": 0, "remaining": len(todo), "stopped": "no location"}
+        synced = 0
+        for index, code in enumerate(todo):
+            status_code, names = fetch_country_servers(code, jwt, where)
+            if status_code in (401, 429):
+                return {"synced": synced, "remaining": len(todo) - index, "stopped": f"HTTP {status_code}"}
+            if names is not None:
+                remember_servers(code, names)
+                synced += 1
+                print(json.dumps({"progress": synced, "total": len(todo), "country": code}), flush=True)
+            if index + 1 < len(todo):
+                time.sleep(pace)
+        return {"synced": synced, "remaining": 0, "stopped": ""}
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {"synced": 0, "remaining": None, "stopped": clean_command_error(exc)}
+    finally:
+        os.close(lock)
 
 
 def select_native_candidates(country_code, server_type="traffic", city=None, server=None, session=None):
     """Select validated, bounded native WireGuard endpoint candidates.
 
     Order: an explicit server; the vendor CLI's inventory; CyberGhost's live
-    list (session token); probing real names from the cache or the bundled
-    snapshot; and, only as a last resort, a guessed rack pool.
+    list (session token); probing real names from the user's cache (filled
+    by the background sync); and, only as a last resort, a guessed rack pool.
     """
     cc = validate_country_code(country_code)
     selected_server = validate_server_selector(server) if server else None
@@ -1301,7 +1370,7 @@ def select_native_candidates(country_code, server_type="traffic", city=None, ser
         if known:
             reachable = reachable_endpoints([f"{name}.cg-dialup.net" for name in probe_sample(known)])
         if not reachable:
-            # Last resort for countries missing from the snapshot.
+            # Last resort for countries the sync has not fetched yet.
             pool = [f"{city_slug}-s{rack}-i{idx}.cg-dialup.net" for rack in DIALUP_RACKS for idx in DIALUP_INSTANCES]
             reachable = reachable_endpoints(pool)
         if not reachable:
@@ -2142,6 +2211,7 @@ def main():
     parser.add_argument(
         "action",
         choices=[
+            "sync-servers",
             "connect",
             "disconnect",
             "logout",
@@ -2196,6 +2266,8 @@ def main():
             print(json.dumps(get_servers_for_country(args.country, args.server_type)))
         elif args.action == "streaming-services":
             print(json.dumps(get_streaming_services(args.country)))
+        elif args.action == "sync-servers":
+            print(json.dumps(sync_servers()))
         elif args.action == "probe":
             codes = sorted(code for code in CITY_MAP if code != "UK") if args.all else [args.country]
             try:

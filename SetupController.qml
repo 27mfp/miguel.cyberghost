@@ -33,6 +33,10 @@ Item {
   property string accountName: ""
   property string accountSource: ""
   property string serverList: ""
+  // Background sync of every country's servers into the user's own cache,
+  // while the login session is valid. The runner paces, locks and resumes.
+  readonly property bool syncingServers: syncProcess.running
+  property string syncProgress: ""
   property bool legacyHelper: false
   property bool legacyPolkitRule: false
   property string pluginVersion: ""
@@ -87,6 +91,24 @@ Item {
     })
     registerProcess.running = true
     registerTimeoutTimer.restart()
+  }
+
+  Process {
+    id: syncProcess
+    objectName: "syncProcess"
+    command: ["/usr/bin/python3", root.runnerPath, "sync-servers"]
+    stdout: SplitParser {
+      onRead: function (line) {
+        try {
+          var step = JSON.parse(String(line).substring(0, 256))
+          if (typeof step.progress === "number" && typeof step.total === "number")
+            root.syncProgress = step.progress + "/" + step.total
+        } catch (e) {
+          // The final summary line is not a progress step.
+        }
+      }
+    }
+    onExited: root.syncProgress = ""
   }
 
   // ---- Setup wizard processes ----
@@ -184,6 +206,8 @@ Item {
       root.accountName = typeof d.account === "string" ? d.account.substring(0, 256) : ""
       root.accountSource = typeof d.account_source === "string" ? d.account_source.substring(0, 16) : ""
       root.serverList = d.server_list === "live" || d.server_list === "probe" ? d.server_list : ""
+      if (root.serverList === "live" && !syncProcess.running)
+        syncProcess.running = true
       root.legacyHelper = !!d.legacy_helper
       root.legacyPolkitRule = !!d.legacy_polkit_rule
       root.pluginVersion = String(d.plugin_version || "")

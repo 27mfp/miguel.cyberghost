@@ -19,6 +19,8 @@ TestCase {
     property string accountName: "user@example.com"
     property string accountSource: "native"
     property string serverList: "live"
+    property bool syncingServers: false
+    property string syncProgress: ""
     property int logoutCalls: 0
     function logout() {
       logoutCalls++
@@ -92,8 +94,12 @@ TestCase {
     var section = createTemporaryObject(factory, this)
     var caption = findChild(section, "accountSourceText")
     compare(caption.text, "This device · live servers")
+    account.syncingServers = true
+    account.syncProgress = "12/94"
+    compare(caption.text, "This device · syncing servers 12/94")
+    account.syncingServers = false
     account.serverList = "probe"
-    compare(caption.text, "This device · relink for live servers")
+    compare(caption.text, "This device · relink to refresh servers")
     account.serverList = "live"
   }
 }
