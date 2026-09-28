@@ -10,9 +10,9 @@ Column {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   property bool advanced: false
-  property Component primaryActions: null
   property Component connectionDetails: null
-  readonly property var primaryFocusTarget: actions.item ? actions.item["focusTarget"] : null
+  property Component accountSection: null
+  readonly property var primaryFocusTarget: countryPicker
   readonly property bool popupOpen: countryPicker.popupOpen
   spacing: Style.space(10)
 
@@ -26,11 +26,16 @@ Column {
     service.setCountry(code)
   }
 
+  PanelSectionHeader {
+    text: "LOCATION"
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+  }
+
   SearchableDropdown {
     id: countryPicker
     objectName: "countryPicker"
     width: parent.width
-    label: "Country"
     Accessible.name: "VPN destination country"
     placeholderText: "Search countries…"
     popupMinHeight: 0
@@ -44,10 +49,21 @@ Column {
     }
   }
 
-  Loader {
-    id: actions
+  // Picking another country never reconnects on its own; this makes the
+  // switch one deliberate click. connect replaces the live session in place.
+  Button {
+    objectName: "switchCountryButton"
+    visible: root.service.switchAvailable
     width: parent.width
-    sourceComponent: root.primaryActions
+    iconText: ""
+    text: "Switch to " + root.service.countryName
+    focusable: true
+    bordered: true
+    enabled: !root.service.busy
+    foreground: "#FFCE00"
+    fontFamily: root.fontFamily
+    tooltipText: "Reconnect through " + root.service.countryName + " (currently " + root.service.activeCountryName + ")"
+    onClicked: root.service.connectTo(root.service.country)
   }
 
   Loader {
@@ -55,11 +71,22 @@ Column {
     sourceComponent: root.connectionDetails
   }
 
+  Loader {
+    width: parent.width
+    sourceComponent: root.accountSection
+  }
+
+  PanelSeparator {
+    width: parent.width
+    foreground: root.foreground
+  }
+
   Button {
     objectName: "advancedToggle"
     text: "Settings"
     iconText: root.advanced ? "\uf106" : "\uf107"
     fontSize: Style.font.caption
+    fontFamily: root.fontFamily
     horizontalPadding: Style.space(4)
     verticalPadding: Style.space(4)
     focusable: true
@@ -84,14 +111,28 @@ Column {
       wrapMode: Text.WordWrap
     }
 
+    // Releases before 1.7 installed a root helper and an optional Polkit
+    // rule. NetworkManager now owns the tunnel, so offer to remove both.
+    Text {
+      visible: root.service.legacyCleanupAvailable && root.service.legacyStatus !== ""
+      width: parent.width
+      text: root.service.legacyStatus
+      textFormat: Text.PlainText
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+
     Button {
-      visible: !root.service.readyPolkit
-      text: "Enable passwordless connections…"
+      objectName: "removeLegacyHelper"
+      visible: root.service.legacyCleanupAvailable
+      text: "Remove old root helper…"
       focusable: true
       enabled: !root.service.busy
       foreground: root.foreground
-      tooltipText: "Allows processes running as wheel members to use the fixed VPN helper without another prompt"
-      onClicked: root.service.openHelperInstaller(true)
+      tooltipText: "Connections no longer need it. Opens a terminal that removes the helper and its Polkit rule with sudo."
+      onClicked: root.service.openLegacyCleanup()
     }
   }
 }

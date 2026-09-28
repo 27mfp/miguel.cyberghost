@@ -1,21 +1,25 @@
 #!/usr/bin/python3 -Es
 """
-CyberGhost VPN WireGuard Native Backend & CLI
-Directly negotiates WireGuard keys with CyberGhost dialup servers and manages wg-quick.
+CyberGhost VPN WireGuard backend for Omarchy.
+
+Negotiates WireGuard keys with CyberGhost and runs the tunnel as an in-memory
+NetworkManager connection. It runs as the desktop user: NetworkManager and
+Polkit authorize the network change, so no root helper is installed.
 """
 
 import argparse
 import base64
 import binascii
+import concurrent.futures
 import configparser
 import contextlib
-import fcntl
 import importlib.util
 import io
 import ipaddress
 import json
 import os
 import pwd
+import random
 import re
 import selectors
 import shutil
@@ -27,28 +31,30 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from urllib.parse import urlsplit, urlunsplit
 
-WG_CONF_PATH = "/etc/wireguard/cyberghost.conf"
 INTERFACE = "cyberghost"
-HELPER_BIN_PATH = "/usr/local/bin/cyberghost-runner"
-POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
-LIFECYCLE_LOCK_PATH = "/run/lock/cyberghost.lock"
-_LIFECYCLE_LOCK_DEPTH = 0
-_LIFECYCLE_LOCK_FD = None
-POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
-POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
-PLUGIN_VERSION = "1.6.3"
-HELPER_CAPABILITY_VERSION = "8"
+NM_CONNECTION_NAME = "CyberGhost VPN"
+# Fixed namespace for the per-user profile UUID (see connection_uuid()).
+NM_UUID_NAMESPACE = uuid.UUID("0b5c3f7e-9a61-4d2e-8f3b-6c1d2a7e4b90")
+NM_DNS_PRIORITY = -50
+NM_REQUIRED_PERMISSIONS = ("network-control", "settings.modify.own")
+NMCLI_NOT_FOUND = 10
+# Pre-1.7 releases installed these; they are detected only to offer removal.
+LEGACY_HELPER_PATH = "/usr/local/bin/cyberghost-runner"
+LEGACY_POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
+LEGACY_POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
+LEGACY_POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
+PLUGIN_VERSION = "1.7.0"
 MAX_CONFIG_BYTES = 64 * 1024
-MAX_HELPER_BYTES = 256 * 1024
 MAX_HTTP_RESPONSE_BYTES = 64 * 1024
 MAX_SUBPROCESS_INPUT_BYTES = 64 * 1024
 MAX_SUBPROCESS_OUTPUT_BYTES = 64 * 1024
 NATIVE_CONNECT_BUDGET_SECONDS = 120
 ACCOUNT_API_BUDGET_SECONDS = 30
 MAX_NATIVE_CANDIDATES = 12
-HELPER_ACTIONS = {"connect", "disconnect"}
+ACTIONS = {"connect", "disconnect", "logout"}
 
 # CyberGhost account/device API — endpoints and the app key below are the same
 # ones embedded in the official cyberghostvpn CLI (verified against its 1.4.1 build).
@@ -61,7 +67,7 @@ USER_AGENT = (
 
 # Country Code -> Primary CyberGhost city slug.
 # Mirrors the country list in Countries.js — keep both in sync
-# (tests/test_runner.py enforces coverage). A wrong/unknown slug fails
+# (tests/test_validation.py enforces coverage). A wrong/unknown slug fails
 # cleanly with a connection error, it can never connect somewhere else.
 CITY_MAP = {
     "AD": "andorra",
@@ -163,9 +169,42 @@ CITY_MAP = {
 
 # The vendor's city spelling and its dialup hostname prefix are not always the
 # same. Keep CITY_MAP suitable for CLI inventory queries, and override only the
-# endpoint prefix where the live inventory differs (Ukraine currently returns
-# kiev-s401-iNN hosts for the city displayed as Kyiv).
-DIALUP_CITY_MAP = {**CITY_MAP, "UA": "kiev"}
+# endpoint prefix where the live DNS differs. Verified by resolving and
+# TLS-checking the nodes (see `probe`): Ukraine serves kiev-*, Italy milano-*
+# (also rome-*), Israel jerusalem-*, Kazakhstan astana-* and Morocco rabat-*.
+DIALUP_CITY_MAP = {
+    **CITY_MAP,
+    "UA": "kiev",
+    "IT": "milano",
+    "IL": "jerusalem",
+    "KZ": "astana",
+    "MA": "rabat",
+    # From CyberGhost's own list (servers.json): Bosnia is served from Travnik
+    # and China from Shenzhen (the old "hongkong" guess landed in Hong Kong).
+    "BA": "travnik",
+    "CN": "shenzhen",
+}
+
+# Without the vendor CLI there is no live inventory. Rather than trusting a
+# few fixed racks (dead racks stall connect; many countries use others), probe
+# this pool and try only hosts that answer, fastest first. Racks seen live
+# range from 401 to 418.
+DIALUP_RACKS = tuple(range(401, 421))
+DIALUP_INSTANCES = ("01", "02", "03")
+ENDPOINT_PROBE_BUDGET_SECONDS = 4.0
+ENDPOINT_PROBE_TIMEOUT_SECONDS = 2.5
+ENDPOINT_PROBE_GRACE_SECONDS = 1.0
+LIVE_INVENTORY_BUDGET_SECONDS = 6
+# Real server names: a bundled snapshot of CyberGhost's list (regenerated with
+# scripts/update-servers.py) and a per-user cache refreshed by live lookups.
+BUNDLED_SERVERS_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "servers.json")
+SERVER_CACHE_RELATIVE_PATH = os.path.join(".cache", "cyberghost", "servers.json")
+SERVER_CACHE_MAX_AGE_SECONDS = 30 * 86400
+MAX_SERVER_LIST_BYTES = 2 * 1024 * 1024
+# Probing every known server of a large country would be slow and noisy.
+PROBE_SAMPLE_SIZE = 48
+# About 500 bytes per server; the largest countries list a few thousand.
+MAX_INVENTORY_RESPONSE_BYTES = 4 * 1024 * 1024
 
 _HANDSHAKE_UNITS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 
@@ -726,156 +765,19 @@ def clean_command_error(text, fallback="Command failed"):
     return fallback[:512]
 
 
-def cli_connection_state():
-    """Return the vendor's observed state, or None when its probe is inconclusive.
-
-    This is process/tunnel presence, not proof of routing or leak protection.
-    Unknown output must never count as successful activation or cleanup.
-    """
-    try:
-        result = run_bounded(
-            [system_binary("cyberghostvpn"), "--status"],
-            timeout=3,
-            max_output_bytes=8 * 1024,
-            env=cyberghost_cli_environment(),
-        )
-    except (OSError, subprocess.TimeoutExpired, RuntimeError):
-        return None
-    if result.returncode != 0:
-        return None
-    output = (result.stdout or "").strip()
-    if re.search(r"^No VPN connections? found\.?$", output, re.I | re.M):
-        return False
-    if re.search(r"^VPN connection found\.?$", output, re.I | re.M):
-        return True
-    return None
-
-
-def stop_cli_connection():
-    result = run_bounded(
-        [system_binary("cyberghostvpn"), "--stop"],
-        timeout=20,
-        max_output_bytes=16 * 1024,
-        env=cyberghost_cli_environment(),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(clean_command_error(result.stderr or result.stdout, "Vendor stop command failed"))
-    if cli_connection_state() is not False:
-        raise RuntimeError("Could not confirm that the vendor VPN stopped")
-
-
-def connect_via_cli(country_code, server_type, protocol, streaming_service=None):
-    """Delegate optional modes, then verify activation instead of trusting exit zero."""
-    cc = validate_country_code(country_code)
-    context = f"{cc} via {protocol} / {server_type}"
-    if server_type == "streaming" and streaming_service:
-        context += f" ({streaming_service})"
-
-    # Validate before entering the activation/rollback boundary.
-    cmd = [system_binary("cyberghostvpn")]
-    if server_type == "torrent":
-        cmd.append("--torrent")
-    elif server_type == "streaming":
-        cmd += ["--streaming", validate_streaming_service(streaming_service)]
-    else:
-        cmd.append("--traffic")
-    if protocol == "wireguard":
-        cmd.append("--wireguard")
-    else:
-        cmd += ["--openvpn", "--connection", "tcp" if protocol == "openvpn_tcp" else "udp"]
-    cmd += ["--country-code", cc, "--connect"]
-
-    print(f"Connecting to {cc} ({protocol} / {server_type}) via cyberghostvpn CLI...")
-    try:
-        result = run_bounded(cmd, timeout=120, max_output_bytes=16 * 1024, env=cyberghost_cli_environment())
-        if result.returncode != 0:
-            raise RuntimeError(
-                clean_command_error(
-                    result.stdout or result.stderr,
-                    f"cyberghostvpn connect to {context} failed (exit {result.returncode})",
-                )
-            )
-        # The vendor can exit zero even when its daemon fails. Allow a short,
-        # bounded startup grace period; never infer success from connect text.
-        for attempt in range(3):
-            if cli_connection_state() is True:
-                break
-            if attempt < 2:
-                time.sleep(0.5)
-        else:
-            raise RuntimeError(f"cyberghostvpn reported success for {context}, but no active VPN could be verified")
-    except FileNotFoundError as exc:
-        raise RuntimeError("'cyberghostvpn' CLI is not installed. Install it or use WireGuard traffic mode.") from exc
-    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
-        message = (
-            f"cyberghostvpn connect to {context} timed out."
-            if isinstance(exc, subprocess.TimeoutExpired)
-            else clean_command_error(exc)
-        )
-        try:
-            stop_cli_connection()
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as cleanup_error:
-            message += f" Cleanup failed: {clean_command_error(cleanup_error)}"
-        raise RuntimeError(message) from exc
-
-    print(f"Vendor VPN active for {cc} via {protocol} ({server_type}).")
-    return {"backend": "cyberghostvpn", "country": cc, "protocol": protocol, "server_type": server_type}
-
-
 def find_config_path(override_path=None):
     if override_path:
         return os.path.abspath(os.path.expanduser(override_path))
 
-    if os.geteuid() != 0:
-        env_override = os.environ.get("CYBERGHOST_CONFIG")
-        if env_override:
-            return os.path.abspath(os.path.expanduser(env_override))
+    env_override = os.environ.get("CYBERGHOST_CONFIG")
+    if env_override:
+        return os.path.abspath(os.path.expanduser(env_override))
 
     return user_config_path()
 
 
 def invoking_user():
-    """Return the user who initiated pkexec, not root's environment user."""
-    if os.geteuid() == 0:
-        raw_uid = os.environ.get("PKEXEC_UID", "")
-        if raw_uid.isdigit():
-            try:
-                return pwd.getpwuid(int(raw_uid))
-            except KeyError:
-                pass
-    try:
-        return pwd.getpwuid(os.getuid())
-    except KeyError:
-        return pwd.getpwnam(os.environ.get("USER") or "root")
-
-
-def cyberghost_cli_environment():
-    """Select the initiating user's vendor configuration under pkexec.
-
-    CLI 1.4.1 constructs /home/<SUDO_USER or USER>/.cyberghost, ignoring
-    HOME. Set USER from the verified invoking uid and do not inherit
-    SUDO_USER. Keep HOME correct for dependencies and other CLI versions.
-    The vendor's hard-coded /home layout needs separate compatibility work
-    for accounts with nonstandard home directories.
-    """
-    if os.geteuid() != 0 or not os.environ.get("PKEXEC_UID", "").isdigit():
-        return None
-
-    user = invoking_user()
-    # Use an allowlist rather than inheriting the caller's environment. The
-    # vendor CLI needs the user's HOME to find its account config, but must not
-    # receive interpreter hooks, dynamic-loader overrides, XDG redirects or
-    # shell startup files while it is running as root.
-    env = {
-        "HOME": user.pw_dir,
-        "USER": user.pw_name,
-        "LOGNAME": user.pw_name,
-        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    }
-    for variable in ("LANG", "LC_ALL", "LC_CTYPE", "TERM"):
-        if variable in os.environ:
-            env[variable] = os.environ[variable]
-    return env
+    return pwd.getpwuid(os.getuid())
 
 
 def user_config_path():
@@ -886,12 +788,10 @@ def legacy_config_path():
     return os.path.join(invoking_user().pw_dir, ".cyberghost", "config.ini")
 
 
-def validate_user_config_path(path, require_default=False):
+def validate_user_config_path(path):
     """Keep account state inside the invoking user's private CyberGhost directory."""
     expected = os.path.abspath(user_config_path())
     candidate = os.path.abspath(os.path.expanduser(path or expected))
-    if require_default and candidate not in (expected, os.path.abspath(legacy_config_path())):
-        raise RuntimeError("Root helper may only use the invoking user's CyberGhost config")
     if os.path.commonpath((candidate, os.path.dirname(expected))) != os.path.dirname(expected):
         raise RuntimeError("Configuration path must stay inside ~/.cyberghost")
     if os.path.basename(candidate) not in ("native.ini", "config.ini"):
@@ -902,19 +802,20 @@ def validate_user_config_path(path, require_default=False):
     return candidate
 
 
-def get_credentials(config_path=None):
+def load_account(config_path=None):
+    """Read device credentials plus display metadata from the active config."""
     path = find_config_path(config_path)
     # Read-only compatibility: never rewrite the vendor CLI's credentials.
     # A present but invalid native file must fail closed, not fall back.
     if path == user_config_path() and not os.path.lexists(path):
         path = legacy_config_path()
-    if os.geteuid() == 0 and os.environ.get("PKEXEC_UID", "").isdigit():
-        path = validate_user_config_path(path, require_default=True)
     if not os.path.exists(path):
         raise RuntimeError(
             f"Configuration file not found: {path}. Please link your account or run 'cyberghostvpn --setup' first."
         )
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    # O_NONBLOCK keeps a FIFO from stalling the runner inside open(); the
+    # S_ISREG check below then rejects it.
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
     except OSError as exc:
@@ -930,9 +831,8 @@ def get_credentials(config_path=None):
             raise RuntimeError(f"Configuration file {path} exceeds maximum size limit (64KB).")
         if file_stat.st_mode & 0o077:
             raise RuntimeError(f"Configuration file must be private (mode 600): {path}")
-        if os.geteuid() == 0 and os.environ.get("PKEXEC_UID", "").isdigit():
-            if file_stat.st_uid != invoking_user().pw_uid:
-                raise RuntimeError("Configuration file must belong to the invoking user")
+        if file_stat.st_uid != os.getuid():
+            raise RuntimeError("Configuration file must belong to the current user")
 
         with os.fdopen(fd, "r", encoding="utf-8", errors="strict") as config_file:
             fd = None
@@ -949,7 +849,68 @@ def get_credentials(config_path=None):
 
     token = validate_api_credential(cfg.get("device", "token").strip(), "device token")
     secret = validate_api_credential(cfg.get("device", "secret").strip(), "device secret")
-    return token, secret
+    try:
+        username = validate_config_text(cfg.get("account", "username", fallback=""), "username", 256)
+    except RuntimeError:
+        username = ""
+    if os.path.abspath(path) == os.path.abspath(user_config_path()):
+        source = "native"
+    elif os.path.abspath(path) == os.path.abspath(legacy_config_path()):
+        source = "legacy"
+    else:
+        source = "custom"
+    jwt = cfg.get("session", "jwt", fallback="").strip()
+    try:
+        jwt = validate_api_credential(jwt, "session token") if jwt else ""
+    except RuntimeError:
+        jwt = ""
+    user_id = cfg.get("session", "user_id", fallback="").strip()
+    return {
+        "token": token,
+        "secret": secret,
+        "username": username,
+        "path": path,
+        "source": source,
+        "jwt": jwt,
+        "user_id": user_id if user_id.isdigit() else "",
+    }
+
+
+def get_credentials(config_path=None):
+    account = load_account(config_path)
+    return account["token"], account["secret"]
+
+
+def logout():
+    """Forget this plugin's device credentials, disconnecting our tunnel first.
+
+    Only ~/.cyberghost/native.ini is removed. The vendor CLI's config.ini is
+    not ours to delete; the result reports when it still provides an account.
+    """
+    if os.geteuid() == 0:
+        raise RuntimeError("Run CyberGhost as your desktop user.")
+    disconnected = False
+    if nm_available():
+        ip_binary = system_binary("ip")
+        if legacy_tunnel_active(ip_binary):
+            raise LegacyTunnelError(LEGACY_TUNNEL_MESSAGE)
+        if nm_active_state() or nm_profile_exists():
+            disconnected = disconnect()["connected"] is False
+    path = validate_user_config_path(user_config_path())
+    try:
+        # unlink removes a symlink itself, never its target.
+        os.unlink(path)
+        removed = True
+    except FileNotFoundError:
+        removed = False
+    except OSError as exc:
+        raise RuntimeError(f"Could not remove {path}: {exc}") from exc
+    try:
+        remaining = load_account(None)["source"]
+    except (OSError, RuntimeError, configparser.Error):
+        remaining = ""
+    print("Logged out." if removed else "No plugin account was linked.")
+    return {"logged_out": removed, "disconnected": disconnected, "connected": False, "remaining_source": remaining}
 
 
 def get_servers_for_country(country_code, server_type="traffic"):
@@ -975,7 +936,6 @@ def get_servers_for_country(country_code, server_type="traffic"):
             cmd,
             timeout=5,
             max_output_bytes=16 * 1024,
-            env=cyberghost_cli_environment(),
         )
 
         if res.returncode != 0:
@@ -1019,7 +979,6 @@ def get_streaming_services(country_code):
             [system_binary("cyberghostvpn"), "--streaming", "--country-code", cc],
             timeout=8,
             max_output_bytes=32 * 1024,
-            env=cyberghost_cli_environment(),
         )
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as exc:
         message = clean_command_error(exc, "streaming service discovery unavailable")
@@ -1051,109 +1010,268 @@ def get_streaming_services(country_code):
     return services
 
 
-def generate_wireguard_keys():
-    try:
-        wg_binary = system_binary("wg")
-        priv_raw = run_bounded([wg_binary, "genkey"], timeout=5, max_output_bytes=256).stdout.strip()
-        pub_raw = run_bounded(
-            [wg_binary, "pubkey"], timeout=5, input_data=priv_raw.encode(), max_output_bytes=256
-        ).stdout.strip()
-        priv = validate_wireguard_key(priv_raw)
-        pub = validate_wireguard_key(pub_raw)
-        return priv, pub
-    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
-        raise RuntimeError(
-            f"Failed to generate WireGuard keys using 'wg': {e}. Ensure wireguard-tools is installed."
-        ) from e
+def group_server_names(names):
+    """{"lisbon-s405": [1, 2, ...]}: the compact form used on disk."""
+    grouped = {}
+    for name in names:
+        prefix, _, instance = name.rpartition("-i")
+        grouped.setdefault(prefix, []).append(int(instance))
+    return {prefix: sorted(set(numbers)) for prefix, numbers in sorted(grouped.items())}
 
 
-def build_wg_config(private_key, peer_ip, server_key, server_ip, server_port, dns_servers=None):
-    """
-    Render a wg-quick config that tunnels IPv4 AND IPv6 (no v6 leak).
-    Validates all inputs strictly to eliminate directive and newline injection.
-    """
-    valid_priv = validate_wireguard_key(private_key)
-    valid_peer_ip = validate_ip(peer_ip)
-    valid_server_key = validate_wireguard_key(server_key)
-    valid_server_host = validate_endpoint_host(server_ip)
-    endpoint_host = f"[{valid_server_host}]" if ":" in valid_server_host else valid_server_host
-    valid_server_port = validate_port(server_port)
-    valid_dns = validate_dns_servers(dns_servers, require_nonempty=True)
-    peer_prefix = "/128" if ":" in valid_peer_ip else "/32"
-
-    lines = [
-        "[Interface]",
-        f"PrivateKey = {valid_priv}",
-        f"Address = {valid_peer_ip}{peer_prefix}",
-    ]
-    if valid_dns:
-        lines.append(f"DNS = {valid_dns}")
-    lines += [
-        "",
-        "[Peer]",
-        f"PublicKey = {valid_server_key}",
-        "AllowedIPs = 0.0.0.0/0, ::/0",
-        f"Endpoint = {endpoint_host}:{valid_server_port}",
-        "PersistentKeepalive = 25",
-        "",
-    ]
-    return "\n".join(lines)
-
-
-def parse_handshake_seconds(text):
-    """'latest handshake: 2 minutes, 34 seconds ago' -> 154. None if unparsable."""
-    if not text:
-        return None
-    total = 0
-    found = False
-    safe_text = str(text)[:256]
-    for amount, unit in re.findall(r"(\d+)\s*(second|minute|hour|day)", safe_text, re.I):
-        u = unit.lower().rstrip("s")
-        if u in _HANDSHAKE_UNITS:
-            total += int(amount) * _HANDSHAKE_UNITS[u]
-            found = True
-    return total if found else None
-
-
-def parse_wg_show(output):
-    """Extract endpoint / transfer / handshake age from `wg show <iface>` output."""
-    info = {}
-    safe_out = str(output)[:4096]
-    for line in safe_out.splitlines():
-        if ":" not in line:
+def expand_server_names(grouped, limit=20000):
+    """Inverse of group_server_names; every name is strictly validated."""
+    names = []
+    if not isinstance(grouped, dict):
+        return names
+    for prefix, numbers in grouped.items():
+        if not isinstance(prefix, str) or not isinstance(numbers, list):
             continue
-        key, _, value = line.partition(":")
-        key = key.strip().lower()
-        value = value.strip()
-        if key == "endpoint":
-            info["endpoint"] = value[:64]
-        elif key == "transfer":
-            info["transfer"] = value[:64]
-        elif key == "latest handshake":
-            secs = parse_handshake_seconds(value)
-            if secs is not None:
-                info["handshake_sec"] = secs
-    return info
+        for number in numbers:
+            if isinstance(number, bool) or not isinstance(number, int) or not 0 <= number < 10000:
+                continue
+            try:
+                names.append(validate_server_selector(f"{prefix}-i{number:02d}"))
+            except ValueError:
+                continue
+            if len(names) >= limit:
+                return names
+    return names
 
 
-def select_native_candidates(country_code, server_type="traffic", city=None, server=None):
+def _read_server_list(path):
+    try:
+        info = os.stat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SERVER_LIST_BYTES:
+            return {}
+        with open(path, encoding="utf-8") as stream:
+            data = json.load(stream)
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def server_cache_path():
+    return os.path.join(invoking_user().pw_dir, SERVER_CACHE_RELATIVE_PATH)
+
+
+def known_servers(country_code, now=None):
+    """Real server names for a country: a fresh cache entry, else the bundle.
+
+    None means the country is not in the snapshot; an empty list means
+    CyberGhost listed no WireGuard servers there when it was generated.
+    """
+    cc = validate_country_code(country_code)
+    now = now if now is not None else time.time()
+    cached = _read_server_list(server_cache_path()).get("countries", {}).get(cc)
+    if isinstance(cached, dict):
+        updated = cached.get("updated")
+        if isinstance(updated, (int, float)) and 0 <= now - updated <= SERVER_CACHE_MAX_AGE_SECONDS:
+            names = expand_server_names(cached.get("servers"))
+            if names:
+                return names
+    bundled = _read_server_list(BUNDLED_SERVERS_PATH).get("countries", {})
+    if cc not in bundled:
+        return None
+    return expand_server_names(bundled.get(cc))
+
+
+def remember_servers(country_code, names):
+    """Best-effort: keep the latest live list so later fallbacks stay current."""
+    path = server_cache_path()
+    try:
+        directory = os.path.dirname(path)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        data = _read_server_list(path)
+        countries = data.get("countries") if isinstance(data.get("countries"), dict) else {}
+        countries[validate_country_code(country_code)] = {
+            "updated": int(time.time()),
+            "servers": group_server_names(names),
+        }
+        with tempfile.NamedTemporaryFile("w", dir=directory, delete=False, prefix=".servers_", encoding="utf-8") as tf:
+            json.dump({"countries": countries}, tf, separators=(",", ":"))
+            temp_name = tf.name
+        os.replace(temp_name, path)
+    except (OSError, ValueError):
+        pass
+
+
+def is_nospy(name):
+    # NoSpy servers are a separately sold add-on; use them only as a last choice.
+    return name.startswith("nospy")
+
+
+def probe_sample(names, size=PROBE_SAMPLE_SIZE):
+    """Spread a probe across cities and racks, randomly within each."""
+    regular = [name for name in names if not is_nospy(name)]
+    names = regular or names
+    by_prefix = {}
+    for name in names:
+        by_prefix.setdefault(name.rpartition("-i")[0], []).append(name)
+    queues = list(by_prefix.values())
+    for queue in queues:
+        random.shuffle(queue)
+    random.shuffle(queues)
+    sample = []
+    while queues and len(sample) < size:
+        for queue in list(queues):
+            if queue:
+                sample.append(queue.pop())
+            if not queue:
+                queues.remove(queue)
+            if len(sample) >= size:
+                break
+    return sample
+
+
+def jwt_expiry(jwt):
+    """Return the token's `exp` (epoch seconds) without verifying it, or None."""
+    try:
+        payload = jwt.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        expiry = claims.get("exp") if isinstance(claims, dict) else None
+        return int(expiry) if isinstance(expiry, (int, float)) and not isinstance(expiry, bool) else None
+    except (IndexError, ValueError, TypeError, UnicodeError, binascii.Error):
+        return None
+
+
+def session_usable(jwt, now=None):
+    if not jwt:
+        return False
+    expiry = jwt_expiry(jwt)
+    return expiry is None or expiry > (now if now is not None else time.time()) + 60
+
+
+def account_user_id(jwt):
+    """Best-effort numeric account id, which CyberGhost's server filters accept."""
+    try:
+        res = api_request("GET", "/my/account?fields=(id)&language=en", jwt=jwt, budget=10)
+        user_id = str(response_json(res).get("id", "")) if res.status_code == 200 else ""
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    return user_id if user_id.isdigit() else ""
+
+
+def _number(value):
+    """Accept JSON numbers or numeric strings; None for anything else."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    # Signed (coordinates: Lisbon is at -9.13) with up to a float repr's digits.
+    if isinstance(value, str) and re.fullmatch(r"-?\d{1,9}(?:\.\d{1,20})?", value.strip()):
+        return float(value)
+    return None
+
+
+def account_location(jwt):
+    """User id plus CyberGhost's IP-based location, which its server filter requires."""
+    res = api_request(
+        "GET", "/my/account?fields=(id,location)&language=en", jwt=jwt, budget=LIVE_INVENTORY_BUDGET_SECONDS
+    )
+    if res.status_code != 200:
+        return None
+    data = response_json(res)
+    location = data.get("location") if isinstance(data.get("location"), dict) else {}
+    latitude, longitude = _number(str(location.get("latitude", ""))), _number(str(location.get("longitude", "")))
+    user_id = str(data.get("id", ""))
+    if latitude is None or longitude is None or not user_id.isdigit():
+        return None
+    return user_id, latitude, longitude
+
+
+def parse_live_inventory(data, max_items=8192):
+    """Collect instance names and load from CyberGhost's server-filter response.
+
+    The layout is not documented, so walk the JSON (bounded) and accept only
+    values that pass the same strict selector validation as the addKey path.
+    """
+    found = {}
+    stack = [(data, 0)]
+    visited = 0
+    while stack and visited < 4 * max_items:
+        node, depth = stack.pop()
+        visited += 1
+        if depth > 6:
+            continue
+        if isinstance(node, list):
+            stack.extend((item, depth + 1) for item in node[:max_items])
+        elif isinstance(node, dict):
+            name = None
+            for key in ("instance", "real", "name", "displayName", "hostname"):
+                value = node.get(key)
+                if isinstance(value, str):
+                    candidate = value.strip().lower()
+                    if candidate.endswith(".cg-dialup.net"):
+                        candidate = candidate[: -len(".cg-dialup.net")]
+                    try:
+                        name = validate_server_selector(candidate)
+                        break
+                    except ValueError:
+                        continue
+            # CyberGhost sends counts as strings ("17") and marks capacity with
+            # full="1"; a full server would only reject the key exchange.
+            if name and str(node.get("full", "0")).strip() != "1":
+                users, capacity = _number(node.get("totalusers")), _number(node.get("Max_Users"))
+                load = 100.0
+                if users is not None and users >= 0 and capacity and capacity > 0:
+                    load = max(0.0, min(100.0, 100.0 * users / capacity))
+                found[name] = min(load, found.get(name, 100.0))
+            stack.extend((value, depth + 1) for value in node.values() if isinstance(value, (list, dict)))
+    return sorted(found, key=lambda host: (is_nospy(host), found[host], host))
+
+
+def live_server_inventory(country_code, session):
+    """CyberGhost's own server list for a country, lowest load first, or None."""
+    jwt = (session or {}).get("jwt", "")
+    if not session_usable(jwt):
+        return None
+    cc = validate_country_code(country_code)
+    try:
+        # The filter rejects requests without the user's coordinates. They are
+        # fetched per request: IP-based, so they move with the network.
+        where = account_location(jwt)
+        if where is None:
+            sys.stderr.write("Live server list unavailable (no account location); probing servers instead.\n")
+            return None
+        user_id, latitude, longitude = where
+        path = (
+            f"/my/servers/filters/74?filter_protocol=wireguard&filter_country={cc}"
+            f"&filter_user_id={user_id}&filter_user_latitude={latitude}&filter_user_longitude={longitude}"
+        )
+        res = api_request(
+            "GET", path, jwt=jwt, budget=LIVE_INVENTORY_BUDGET_SECONDS, max_bytes=MAX_INVENTORY_RESPONSE_BYTES
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        sys.stderr.write(f"Live server list unavailable: {clean_command_error(exc)}\n")
+        return None
+    if res.status_code != 200:
+        # 401 means the session expired; the probe fallback still connects.
+        sys.stderr.write(f"Live server list unavailable (HTTP {res.status_code}); probing servers instead.\n")
+        return None
+    try:
+        data = json.loads(getattr(res, "_cyberghost_body", b"").decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None
+    names = parse_live_inventory(data)
+    if names:
+        remember_servers(cc, names)
+    return names or None
+
+
+def select_native_candidates(country_code, server_type="traffic", city=None, server=None, session=None):
     """Select validated, bounded native WireGuard endpoint candidates.
 
-    The privileged fixed helper never invokes the optional vendor CLI. It uses
-    the bounded static inventory (or an explicitly validated server selector),
-    so root-side execution is limited to native WireGuard operations.
+    Order: an explicit server; the vendor CLI's inventory; CyberGhost's live
+    list (session token); probing real names from the cache or the bundled
+    snapshot; and, only as a last resort, a guessed rack pool.
     """
     cc = validate_country_code(country_code)
     selected_server = validate_server_selector(server) if server else None
-    use_cli_inventory = os.geteuid() != 0
-    cli_servers = [] if city or not use_cli_inventory else get_servers_for_country(cc, server_type)
-
-    if selected_server and use_cli_inventory:
-        available_servers = {item["server"] for item in cli_servers}
-        if selected_server not in available_servers:
-            raise RuntimeError(
-                f"Server '{selected_server}' is not available for {cc}. Refresh the server list and try again."
-            )
+    cli_servers = [] if city or selected_server else get_servers_for_country(cc, server_type)
+    # The vendor CLI's inventory wins when installed; otherwise ask CyberGhost's
+    # API directly with the saved session, before falling back to probing.
+    live_servers = None if city or selected_server or cli_servers else live_server_inventory(cc, session)
 
     if city:
         city_slug = _slug(city)
@@ -1173,14 +1291,106 @@ def select_native_candidates(country_code, server_type="traffic", city=None, ser
         candidates = [selected_server]
     elif cli_servers:
         candidates = [item["server"] for item in cli_servers]
+    elif live_servers:
+        candidates = live_servers
     else:
-        candidates = [
-            f"{city_slug}-s{instance}-i{idx}" for instance in ("405", "401", "406", "407") for idx in ("01", "02", "03")
-        ]
+        reachable = []
+        known = known_servers(cc)
+        if known == []:
+            raise RuntimeError(f"CyberGhost lists no WireGuard servers for {cc}. Choose another country.")
+        if known:
+            reachable = reachable_endpoints([f"{name}.cg-dialup.net" for name in probe_sample(known)])
+        if not reachable:
+            # Last resort for countries missing from the snapshot.
+            pool = [f"{city_slug}-s{rack}-i{idx}.cg-dialup.net" for rack in DIALUP_RACKS for idx in DIALUP_INSTANCES]
+            reachable = reachable_endpoints(pool)
+        if not reachable:
+            raise RuntimeError(
+                f"No reachable CyberGhost servers found for {cc}. "
+                "Try another country, or install the cyberghostvpn CLI for its live server list."
+            )
+        candidates = [host[: -len(".cg-dialup.net")] for host in reachable]
 
     seen = set()
     candidates = [candidate for candidate in candidates if not (candidate in seen or seen.add(candidate))]
     return cc, [f"{candidate}.cg-dialup.net" for candidate in candidates[:MAX_NATIVE_CANDIDATES]]
+
+
+def _probe_endpoint(host, port=1337, timeout=ENDPOINT_PROBE_TIMEOUT_SECONDS):
+    """Return (host, seconds) when the WireGuard API port accepts TCP, else (host, None)."""
+    started = time.monotonic()
+    try:
+        address = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)[0][4]
+        with socket.create_connection(address[:2], timeout=timeout):
+            pass
+    except OSError:
+        return host, None
+    return host, time.monotonic() - started
+
+
+def reachable_endpoints(hosts, budget=ENDPOINT_PROBE_BUDGET_SECONDS, grace=ENDPOINT_PROBE_GRACE_SECONDS):
+    """Probe hosts in parallel within a hard budget; reachable ones, fastest first.
+
+    No credentials are sent: this is DNS plus a TCP connect to port 1337. Once
+    the first host answers, slower ones get only `grace` seconds more (None
+    waits for the whole budget), so dead racks never stall a connect.
+    """
+    if not hosts:
+        return []
+    deadline = time.monotonic() + budget
+    first_answer_at = None
+    answered = []
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(16, len(hosts)))
+    try:
+        pending = {executor.submit(_probe_endpoint, host) for host in hosts}
+        while pending and len(answered) < MAX_NATIVE_CANDIDATES:
+            limit = deadline
+            if first_answer_at is not None and grace is not None:
+                limit = min(deadline, first_answer_at + grace)
+            remaining = limit - time.monotonic()
+            if remaining <= 0:
+                break
+            done, pending = concurrent.futures.wait(
+                pending, timeout=remaining, return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            for future in done:
+                host, latency = future.result()
+                if latency is not None:
+                    answered.append((host, latency))
+                    if first_answer_at is None:
+                        first_answer_at = time.monotonic()
+    finally:
+        # Never wait on a stuck resolver beyond the budget.
+        executor.shutdown(wait=False, cancel_futures=True)
+    return [host for host, _ in sorted(answered, key=lambda item: item[1])]
+
+
+def probe_servers(country_codes, session=None):
+    """Reachability report per country, for diagnostics.
+
+    The probe itself sends no credentials. With a usable session it also lists
+    what CyberGhost's own server API returns, to compare the two.
+    """
+    report = {}
+    for code in country_codes:
+        cc = validate_country_code(code)
+        city = DIALUP_CITY_MAP.get(cc)
+        if not city:
+            report[cc] = {"city": None, "reachable": []}
+            continue
+        known = known_servers(cc)
+        names = (
+            probe_sample(known)
+            if known
+            else [f"{city}-s{rack}-i{idx}" for rack in DIALUP_RACKS for idx in DIALUP_INSTANCES]
+        )
+        found = reachable_endpoints([f"{name}.cg-dialup.net" for name in names], budget=8, grace=None)
+        report[cc] = {"city": city, "known": len(known or []), "reachable": [host.split(".")[0] for host in found]}
+        if known == []:
+            report[cc]["no_wireguard"] = True
+        if session_usable((session or {}).get("jwt", "")):
+            report[cc]["live"] = live_server_inventory(cc, session) or []
+    return report
 
 
 def exchange_wireguard_key(candidates, pub_key, token, secret, country_code, deadline):
@@ -1237,109 +1447,6 @@ def exchange_wireguard_key(candidates, pub_key, token, secret, country_code, dea
     return addkey_data, connected_host
 
 
-def secure_directory_path(path, create=False, mode=0o700):
-    """Require a root-owned, non-writable directory ancestry for root paths."""
-    normalized = os.path.abspath(path)
-    if not normalized.startswith("/"):
-        raise RuntimeError(f"System path must be absolute: {path}")
-
-    current = "/"
-    for component in normalized.strip("/").split("/"):
-        if not component:
-            continue
-        current = os.path.join(current, component)
-        try:
-            info = os.lstat(current)
-        except FileNotFoundError:
-            if not create or current != normalized:
-                raise RuntimeError(f"Trusted system directory is missing: {current}") from None
-            os.mkdir(current, mode)
-            os.chmod(current, mode)
-            info = os.lstat(current)
-        except OSError as exc:
-            raise RuntimeError(f"Could not inspect system directory {current}: {exc}") from exc
-        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-            raise RuntimeError(f"System directory must not be a symlink or non-directory: {current}")
-        if info.st_uid != 0 or info.st_mode & 0o022:
-            raise RuntimeError(f"System directory is not trusted: {current}")
-    return normalized
-
-
-def secure_wireguard_config(path=None):
-    """Validate the generated config before any privileged consumer reads it."""
-    path = path or WG_CONF_PATH
-    parent = os.path.dirname(os.path.abspath(path))
-    if os.geteuid() == 0:
-        try:
-            secure_directory_path(parent)
-        except RuntimeError:
-            # The final /etc/wireguard directory is allowed to be absent on a
-            # fresh host; write_wireguard_config creates only that directory.
-            if os.path.lexists(parent):
-                raise
-            return False
-    if not os.path.lexists(path):
-        return False
-    try:
-        info = os.lstat(path)
-    except OSError as exc:
-        raise RuntimeError(f"Could not inspect WireGuard config: {exc}") from exc
-    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
-        raise RuntimeError("WireGuard config must be a regular file, not a symlink")
-    if os.geteuid() == 0 and (info.st_uid != 0 or info.st_mode & 0o077 or info.st_nlink != 1):
-        raise RuntimeError("WireGuard config must be a private, single-link root-owned file")
-    return True
-
-
-@contextlib.contextmanager
-def lifecycle_lock(timeout=30):
-    """Serialize all root-side mutations of the single global tunnel."""
-    global _LIFECYCLE_LOCK_DEPTH, _LIFECYCLE_LOCK_FD
-    if os.geteuid() != 0:
-        yield
-        return
-
-    if _LIFECYCLE_LOCK_DEPTH:
-        _LIFECYCLE_LOCK_DEPTH += 1
-        try:
-            yield
-        finally:
-            _LIFECYCLE_LOCK_DEPTH -= 1
-        return
-
-    secure_directory_path(os.path.dirname(LIFECYCLE_LOCK_PATH))
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(LIFECYCLE_LOCK_PATH, flags, 0o600)
-    except OSError as exc:
-        raise RuntimeError(f"Could not open the CyberGhost lifecycle lock: {exc}") from exc
-
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
-            raise RuntimeError("CyberGhost lifecycle lock is not a trusted root-owned file")
-        os.fchmod(fd, 0o600)
-        deadline = time.monotonic() + max(0.1, timeout)
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Another CyberGhost VPN operation is already in progress") from None
-                time.sleep(0.1)
-        _LIFECYCLE_LOCK_FD = fd
-        _LIFECYCLE_LOCK_DEPTH = 1
-        try:
-            yield
-        finally:
-            _LIFECYCLE_LOCK_DEPTH = 0
-            _LIFECYCLE_LOCK_FD = None
-            fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-
-
 def _interface_state(ip_binary):
     """Return True/False/None for present/absent/unknown interface state."""
     try:
@@ -1354,278 +1461,315 @@ def _interface_state(ip_binary):
     return None
 
 
-def _wireguard_fwmark():
-    """Read the table selected by wg-quick before the interface is removed."""
+# ==============================================================================
+# WireGuard keys (RFC 7748 X25519, no wireguard-tools dependency)
+# ==============================================================================
+
+_X25519_P = 2**255 - 19
+_X25519_A24 = 121665
+_X25519_BASE = (9).to_bytes(32, "little")
+
+
+def _x25519_clamp(scalar):
+    clamped = bytearray(scalar)
+    clamped[0] &= 248
+    clamped[31] &= 127
+    clamped[31] |= 64
+    return bytes(clamped)
+
+
+def x25519(scalar, u_point):
+    """RFC 7748 section 5 Montgomery ladder over Curve25519."""
+    if len(scalar) != 32 or len(u_point) != 32:
+        raise ValueError("X25519 inputs must be 32 bytes")
+    p = _X25519_P
+    k = int.from_bytes(_x25519_clamp(scalar), "little")
+    x1 = int.from_bytes(u_point, "little") & ((1 << 255) - 1)
+    x2, z2, x3, z3, swap = 1, 0, x1, 1, 0
+    for bit in reversed(range(255)):
+        k_bit = (k >> bit) & 1
+        swap ^= k_bit
+        if swap:
+            x2, x3, z2, z3 = x3, x2, z3, z2
+        swap = k_bit
+        a = (x2 + z2) % p
+        aa = a * a % p
+        b = (x2 - z2) % p
+        bb = b * b % p
+        e = (aa - bb) % p
+        c = (x3 + z3) % p
+        d = (x3 - z3) % p
+        da = d * a % p
+        cb = c * b % p
+        x3 = (da + cb) ** 2 % p
+        z3 = x1 * (da - cb) ** 2 % p
+        x2 = aa * bb % p
+        z2 = e * (aa + _X25519_A24 * e) % p
+    if swap:
+        x2, x3, z2, z3 = x3, x2, z3, z2
+    return (x2 * pow(z2, p - 2, p) % p).to_bytes(32, "little")
+
+
+def generate_wireguard_keys():
+    """Return a fresh (private, public) WireGuard key pair as base64 strings."""
+    private = _x25519_clamp(os.urandom(32))
+    public = x25519(private, _X25519_BASE)
+    priv = validate_wireguard_key(base64.b64encode(private).decode("ascii"))
+    pub = validate_wireguard_key(base64.b64encode(public).decode("ascii"))
+    return priv, pub
+
+
+# ==============================================================================
+# NetworkManager tunnel lifecycle (unprivileged; NM authorizes through Polkit)
+# ==============================================================================
+
+
+class LegacyTunnelError(RuntimeError):
+    """A tunnel created by the pre-1.7 root helper is still up."""
+
+    code = "legacy_tunnel"
+
+
+LEGACY_TUNNEL_MESSAGE = (
+    "A tunnel from the previous CyberGhost root helper is still active. "
+    "Disconnect it before using the NetworkManager connection."
+)
+
+
+def connection_uuid():
+    """Stable per-user profile id, so every action addresses only our connection."""
+    return str(uuid.uuid5(NM_UUID_NAMESPACE, f"miguel.cyberghost:{os.getuid()}"))
+
+
+def nmcli(args, timeout=15, input_data=None):
+    # nmcli messages are parsed only for diagnostics; keep them in English.
+    env = dict(os.environ, LC_ALL="C")
+    return run_bounded(
+        [system_binary("nmcli"), *args],
+        timeout=timeout,
+        input_data=input_data,
+        max_output_bytes=32 * 1024,
+        env=env,
+    )
+
+
+def nm_available():
+    """NetworkManager (Omarchy's network stack) must be installed and running."""
     try:
-        result = run_bounded(
-            [system_binary("wg"), "show", INTERFACE, "fwmark"], timeout=5, max_output_bytes=256
-        )
+        result = nmcli(["-t", "-f", "RUNNING", "general"], timeout=5)
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired, RuntimeError):
-        return None
-    value = (result.stdout or "").strip()
-    if result.returncode != 0 or not re.fullmatch(r"(?:0x[0-9a-fA-F]+|[0-9]+)", value):
-        return None
-    mark = int(value, 16 if value.lower().startswith("0x") else 10)
-    return mark if 0 < mark <= 0xFFFFFFFF else None
+        return False
+    return result.returncode == 0 and (result.stdout or "").strip() == "running"
 
 
-def _policy_rule_uses_mark(output, mark):
-    for value in re.findall(r"(?:lookup|fwmark)\s+(0x[0-9a-fA-F]+|[0-9]+)\b", output or "", re.I):
-        if int(value, 16 if value.lower().startswith("0x") else 10) == mark:
-            return True
-    return False
+def nm_permission():
+    """Return yes/auth/no for the least-permitted action this plugin needs."""
+    try:
+        result = nmcli(["-t", "general", "permissions"], timeout=5)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired, RuntimeError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    values = {}
+    for line in (result.stdout or "").splitlines():
+        name, _, value = line.partition(":")
+        values[name.strip()] = value.strip()
+    needed = [values.get(f"org.freedesktop.NetworkManager.{name}", "") for name in NM_REQUIRED_PERMISSIONS]
+    for level in ("", "no", "auth"):
+        if level in needed:
+            return level
+    return "yes"
 
 
-def verify_wireguard_cleanup(ip_binary, resolver_binary=None, require_resolver=False, route_table=51820):
-    """Verify the side effects that wg-quick is responsible for removing."""
+def nm_active_state():
+    """Return our connection's active state ("" when inactive); raise when NM is unreadable."""
+    result = nmcli(["-t", "-f", "UUID,STATE", "connection", "show", "--active"], timeout=5)
+    if result.returncode != 0:
+        raise RuntimeError(clean_command_error(result.stderr or result.stdout, "NetworkManager state is unavailable"))
+    target = connection_uuid()
+    for line in (result.stdout or "").splitlines():
+        found_uuid, _, state = line.partition(":")
+        if found_uuid == target:
+            return state.strip()[:32]
+    return ""
+
+
+def nm_profile_exists():
+    result = nmcli(["-t", "-f", "UUID", "connection", "show"], timeout=5)
+    if result.returncode != 0:
+        raise RuntimeError(
+            clean_command_error(result.stderr or result.stdout, "NetworkManager profiles are unavailable")
+        )
+    return connection_uuid() in (result.stdout or "").split()
+
+
+def legacy_tunnel_active(ip_binary):
+    """The interface exists but is not our NetworkManager connection."""
+    return _interface_state(ip_binary) is True and nm_active_state() == ""
+
+
+def nm_remove_profile(ip_binary):
+    """Deactivate and delete our profile; return only verified residual problems."""
+    target = connection_uuid()
     problems = []
-    if not ip_binary:
-        problems.append("ip is unavailable, so interface and route cleanup cannot be verified")
-        return problems
-
+    for verb, timeout in (("down", 20), ("delete", 10)):
+        try:
+            result = nmcli(["connection", verb, "uuid", target], timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+            problems.append(f"nmcli connection {verb} failed: {clean_command_error(exc)}")
+            continue
+        # Exit 10 means the profile or activation does not exist.
+        if result.returncode not in (0, NMCLI_NOT_FOUND):
+            problems.append(clean_command_error(result.stderr or result.stdout, f"nmcli connection {verb} failed"))
+    try:
+        if nm_profile_exists():
+            problems.append("the CyberGhost NetworkManager profile is still present")
+    except RuntimeError as exc:
+        problems.append(str(exc))
     interface_state = _interface_state(ip_binary)
     if interface_state is None:
         problems.append("WireGuard interface state could not be verified")
     elif interface_state:
         problems.append(f"interface {INTERFACE} is still present")
-
-    for family in ("-4", "-6"):
-        try:
-            route_result = run_bounded(
-                [ip_binary, family, "route", "show", "table", str(route_table)],
-                timeout=5,
-                max_output_bytes=8 * 1024,
-            )
-            route_detail = f"{route_result.stdout or ''}\n{route_result.stderr or ''}"
-            # iproute2 returns exit 2 when a policy table has been removed.
-            route_table_absent = route_result.returncode == 2 and re.search(
-                r"FIB table does not exist|table .* does not exist", route_detail, re.I
-            )
-            if route_result.returncode != 0 and not route_table_absent:
-                problems.append(f"WireGuard {family} policy route table could not be verified")
-            elif route_result.returncode == 0 and (route_result.stdout or "").strip():
-                problems.append(f"WireGuard {family} policy routes remain in table {route_table}")
-
-            rule_result = run_bounded(
-                [ip_binary, family, "rule", "show"], timeout=5, max_output_bytes=8 * 1024
-            )
-            if rule_result.returncode != 0:
-                problems.append(f"WireGuard {family} policy rules could not be verified")
-            elif _policy_rule_uses_mark(rule_result.stdout, route_table):
-                problems.append(f"WireGuard {family} policy rules remain")
-        except (OSError, subprocess.TimeoutExpired, RuntimeError):
-            problems.append(f"WireGuard {family} routing state could not be verified")
-
-    if resolver_binary:
-        try:
-            resolver_result = run_bounded([resolver_binary, "-l", INTERFACE], timeout=5, max_output_bytes=8 * 1024)
-            if resolver_result.returncode == 0 and (resolver_result.stdout or "").strip():
-                problems.append("VPN resolver state remains registered")
-            elif resolver_result.returncode not in (0, 1):
-                problems.append("VPN resolver state could not be verified")
-        except (OSError, subprocess.TimeoutExpired, RuntimeError):
-            problems.append("VPN resolver state could not be verified")
-    elif require_resolver:
-        problems.append("resolvconf is unavailable, so VPN DNS cleanup cannot be verified")
-
     return problems
 
 
-def cleanup_wireguard_state(wg_quick, ip_binary, config_present=False):
-    """Tear down the tunnel and return only verified residual-state errors."""
-    initial_state = _interface_state(ip_binary) if ip_binary else None
-    route_table = _wireguard_fwmark() if initial_state is True else None
+def nm_profile_args(peer_ip, server_key, server_host, server_port, dns_servers, allowed_ips=("0.0.0.0/0", "::/0")):
+    """Build `nmcli connection add` arguments. Secrets are never part of argv."""
+    valid_peer_ip = validate_ip(peer_ip)
+    if ":" in valid_peer_ip:
+        raise RuntimeError("CyberGhost returned an IPv6 tunnel address; only IPv4 tunnel addresses are supported")
+    valid_server_key = validate_wireguard_key(server_key)
+    valid_host = validate_endpoint_host(server_host)
+    endpoint_host = f"[{valid_host}]" if ":" in valid_host else valid_host
+    valid_port = validate_port(server_port)
+    dns = [item.strip() for item in validate_dns_servers(dns_servers, require_nonempty=True).split(",")]
+    dns4 = [item for item in dns if ":" not in item]
+    dns6 = [item for item in dns if ":" in item]
+    routes = [str(ipaddress.ip_network(item)) for item in allowed_ips]
+
+    args = [
+        "connection",
+        "add",
+        # In-memory only: the profile and its per-session key vanish on NM restart.
+        "save",
+        "no",
+        "type",
+        "wireguard",
+        "con-name",
+        NM_CONNECTION_NAME,
+        "ifname",
+        INTERFACE,
+        "connection.uuid",
+        connection_uuid(),
+        "connection.autoconnect",
+        "no",
+        "ipv4.method",
+        "manual",
+        "ipv4.addresses",
+        f"{valid_peer_ip}/32",
+        "ipv4.ignore-auto-dns",
+        "yes",
+        # Link-local IPv6 lets NM install the ::/0 tunnel route, so IPv6 cannot
+        # bypass the tunnel even though CyberGhost assigns no IPv6 address.
+        "ipv6.method",
+        "link-local",
+        "ipv6.ignore-auto-dns",
+        "yes",
+        "wireguard.peers",
+        f"{valid_server_key} allowed-ips={';'.join(routes)} endpoint={endpoint_host}:{valid_port} "
+        f"persistent-keepalive=25",
+    ]
+    user = invoking_user().pw_name
+    if re.fullmatch(r"[A-Za-z0-9._][A-Za-z0-9._-]*", user):
+        args += ["connection.permissions", f"user:{user}"]
+    # `~.` plus a negative priority makes this link the exclusive DNS route in
+    # systemd-resolved. An Omarchy global DNS choice (`omarchy dns`) still wins;
+    # those public resolvers are then reached through the tunnel.
+    for family, servers in (("ipv4", dns4), ("ipv6", dns6)):
+        if servers:
+            args += [f"{family}.dns", ",".join(servers), f"{family}.dns-search", "~."]
+            args += [f"{family}.dns-priority", str(NM_DNS_PRIORITY)]
+    return args
+
+
+def nm_activate(profile_args, private_key, ip_binary, deadline):
+    """Add, key and activate the profile; roll back on every failure."""
+    target = connection_uuid()
+    key = validate_wireguard_key(private_key)
     try:
-        resolver_binary = system_binary("resolvconf")
-    except (FileNotFoundError, RuntimeError):
-        resolver_binary = None
-    require_resolver = config_present or initial_state is True
-
-    if wg_quick:
-        try:
-            down_result = run_bounded([wg_quick, "down", INTERFACE], timeout=20, max_output_bytes=8 * 1024)
-        except (OSError, subprocess.TimeoutExpired, RuntimeError):
-            down_result = None
-    else:
-        down_result = None
-
-    if ip_binary:
-        try:
-            delete_result = run_bounded(
-                [ip_binary, "link", "delete", "dev", INTERFACE], timeout=10, max_output_bytes=8 * 1024
+        added = nmcli(profile_args, timeout=15)
+        if added.returncode != 0:
+            raise RuntimeError(clean_command_error(added.stderr or added.stdout, "Could not create the VPN connection"))
+        # Omarchy's network panel uses the same rule: secrets go through the
+        # scriptable editor on stdin, because argv is world-readable in /proc.
+        keyed = nmcli(
+            ["connection", "edit", "uuid", target],
+            timeout=15,
+            input_data=f"set wireguard.private-key {key}\nsave temporary\nquit\n",
+        )
+        if keyed.returncode != 0:
+            raise RuntimeError("Could not store the WireGuard key in NetworkManager")
+        remaining = int(deadline - time.monotonic())
+        if remaining <= 2:
+            raise RuntimeError("WireGuard connection attempt timed out before activation")
+        wait = min(45, remaining - 1)
+        activated = nmcli(["--wait", str(wait), "connection", "up", "uuid", target], timeout=wait + 5)
+        if activated.returncode != 0:
+            raise RuntimeError(
+                "NetworkManager could not activate the VPN: "
+                + clean_command_error(activated.stderr or activated.stdout, "unknown error")
             )
-        except (OSError, subprocess.TimeoutExpired, RuntimeError):
-            delete_result = None
-    else:
-        delete_result = None
-
-    problems = verify_wireguard_cleanup(ip_binary, resolver_binary, require_resolver, route_table or 51820)
-    if initial_state is True and (down_result is None or down_result.returncode != 0) and not problems:
-        problems.append("wg-quick down failed for an active tunnel; other cleanup cannot be confirmed")
-    if initial_state is True and route_table is None and (down_result is None or down_result.returncode != 0):
-        problems.append("WireGuard policy table could not be identified after failed teardown")
-    # wg-quick and `ip link delete` commonly return non-zero for an already
-    # absent interface. Verified absence makes those benign; unknown state does not.
-    if problems:
-        if down_result is None:
-            problems.insert(0, "wg-quick down could not be completed")
-        elif down_result.returncode != 0:
-            problems.insert(0, clean_command_error(down_result.stderr or down_result.stdout, "wg-quick down failed"))
-        if delete_result is None:
-            problems.insert(0, "interface deletion could not be completed")
-        elif delete_result.returncode != 0 and initial_state is True:
-            problems.insert(
-                0, clean_command_error(delete_result.stderr or delete_result.stdout, "interface deletion failed")
-            )
-    return problems
-
-
-def remove_wireguard_config():
-    if not os.path.lexists(WG_CONF_PATH):
-        return
-    secure_wireguard_config()
-    try:
-        os.unlink(WG_CONF_PATH)
-    except OSError as exc:
-        raise RuntimeError(f"Could not remove WireGuard config: {exc}") from exc
-    if os.path.lexists(WG_CONF_PATH):
-        raise RuntimeError("WireGuard config remained after removal")
-
-
-def write_wireguard_config(private_key, peer_ip, server_key, server_ip, server_port, dns_servers=None):
-    """Atomically write a validated, trusted WireGuard configuration."""
-    cfg = build_wg_config(
-        private_key,
-        peer_ip,
-        server_key,
-        server_ip,
-        server_port,
-        dns_servers=validate_dns_servers(dns_servers, require_nonempty=True),
-    )
-    conf_dir = os.path.dirname(WG_CONF_PATH)
-    if os.geteuid() == 0:
-        secure_directory_path(conf_dir, create=True, mode=0o700)
-    else:
-        os.makedirs(conf_dir, exist_ok=True)
-    if os.path.lexists(WG_CONF_PATH):
-        secure_wireguard_config()
-    temp_name = None
-    try:
-        with tempfile.NamedTemporaryFile("w", dir=conf_dir, delete=False, prefix=".cyberghost_conf_") as tf:
-            os.chmod(tf.name, 0o600)
-            temp_name = tf.name
-            tf.write(cfg)
-            tf.flush()
-            os.fsync(tf.fileno())
-        os.replace(temp_name, WG_CONF_PATH)
-        temp_name = None
-        if os.geteuid() == 0:
-            secure_wireguard_config()
-    finally:
-        if temp_name:
-            try:
-                os.unlink(temp_name)
-            except OSError:
-                pass
-
-
-def best_effort_wireguard_down(wg_quick, timeout=5):
-    """Remove a partially-created interface without masking the original error."""
-    try:
-        run_bounded([wg_quick, "down", INTERFACE], timeout=timeout, max_output_bytes=8 * 1024)
-    except (OSError, subprocess.TimeoutExpired, RuntimeError):
-        pass
-
-
-def activate_wireguard(wg_quick, deadline):
-    """Activate once; every failure after launch attempts rollback, never drops DNS."""
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise RuntimeError("WireGuard connection attempt timed out before tunnel activation")
-    try:
-        result = run_bounded([wg_quick, "up", INTERFACE], timeout=min(45, remaining), max_output_bytes=16 * 1024)
-        if result.returncode != 0:
-            detail = clean_command_error(result.stderr or result.stdout, "unknown error")
-            if "resolv" in detail.lower():
-                raise RuntimeError(
-                    "VPN DNS setup failed. Configure a working resolvconf provider (for example openresolv), "
-                    "then reconnect. The tunnel was not activated without VPN DNS."
-                )
-            raise RuntimeError(f"wg-quick up failed: {detail}")
-    except (OSError, subprocess.TimeoutExpired, RuntimeError):
-        best_effort_wireguard_down(wg_quick)
-        raise
+        if nm_active_state() != "activated" or _interface_state(ip_binary) is not True:
+            raise RuntimeError("NetworkManager reported success but the CyberGhost interface is not active")
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        problems = nm_remove_profile(ip_binary)
+        message = clean_command_error(exc, "WireGuard activation failed")
+        if problems:
+            message += f"; rollback incomplete: {'; '.join(problems)}"
+        raise RuntimeError(message) from exc
 
 
 def connect(country_code="PT", server_type="traffic", city=None, config_path=None, server=None):
-    """Serialize the complete native transaction, including key exchange."""
-    with lifecycle_lock(timeout=NATIVE_CONNECT_BUDGET_SECONDS):
-        return _connect_impl(country_code, server_type, city, config_path, server)
-
-
-def _connect_impl(country_code="PT", server_type="traffic", city=None, config_path=None, server=None):
-    """Establish a native WireGuard tunnel within one bounded operation budget."""
+    """Negotiate a CyberGhost peer and activate it as a NetworkManager connection."""
+    if os.geteuid() == 0:
+        raise RuntimeError("Run CyberGhost as your desktop user; NetworkManager authorizes the connection.")
     deadline = time.monotonic() + NATIVE_CONNECT_BUDGET_SECONDS
-    token, secret = get_credentials(config_path)
-    priv_key, pub_key = generate_wireguard_keys()
+    try:
+        ip_binary = system_binary("ip")
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise RuntimeError("iproute2 is required to verify the VPN interface") from exc
+    if not nm_available():
+        raise RuntimeError("NetworkManager is not running. Omarchy's network stack is required.")
+    if legacy_tunnel_active(ip_binary):
+        raise LegacyTunnelError(LEGACY_TUNNEL_MESSAGE)
 
-    cc, candidates = select_native_candidates(country_code, server_type, city, server)
+    account = load_account(config_path)
+    token, secret = account["token"], account["secret"]
+    priv_key, pub_key = generate_wireguard_keys()
+    cc, candidates = select_native_candidates(country_code, server_type, city, server, session=account)
     addkey_data, connected_host = exchange_wireguard_key(candidates, pub_key, token, secret, cc, deadline)
 
     # A missing field gets the documented compatibility defaults. An explicit
     # empty field is invalid: never activate without a VPN DNS configuration.
-    if "dns_servers" in addkey_data:
-        raw_dns = addkey_data["dns_servers"]
-    else:
-        raw_dns = ["10.0.0.243", "10.0.0.242", "1.1.1.1"]
-    dns_servers_str = validate_dns_servers(raw_dns, require_nonempty=True)
-    raw_server_ip = addkey_data.get("server_ip") or connected_host
-    server_ip = validate_endpoint_host(raw_server_ip)
+    raw_dns = addkey_data["dns_servers"] if "dns_servers" in addkey_data else ["10.0.0.243", "10.0.0.242", "1.1.1.1"]
+    dns_servers = validate_dns_servers(raw_dns, require_nonempty=True)
+    server_ip = validate_endpoint_host(addkey_data.get("server_ip") or connected_host)
     server_port = validate_port(addkey_data.get("server_port", 1337))
     peer_ip = validate_ip(addkey_data.get("peer_ip", ""))
     server_key = validate_wireguard_key(addkey_data.get("server_key", ""))
+    profile_args = nm_profile_args(peer_ip, server_key, server_ip, server_port, dns_servers)
 
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise RuntimeError("WireGuard connection attempt timed out before tunnel setup")
-
-    with lifecycle_lock(timeout=min(30, remaining)):
-        config_present = secure_wireguard_config()
-        try:
-            ip_binary = system_binary("ip")
-            wg_quick = system_binary("wg-quick")
-        except (FileNotFoundError, RuntimeError) as exc:
-            raise RuntimeError(f"WireGuard lifecycle tools are unavailable: {clean_command_error(exc)}") from exc
-
-        cleanup_problems = cleanup_wireguard_state(wg_quick, ip_binary, config_present)
-        if cleanup_problems:
-            raise RuntimeError("Cannot safely replace the existing WireGuard state: " + "; ".join(cleanup_problems))
-
-        write_wireguard_config(priv_key, peer_ip, server_key, server_ip, server_port, dns_servers_str)
-        try:
-            activate_wireguard(wg_quick, deadline)
-            if _interface_state(ip_binary) is not True:
-                raise RuntimeError("wg-quick reported success but the CyberGhost interface is not present")
-        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
-            rollback_problems = cleanup_wireguard_state(wg_quick, ip_binary, True)
-            if rollback_problems:
-                raise RuntimeError(
-                    f"{clean_command_error(exc, 'WireGuard activation failed')}; "
-                    f"rollback incomplete: {'; '.join(rollback_problems)}"
-                ) from exc
-            try:
-                remove_wireguard_config()
-            except RuntimeError as remove_error:
-                raise RuntimeError(
-                    f"{clean_command_error(exc, 'WireGuard activation failed')}; "
-                    f"rollback completed but config cleanup failed: {remove_error}"
-                ) from exc
-            raise
+    # Replace a previous session of our own profile; nothing else is touched.
+    problems = nm_remove_profile(ip_binary)
+    if problems:
+        raise RuntimeError("Cannot replace the existing CyberGhost connection: " + "; ".join(problems))
+    nm_activate(profile_args, priv_key, ip_binary, deadline)
 
     print("VPN connection established.")
     print(f"Connected to {cc} via {connected_host} (IP: {server_ip})")
     return {
-        "backend": "wireguard",
+        "backend": "networkmanager",
         "country": cc,
         "server": connected_host,
         "server_ip": server_ip,
@@ -1635,25 +1779,94 @@ def _connect_impl(country_code="PT", server_type="traffic", city=None, config_pa
 
 
 def disconnect():
-    with lifecycle_lock(timeout=30):
+    try:
+        ip_binary = system_binary("ip")
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise RuntimeError("iproute2 is required to verify the VPN interface") from exc
+    if legacy_tunnel_active(ip_binary):
+        raise LegacyTunnelError(LEGACY_TUNNEL_MESSAGE)
+    was_up = nm_active_state() != ""
+    problems = nm_remove_profile(ip_binary)
+    if problems:
+        raise RuntimeError("Could not verify VPN cleanup: " + "; ".join(problems))
+    print("VPN connection terminated." if was_up else "No VPN connections found.")
+    return {"backend": "networkmanager", "connected": False}
+
+
+def interface_counters():
+    """Read world-readable kernel counters; handshake age needs CAP_NET_ADMIN."""
+    counters = {}
+    for name in ("rx_bytes", "tx_bytes"):
         try:
-            ip_binary = system_binary("ip")
-            wg_quick = system_binary("wg-quick")
-        except (FileNotFoundError, RuntimeError) as exc:
-            raise RuntimeError(f"WireGuard lifecycle tools are unavailable: {clean_command_error(exc)}") from exc
+            with open(f"/sys/class/net/{INTERFACE}/statistics/{name}", encoding="ascii") as stream:
+                value = stream.read(32).strip()
+        except OSError:
+            continue
+        if value.isdigit():
+            counters[name] = int(value)
+    return counters
 
-        config_present = secure_wireguard_config()
-        was_up = _interface_state(ip_binary) is True
-        cleanup_problems = cleanup_wireguard_state(wg_quick, ip_binary, config_present)
-        if cleanup_problems:
-            raise RuntimeError("Could not verify WireGuard cleanup: " + "; ".join(cleanup_problems))
-        remove_wireguard_config()
 
-    if was_up:
-        print("VPN connection terminated.")
+def format_bytes(count):
+    value = float(count)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.2f} {unit}"
+        value /= 1024
+    return f"{count} B"
+
+
+def nm_endpoint():
+    try:
+        result = nmcli(["-g", "wireguard.peers", "connection", "show", "uuid", connection_uuid()], timeout=5)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired, RuntimeError):
+        return ""
+    match = re.search(r"endpoint=(\S+)", result.stdout or "") if result.returncode == 0 else None
+    # `nmcli -g` escapes the separator characters inside values.
+    return match.group(1).replace("\\:", ":")[:64] if match else ""
+
+
+def status(as_json=False):
+    state = nm_active_state()
+    link = _interface_state(system_binary("ip"))
+    if state:
+        backend = "networkmanager"
+    elif link is True:
+        backend = "legacy"
+    else:
+        backend = None
+    connected = state == "activated" or backend == "legacy"
+    result = {
+        "connected": connected,
+        "backend": backend,
+        "state": state,
+        "interface": INTERFACE if backend else None,
+    }
+    if state == "activated":
+        counters = interface_counters()
+        result.update(counters)
+        if "rx_bytes" in counters and "tx_bytes" in counters:
+            result["transfer"] = (
+                f"{format_bytes(counters['rx_bytes'])} received, {format_bytes(counters['tx_bytes'])} sent"
+            )
+        endpoint = nm_endpoint()
+        if endpoint:
+            result["endpoint"] = endpoint
+
+    if as_json:
+        print(json.dumps(result))
+    elif backend == "legacy":
+        print("VPN connection found (previous root helper).")
+    elif connected:
+        print("VPN connection found.")
+        print(f"Interface: {INTERFACE}")
+        for key in ("endpoint", "transfer"):
+            if key in result:
+                print(f"  {key}: {result[key]}")
+    elif state:
+        print(f"VPN connection {state}.")
     else:
         print("No VPN connections found.")
-    return {"backend": "wireguard", "connected": False}
 
 
 def build_login_payload(username, password):
@@ -1664,10 +1877,12 @@ def build_device_payload(machine_name):
     return {"data": {"linuxApp": True, "machineName": machine_name}}
 
 
-def api_request(method, path, payload=None, jwt=None):
+def api_request(
+    method, path, payload=None, jwt=None, budget=ACCOUNT_API_BUDGET_SECONDS, max_bytes=MAX_HTTP_RESPONSE_BYTES
+):
     """Authenticated JSON request against the CyberGhost account API."""
     requests = load_requests()
-    deadline = time.monotonic() + ACCOUNT_API_BUDGET_SECONDS
+    deadline = time.monotonic() + budget
     headers = {
         "Content-Type": "application/json",
         "x-app-key": api_app_key(),
@@ -1683,18 +1898,18 @@ def api_request(method, path, payload=None, jwt=None):
             API_BASE + path,
             json=payload,
             headers=headers,
-            timeout=(5, min(12, ACCOUNT_API_BUDGET_SECONDS)),
+            timeout=(min(5, budget), min(12, budget)),
             verify=True,
             allow_redirects=False,
             stream=True,
         )
-        response._cyberghost_body = read_response_bounded(response, deadline=deadline)
+        response._cyberghost_body = read_response_bounded(response, max_bytes=max_bytes, deadline=deadline)
         return response
     finally:
         session.close()
 
 
-def write_user_config(path, username, device_name, device):
+def write_user_config(path, username, device_name, device, session=None):
     safe_username = validate_config_text(username, "username", 256)
     safe_device_name = validate_config_text(str(device.get("name") or device_name), "device name", 64)
     token = validate_api_credential(str(device.get("token") or ""), "device token")
@@ -1709,6 +1924,13 @@ def write_user_config(path, username, device_name, device):
         # The API returns the secret as `tokenSecret`; the CLI stores it as `secret`.
         "secret": secret,
     }
+    # The login session token reads CyberGhost's live server list, which the
+    # device token cannot. It expires on its own; the password is never kept.
+    if session and session.get("jwt"):
+        cfg["session"] = {"jwt": validate_api_credential(str(session["jwt"]), "session token")}
+        user_id = str(session.get("user_id") or "")
+        if user_id.isdigit() and len(user_id) <= 20:
+            cfg["session"]["user_id"] = user_id
     target_dir = os.path.dirname(os.path.abspath(path))
     os.makedirs(target_dir, mode=0o700, exist_ok=True)
     os.chmod(target_dir, 0o700)
@@ -1799,7 +2021,8 @@ def register(config_path=None):
         if not device.get("token"):
             raise RuntimeError("Device registration response missing token.")
 
-        write_user_config(target, username, device_name, device)
+        session = {"jwt": jwt, "user_id": account_user_id(jwt)}
+        write_user_config(target, username, device_name, device, session=session)
         print(f"Account linked. Device credentials stored in {target}")
     finally:
         # Defense in depth: drop the local copies and re-clear the env vars
@@ -1838,58 +2061,52 @@ def cli_account_configured():
 def check():
     """Report onboarding readiness as JSON (fast, no heavy imports)."""
     result = {
-        "wg_tools": shutil.which("wg-quick") is not None,
-        "dns_tools": shutil.which("resolvconf") is not None,
+        "nm": nm_available(),
+        "nm_permission": nm_permission(),
         "requests": importlib.util.find_spec("requests") is not None,
         "cli": system_binary_available("cyberghostvpn"),
         "cli_configured": cli_account_configured(),
         "credentials": False,
-        "helper_installed": secure_helper_installed(),
-        "helper_present": secure_helper_present(),
-        "helper_version": installed_helper_version(),
+        # Display only; privacy mode masks it in the panel.
+        "account": "",
+        "account_source": "",
+        # "live": CyberGhost's own server list is used; "probe": fallback.
+        "server_list": "",
+        # Pre-1.7 installs placed a root helper and an optional Polkit rule.
+        # They are no longer used and can be removed from the setup panel.
+        "legacy_helper": secure_system_file(LEGACY_HELPER_PATH, executable=True),
+        "legacy_polkit_rule": secure_system_file(LEGACY_POLKIT_RULE_PATH) or user_polkit_marker_installed(),
         "plugin_version": PLUGIN_VERSION,
-        # /etc/polkit-1/rules.d is commonly root:polkitd mode 750, so a normal
-        # user cannot lstat an installed rule. The marker is only UI state; it
-        # never grants privilege and the actual rule remains enforced by Polkit.
-        "polkit_rule_installed": secure_system_file(POLKIT_RULE_PATH, executable=False)
-        or user_polkit_marker_installed(),
     }
     try:
-        get_credentials(None)
-        result["credentials"] = True
+        account = load_account(None)
+        result.update(credentials=True, account=account["username"], account_source=account["source"])
+        result["server_list"] = "live" if session_usable(account["jwt"]) else "probe"
     except (OSError, RuntimeError, configparser.Error):
         pass
     print(json.dumps(result))
 
 
 def secure_system_file(path, executable=False):
-    """Only trust regular files below a root-owned, non-writable ancestry."""
+    """Recognize only a regular, root-owned file that others cannot modify."""
     try:
-        secure_directory_path(os.path.dirname(os.path.abspath(path)))
         file_stat = os.lstat(path)
-    except (OSError, RuntimeError):
+    except OSError:
         return False
     if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != 0 or file_stat.st_mode & 0o022:
         return False
-    if executable and not (file_stat.st_mode & 0o111):
-        return False
-    return True
-
-
-def user_polkit_marker_path():
-    return os.path.join(invoking_user().pw_dir, POLKIT_MARKER_RELATIVE_PATH)
+    return not executable or bool(file_stat.st_mode & 0o111)
 
 
 def user_polkit_marker_installed():
-    """Read the installer-owned UI marker when the system rule is not traversable."""
-    path = user_polkit_marker_path()
+    """Read the pre-1.7 installer marker when the system rule is not traversable."""
+    path = os.path.join(invoking_user().pw_dir, LEGACY_POLKIT_MARKER_RELATIVE_PATH)
     try:
         marker_stat = os.lstat(path)
-        user = invoking_user()
-        if not stat.S_ISREG(marker_stat.st_mode) or marker_stat.st_uid != user.pw_uid or marker_stat.st_mode & 0o077:
+        if not stat.S_ISREG(marker_stat.st_mode) or marker_stat.st_uid != os.getuid():
             return False
         with open(path, encoding="ascii") as marker:
-            return marker.read(128).strip() == POLKIT_MARKER_CONTENT
+            return marker.read(128).strip() == LEGACY_POLKIT_MARKER_CONTENT
     except (OSError, UnicodeError):
         return False
 
@@ -1898,11 +2115,6 @@ def system_binary(name):
     path = shutil.which(name)
     if not path:
         raise FileNotFoundError(name)
-    if os.geteuid() == 0:
-        resolved = os.path.realpath(path)
-        if not secure_system_file(resolved, executable=True):
-            raise RuntimeError(f"Refusing non-root-owned system executable: {path}")
-        return resolved
     return path
 
 
@@ -1914,138 +2126,32 @@ def system_binary_available(name):
         return False
 
 
-def _installed_helper_source():
-    """Read a bounded, trusted helper snapshot for version/capability checks."""
-    if not secure_system_file(HELPER_BIN_PATH, executable=True):
-        return b""
-    try:
-        file_stat = os.stat(HELPER_BIN_PATH)
-        if file_stat.st_size > MAX_HELPER_BYTES:
-            return b""
-        with open(HELPER_BIN_PATH, "rb") as installed:
-            return installed.read(MAX_HELPER_BYTES + 1)
-    except OSError:
-        return b""
-
-
-def installed_helper_version():
-    """Return the source version embedded in the installed root helper."""
-    source = _installed_helper_source()
-    if len(source) > MAX_HELPER_BYTES:
-        return ""
-    match = re.search(rb'^PLUGIN_VERSION = "([^"]+)"$', source, re.MULTILINE)
-    return match.group(1).decode("ascii", errors="replace") if match else ""
-
-
-def secure_helper_present():
-    """Return whether the fixed helper is trusted enough for recovery cleanup."""
-    return secure_system_file(HELPER_BIN_PATH, executable=True)
-
-
-def secure_helper_installed():
-    """Reject stale helpers that predate the current plugin or capability."""
-    source = _installed_helper_source()
-    if not source or len(source) > MAX_HELPER_BYTES:
-        return False
-    capability_marker = f'HELPER_CAPABILITY_VERSION = "{HELPER_CAPABILITY_VERSION}"'.encode("ascii")
-    version_marker = f'PLUGIN_VERSION = "{PLUGIN_VERSION}"'.encode("ascii")
-    return capability_marker in source and version_marker in source
-
-
-def installed_helper_invocation():
-    """Detect the fixed root helper entrypoint without trusting an argv flag."""
-    try:
-        return os.geteuid() == 0 and os.path.realpath(sys.argv[0]) == HELPER_BIN_PATH
-    except OSError:
-        return False
-
-
-def validate_helper_request(args):
-    """Reduce the release interface to native WireGuard lifecycle only."""
+def validate_request(args):
+    """Reduce the release interface to native WireGuard traffic connections."""
     if args.action == "connect" and (
         args.protocol != "wireguard" or args.server_type != "traffic" or args.streaming_service
     ):
         raise RuntimeError("This release supports native WireGuard traffic connections only")
-    if not installed_helper_invocation():
-        return args
-    if args.action not in HELPER_ACTIONS:
-        raise RuntimeError("The installed root helper only supports connect and disconnect")
-    if args.config or args.city:
-        raise RuntimeError("The installed root helper does not accept custom paths or city options")
-    if args.action != "connect" and args.server:
-        raise RuntimeError("Server selection is only valid for connect")
-    if args.action != "connect" and args.streaming_service:
-        raise RuntimeError("Streaming service is only valid for connect")
-    args.config = user_config_path()
+    if args.action != "connect" and (args.server or args.streaming_service):
+        raise RuntimeError("Server and streaming selection are only valid for connect")
     return args
-
-
-def status(config_path=None, as_json=False, check_cli=True):
-    ip_binary = system_binary("ip")
-    ip_res = run_bounded([ip_binary, "link", "show", INTERFACE], timeout=5, max_output_bytes=8 * 1024)
-    wireguard_connected = ip_res.returncode == 0 and INTERFACE in (ip_res.stdout or "")
-
-    wg_info = {}
-    if wireguard_connected:
-        wg_res = run_bounded([system_binary("wg"), "show", INTERFACE], timeout=5, max_output_bytes=8 * 1024)
-        if wg_res.returncode == 0:
-            wg_info = parse_wg_show(wg_res.stdout)
-
-    cli_connected = False
-    cli_status = ""
-    if check_cli and not wireguard_connected and system_binary_available("cyberghostvpn"):
-        try:
-            cli_res = run_bounded(
-                [system_binary("cyberghostvpn"), "--status"],
-                timeout=10,
-                max_output_bytes=8 * 1024,
-                env=cyberghost_cli_environment(),
-            )
-            cli_status = (cli_res.stdout or cli_res.stderr or "").strip()[:512]
-            cli_connected = (
-                cli_res.returncode == 0
-                and not re.search(r"no vpn connection|not connected|disconnected", cli_status, re.I)
-                and bool(re.search(r"connected|connection found|running", cli_status, re.I))
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired, RuntimeError):
-            cli_connected = False
-
-    is_connected = wireguard_connected or cli_connected
-
-    if as_json:
-        result = {
-            "connected": is_connected,
-            "interface": INTERFACE if wireguard_connected else None,
-            "backend": "wireguard" if wireguard_connected else ("cyberghostvpn" if cli_connected else None),
-        }
-        if is_connected:
-            result.update(wg_info)
-            if cli_connected:
-                result["cli_status"] = cli_status
-        print(json.dumps(result))
-        return
-
-    if wireguard_connected:
-        print("VPN connection found.")
-        print(f"Interface: {INTERFACE}")
-        for key in ("endpoint", "transfer"):
-            if key in wg_info:
-                print(f"  {key}: {wg_info[key]}")
-        if "handshake_sec" in wg_info:
-            print(f"  latest handshake: {wg_info['handshake_sec']} seconds ago")
-    elif cli_connected:
-        print("VPN connection found via cyberghostvpn CLI.")
-        if cli_status:
-            print(cli_status)
-    else:
-        print("No VPN connections found.")
 
 
 def main():
     parser = argparse.ArgumentParser(description="CyberGhost WireGuard Controller")
     parser.add_argument(
         "action",
-        choices=["connect", "disconnect", "status", "check", "register", "servers", "streaming-services"],
+        choices=[
+            "connect",
+            "disconnect",
+            "logout",
+            "status",
+            "check",
+            "register",
+            "servers",
+            "streaming-services",
+            "probe",
+        ],
         help="Action to perform",
     )
     parser.add_argument("--country", "-c", default="PT", help="Country code (e.g. PT, ES, US, DE)")
@@ -2054,50 +2160,34 @@ def main():
     parser.add_argument("--city", help="Optional city name")
     parser.add_argument("--server", help="Exact CyberGhost server instance from the live inventory")
     parser.add_argument("--streaming-service", help="Streaming profile name reported by cyberghostvpn")
-    parser.add_argument("--config", help="Explicit path to ~/.cyberghost/config.ini")
+    parser.add_argument("--config", help="Explicit path to ~/.cyberghost/native.ini")
     parser.add_argument("--json", action="store_true", help="Output status or action result as JSON")
-    parser.add_argument("--no-cli", action="store_true", help="Skip the vendor CLI status probe")
+    parser.add_argument("--all", action="store_true", help="probe: check every supported country")
 
     args = None
     try:
         args = parser.parse_args()
-        args = validate_helper_request(args)
-        if args.action == "connect":
+        args = validate_request(args)
+        if args.action in ACTIONS:
 
-            def do_connect():
-                if args.protocol == "wireguard" and args.server_type == "traffic":
-                    # The native API + wg-quick path is the reliable WireGuard
-                    # backend. The vendor CLI is still queried for its current
-                    # server inventory when available, but its legacy 1.4.x
-                    # WireGuard launcher can report success without creating a
-                    # tunnel when run through pkexec.
+            def run_action():
+                if args.action == "connect":
                     return connect(args.country, args.server_type, args.city, args.config, args.server)
-                # OpenVPN, torrent and streaming remain delegated to the
-                # vendor CLI because those modes are not covered by the
-                # native WireGuard implementation.
-                return connect_via_cli(args.country, args.server_type, args.protocol, args.streaming_service)
+                if args.action == "logout":
+                    return logout()
+                return disconnect()
 
             if args.json:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    action_result = do_connect()
-                result = {"ok": True, "action": "connect"}
+                    action_result = run_action()
+                result = {"ok": True, "action": args.action}
                 if isinstance(action_result, dict):
                     result.update(action_result)
                 print(json.dumps(result))
             else:
-                do_connect()
-        elif args.action == "disconnect":
-            if args.json:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    action_result = disconnect()
-                result = {"ok": True, "action": "disconnect"}
-                if isinstance(action_result, dict):
-                    result.update(action_result)
-                print(json.dumps(result))
-            else:
-                disconnect()
+                run_action()
         elif args.action == "status":
-            status(args.config, args.json, check_cli=False)
+            status(args.json)
         elif args.action == "check":
             check()
         elif args.action == "register":
@@ -2106,14 +2196,36 @@ def main():
             print(json.dumps(get_servers_for_country(args.country, args.server_type)))
         elif args.action == "streaming-services":
             print(json.dumps(get_streaming_services(args.country)))
+        elif args.action == "probe":
+            codes = sorted(code for code in CITY_MAP if code != "UK") if args.all else [args.country]
+            try:
+                session = load_account(args.config)
+            except (OSError, RuntimeError, configparser.Error):
+                session = None
+            report = probe_servers(codes, session)
+            if args.json:
+                print(json.dumps(report))
+            else:
+                for code, entry in report.items():
+                    hosts = entry["reachable"]
+                    state = f"{len(hosts)} reachable, fastest {hosts[0]}" if hosts else "NO REACHABLE SERVERS"
+                    if entry.get("no_wireguard"):
+                        state = "no WireGuard servers listed by CyberGhost"
+                    else:
+                        state += f" ({entry['known']} known)" if entry.get("known") else " (guessed pool)"
+                    if "live" in entry:
+                        live = entry["live"]
+                        state += f" | live API: {len(live)} servers" + (f", lowest load {live[0]}" if live else "")
+                    print(f"{code}  {entry['city'] or '-':<14} {state}")
     except Exception as e:
-        if args is not None and args.json and args.action in HELPER_ACTIONS:
+        if args is not None and args.json and args.action in ACTIONS:
             print(
                 json.dumps(
                     {
                         "ok": False,
                         "action": args.action,
                         "error": clean_command_error(e),
+                        "code": getattr(e, "code", ""),
                     }
                 )
             )

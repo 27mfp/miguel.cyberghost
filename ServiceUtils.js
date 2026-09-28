@@ -18,12 +18,8 @@ function preferences(settings) {
   }
 }
 
-function setupState(wg, requests, credentials, helperCompatible, helperVersion, pluginVersion) {
-  if (!wg || !requests || !credentials) return "first-run"
-  if (!helperCompatible && helperVersion !== "") return "update-available"
-  if (!helperCompatible) return "first-run"
-  if (helperVersion !== pluginVersion) return "update-available"
-  return "ready"
+function setupState(network, requests, credentials) {
+  return network && requests && credentials ? "ready" : "first-run"
 }
 
 function inventoryMatches(key, country, protocol, mode) {
@@ -74,10 +70,26 @@ function parseActionResult(output) {
     if (!line) continue
     try {
       var result = JSON.parse(line)
-      if (result && typeof result.ok === "boolean" && (result.action === "connect" || result.action === "disconnect")) return result
+      if (result && typeof result.ok === "boolean" && ["connect", "disconnect", "logout"].indexOf(result.action) >= 0) return result
     } catch (e) {
       // Ignore non-JSON lines from compatibility helpers.
     }
   }
   return null
+}
+
+// Same units and precision as Omarchy's network panel, so identical numbers
+// read identically across both panels. Negative means "no sample yet".
+function formatBytes(bytes) {
+  var n = Number(bytes)
+  if (!isFinite(n) || n < 0) return "--"
+  if (n < 1024) return Math.round(n) + " B"
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB"
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB"
+  return (n / (1024 * 1024 * 1024)).toFixed(2) + " GB"
+}
+
+function formatRate(bytesPerSec) {
+  var text = formatBytes(bytesPerSec)
+  return text === "--" ? text : text + "/s"
 }

@@ -1,6 +1,6 @@
 # Tests and verification
 
-For the current native-only 1.6.3 release, see the [release gates and live findings](release-checklist.md). Historical evidence below does not certify the newer candidate or optional CLI connections.
+For the current 1.7.0 NetworkManager release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify 1.7.0.
 
 ## What changed in the test strategy
 
@@ -30,7 +30,7 @@ bash scripts/test-qml.sh
 python3 scripts/check_manifest.py
 python3 scripts/check_qml.py
 omarchy plugin validate "$PWD"
-shellcheck install.sh install-helper.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
+shellcheck install.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
 git diff --check
 ```
 

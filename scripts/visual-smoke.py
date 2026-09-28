@@ -58,6 +58,13 @@ def activate(name):
     run("wtype", "-k", "Return")
 
 
+def shortcut(key):
+    """Press a panel shortcut with the viewport (not a text field) focused."""
+    if ipc("focus", "vpnPanelViewport") != "true":
+        raise AssertionError("Cannot focus the panel viewport")
+    run("wtype", key)
+
+
 def capture(directory, name):
     time.sleep(0.2)  # Let the host's frame/size transition settle before raster capture.
     state = snapshot()
@@ -120,15 +127,15 @@ def main():
         activate("privacyToggle")
         activate("copyIpButton")
         copied = True
-        wait_for(lambda state: state["controls"]["copyIpButton"]["text"] == "Copied")
+        wait_for(lambda state: state["controls"]["copyIpButton"]["tooltipText"] == "Copied")
         require(
             run("wl-paste", "--no-newline").decode() == "203.0.113.42", "Clipboard did not receive the displayed IP"
         )
         activate("advancedToggle")
         expanded = wait_for(lambda state: state["controls"]["advancedToggle"]["selected"])
         require(
-            expanded["controls"]["connectButton"]["y"] == ready["controls"]["connectButton"]["y"],
-            "Advanced moved the primary action",
+            expanded["controls"]["countryPicker"]["y"] == ready["controls"]["countryPicker"]["y"],
+            "Opening Settings moved the location picker",
         )
         capture(directory, "04-advanced")
         for name in ("modePicker", "protocolPicker", "streamingPicker", "serverPicker"):
@@ -136,10 +143,11 @@ def main():
         require(expanded["protocol"] == "wireguard" and expanded["mode"] == "traffic", "Wrong release mode")
         activate("advancedToggle")
         capture(directory, "05-wireguard-only")
-        activate("connectButton")  # Synthetic service only: no root helper exists in this fixture.
-        wait_for(lambda state: state["connected"])
+        shortcut("t")  # Synthetic service only: no NetworkManager profile is created.
+        connected = wait_for(lambda state: state["connected"])
+        require(connected["controls"]["vpnToggle"]["checked"], "Header switch did not follow the connection")
         capture(directory, "06-connected")
-        activate("connectButton")
+        shortcut("t")
         wait_for(lambda state: not state["connected"])
         ipc("scenario", "narrow")
         capture(directory, "07-narrow")

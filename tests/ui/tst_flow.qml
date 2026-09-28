@@ -12,11 +12,10 @@ TestCase {
   QtObject {
     id: mockService
     property string setupCardState: "first-run"
-    property bool readyWg: false
-    property bool readyDns: true
+    property bool readyNm: true
+    property bool readyNetwork: true
     property bool readyRequests: false
     property bool readyCreds: false
-    property bool helperInstalled: false
     property bool busy: false
     property bool regBusy: false
     property string setupMsg: ""
@@ -34,8 +33,12 @@ TestCase {
     property var streamingOptions: []
     property string streamingService: ""
     property string streamingError: ""
-    property bool readyPolkit: false
-    property bool polkitRuleDismissed: true
+    property bool switchAvailable: false
+    property string activeCountryName: "Portugal"
+    property string lastConnectTarget: ""
+    property bool legacyCleanupAvailable: false
+    property string legacyStatus: ""
+    property int legacyCleanupCalls: 0
     property bool connected: false
     property int connectCalls: 0
     property int countryCalls: 0
@@ -43,8 +46,9 @@ TestCase {
       country = value
       countryCalls++
     }
-    function connectTo() {
+    function connectTo(target) {
       connectCalls++
+      lastConnectTarget = target || ""
     }
     function setProtocol(value) {
       protocol = value
@@ -57,6 +61,9 @@ TestCase {
     }
     function setStreamingService(value) {
       streamingService = value
+    }
+    function openLegacyCleanup() {
+      legacyCleanupCalls++
     }
     function registerAccount(user, password) {
       setupMsg = user + ":" + password
@@ -79,14 +86,17 @@ TestCase {
   }
 
   function init() {
-    mockService.readyDns = true
-    mockService.readyWg = false
+    mockService.readyNm = true
+    mockService.readyNetwork = true
     mockService.readyRequests = false
     mockService.readyCreds = false
     mockService.setupCardState = "first-run"
     mockService.setupMsg = ""
     mockService.country = "PT"
     mockService.countryCalls = 0
+    mockService.legacyCleanupAvailable = false
+    mockService.switchAvailable = false
+    mockService.legacyCleanupCalls = 0
     mockService.connectCalls = 0
   }
 
@@ -96,26 +106,42 @@ TestCase {
     tryVerify(function () {
       return card.implicitHeight > 0
     })
-    verify(card.focusTarget !== null)
     compare(card.focusTarget.objectName, "installDependencies")
-    mockService.readyWg = true
     mockService.readyRequests = true
-    mockService.readyDns = false
-    compare(card.focusTarget.objectName, "installDependencies")
-    mockService.readyDns = true
     compare(card.focusTarget.objectName, "accountUsername")
     mockService.readyCreds = true
-    compare(card.focusTarget.objectName, "installHelper")
+    compare(card.focusTarget.objectName, "recheckSetup")
+    mockService.readyCreds = false
+    // NetworkManager is Omarchy's own service: it is explained, never installed.
+    mockService.readyNetwork = false
+    mockService.readyNm = false
+    verify(findChild(card, "networkRequirement").visible)
+    verify(!findChild(card, "installDependencies").visible)
+    verify(findChild(card, "networkRequirement").text.indexOf("NetworkManager") >= 0)
+    mockService.readyNm = true
+    verify(findChild(card, "networkRequirement").text.indexOf("not allowed") >= 0)
+    mockService.readyNetwork = true
+    mockService.readyCreds = true
     mockService.setupCardState = "ready"
     tryCompare(card, "implicitHeight", 0)
     mockService.setupCardState = "first-run"
-    mockService.readyWg = false
     mockService.readyRequests = false
     mockService.readyCreds = false
   }
 
+  function test_legacyHelperRemovalIsOfferedOnlyWhenPresent() {
+    var controls = createTemporaryObject(preferencesFactory, this)
+    controls.advanced = true
+    var button = findChild(controls, "removeLegacyHelper")
+    verify(button !== null)
+    verify(!button.visible)
+    mockService.legacyCleanupAvailable = true
+    verify(button.visible)
+    button.clicked()
+    compare(mockService.legacyCleanupCalls, 1)
+  }
+
   function test_accountFormValidatesAndClearsPassword() {
-    mockService.readyWg = true
     mockService.readyRequests = true
     mockService.readyCreds = false
     mockService.setupMsg = ""
@@ -126,15 +152,51 @@ TestCase {
     var submit = findChild(card, "linkAccount")
     verify(password !== null)
     verify(submit !== null)
-    mouseClick(submit)
+    // Like Omarchy's network prompt, the action waits for complete input.
+    verify(!submit.enabled)
+    compare(password.echoMode, TextInput.Password)
+    password.forceActiveFocus()
+    keyClick(Qt.Key_Return)
     compare(mockService.setupMsg, "Enter your CyberGhost username and password.")
     verify(user.activeFocus)
     user.text = "demo"
+    verify(!submit.enabled)
     password.text = "secret"
+    verify(submit.enabled)
     mouseClick(submit)
     compare(mockService.setupMsg, "demo:secret")
     compare(password.text, "")
-    mockService.readyWg = false
+    mockService.readyRequests = false
+  }
+
+  function test_checklistMarksProgressAndOnlyShowsCurrentActions() {
+    mockService.readyRequests = false
+    var card = createTemporaryObject(setupFactory, this)
+    var install = findChild(card, "installDependencies")
+    verify(install.visible)
+    verify(!findChild(card, "accountUsername").visible)
+    compare(findChild(card, "networkStep").done, true)
+    compare(findChild(card, "requestsStep").current, true)
+    compare(findChild(card, "accountStep").current, false)
+    mockService.readyRequests = true
+    verify(!install.visible)
+    compare(findChild(card, "accountStep").current, true)
+    compare(card.focusTarget.objectName, "accountUsername")
+    mockService.readyRequests = false
+  }
+
+  function test_setupMessageIsNeutralWhileBusyAndUrgentAfter() {
+    mockService.readyRequests = true
+    var card = createTemporaryObject(setupFactory, this)
+    var message = findChild(card, "setupMessage")
+    mockService.setupMsg = "Finish installing in the terminal."
+    mockService.busy = true
+    verify(message.visible)
+    verify(!Qt.colorEqual(message.color, "#ff7777"))
+    mockService.busy = false
+    mockService.setupMsg = "Authentication failed"
+    verify(Qt.colorEqual(message.color, "#ff7777"))
+    mockService.setupMsg = ""
     mockService.readyRequests = false
   }
 
@@ -178,5 +240,21 @@ TestCase {
     compare(mockService.country, "ES")
     compare(mockService.connectCalls, 0)
     compare(mockService.countryCalls, 1)
+  }
+
+  function test_switchCountryIsExplicit() {
+    var controls = createTemporaryObject(preferencesFactory, this)
+    var button = findChild(controls, "switchCountryButton")
+    verify(!button.visible)
+    mockService.country = "ES"
+    mockService.countryName = "Spain"
+    mockService.switchAvailable = true
+    verify(button.visible)
+    compare(button.text, "Switch to Spain")
+    compare(mockService.connectCalls, 0)
+    button.clicked()
+    compare(mockService.connectCalls, 1)
+    compare(mockService.lastConnectTarget, "ES")
+    mockService.countryName = "Portugal"
   }
 }

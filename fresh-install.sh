@@ -12,7 +12,7 @@
 #
 #   --local       install THIS checkout into the plugins dir instead of
 #                 cloning from GitHub (tests uncommitted edits without a push)
-#   --purge-deps  also uninstall wireguard-tools and python-requests
+#   --purge-deps  also uninstall python-requests
 #   -y            no confirmation prompts
 #   -h, --help    print this usage text
 
@@ -125,12 +125,12 @@ rm -rf -- "${PLUGINS_DIR:?}/$PLUGIN_ID"
 ok "widget removed from bar and plugins dir"
 
 # ---------------------------------------------------------------------------
-step "Removing Polkit rule and root helper"
-if /usr/bin/sudo /usr/bin/rm -f -- "$POLKIT_RULE" /usr/local/bin/cyberghost-runner; then
+step "Removing any pre-1.7 root helper (the disconnect above removed the NetworkManager profile)"
+if /usr/bin/sudo /usr/bin/rm -f -- "$POLKIT_RULE" /usr/local/bin/cyberghost-runner /etc/wireguard/cyberghost.conf; then
   rm -f -- "$POLKIT_MARKER"
-  ok "polkit rule and root helper removed"
+  ok "legacy root files removed"
 else
-  echo "Could not remove the root helper or Polkit rule; reset aborted." >&2
+  echo "Could not remove the legacy root helper or Polkit rule; reset aborted." >&2
   exit 1
 fi
 
@@ -142,8 +142,8 @@ ok "Native credentials removed. Legacy config.ini is preserved and may still pro
 # ---------------------------------------------------------------------------
 if (( PURGE_DEPS )); then
   step "Uninstalling dependencies (bare-machine simulation)"
-  if /usr/bin/sudo /usr/bin/pacman -Rns --noconfirm wireguard-tools python-requests >/dev/null 2>&1; then
-    ok "wireguard-tools + python-requests removed"
+  if /usr/bin/sudo /usr/bin/pacman -Rns --noconfirm python-requests >/dev/null 2>&1; then
+    ok "python-requests removed"
   else
     echo "- still needed by other packages; wizard will show them installed"
   fi
@@ -170,11 +170,10 @@ Now finish as a brand-new user through the WIDGET:
 
   1. Click the ghost icon in the bar (${section} section).
   2. The FIRST-RUN SETUP panel appears. Use its buttons:
-       - Install        -> wireguard-tools + python-requests (pkexec prompt)
+       - Install        -> python-requests in Omarchy's floating terminal (only if missing)
        - Link account   -> your CyberGhost username/password
-       - Install helper -> visible terminal with the fixed root helper and optional Polkit rule (sudo)
-       - Recheck        -> optional; the panel rechecks automatically when the installer terminal closes
-  3. Once the required dependency, account and helper items are green, the full panel unlocks; Polkit remains optional:
-     connect, pick countries, server modes, protocols.
+       - Recheck        -> optional; the panel rechecks when the terminal closes
+  3. Once the account is linked, the full panel unlocks. Connections are
+     NetworkManager profiles; no root helper or password prompt is involved.
 
 DONE

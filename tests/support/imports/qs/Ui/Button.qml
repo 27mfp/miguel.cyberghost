@@ -14,4 +14,6 @@ QQC.Button {
   property bool selected: false
   property color foreground: "white"
   property string tooltipText: ""
+  property string fontFamily: ""
+  property bool iconSpinning: false
 }

@@ -37,10 +37,10 @@ jobs:
           python -m py_compile cyberghost_runner.py
           python -m json.tool manifest.json >/dev/null
           python scripts/check_manifest.py
-          for file in install.sh install-helper.sh fresh-install.sh scripts/*.sh; do
+          for file in install.sh fresh-install.sh scripts/*.sh; do
             bash -n "$file"
           done
-          shellcheck install.sh install-helper.sh fresh-install.sh scripts/*.sh
+          shellcheck install.sh fresh-install.sh scripts/*.sh
           # qmlformat parses every QML file. Formatter output differs between
           # the Ubuntu Qt version and Omarchy's Qt version, so do not compare it.
           for file in *.qml tests/qml/*.qml tests/ui/*.qml tests/visual/*.qml; do
