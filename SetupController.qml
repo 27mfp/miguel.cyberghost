@@ -36,6 +36,9 @@ Item {
   // Background sync of every country's servers into the user's own cache,
   // while the login session is valid. The runner paces, locks and resumes.
   readonly property bool syncingServers: syncProcess.running
+  // False while a connect, disconnect or logout runs: those need the rate
+  // limit (and a logout must not sync on the old session).
+  property bool syncAllowed: true
   property string syncProgress: ""
   property bool legacyHelper: false
   property bool legacyPolkitRule: false
@@ -214,7 +217,7 @@ Item {
       root.accountName = typeof d.account === "string" ? d.account.substring(0, 256) : ""
       root.accountSource = typeof d.account_source === "string" ? d.account_source.substring(0, 16) : ""
       root.serverList = d.server_list === "live" || d.server_list === "probe" ? d.server_list : ""
-      if (root.serverList === "live" && !syncProcess.running)
+      if (root.serverList === "live" && root.syncAllowed && !syncProcess.running)
         syncProcess.running = true
       root.legacyHelper = !!d.legacy_helper
       root.legacyPolkitRule = !!d.legacy_polkit_rule

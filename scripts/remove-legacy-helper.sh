@@ -15,10 +15,18 @@ MARKER_PATH="$HOME/.local/state/cyberghost/polkit-rule-installed"
 
 [[ $EUID != 0 ]] || { echo "Run as your desktop user; this script invokes sudo." >&2; exit 1; }
 
+RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cyberghost_runner.py"
+
 # A tunnel the old helper created can only be removed by that helper. Keep it
-# installed until the widget has disconnected that tunnel.
-if /usr/bin/ip link show cyberghost >/dev/null 2>&1 \
-  && ! /usr/bin/nmcli -t -f DEVICE connection show --active 2>/dev/null | /usr/bin/grep -qx cyberghost; then
+# installed until the widget has disconnected that tunnel. NetworkManager also
+# lists such an externally created interface as an active "cyberghost"
+# connection, so ask the runner: it tells ours apart by its profile UUID.
+if ! backend=$(/usr/bin/python3 "$RUNNER" status --json \
+  | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("backend") or "")'); then
+  echo "Could not verify the VPN state; nothing was removed." >&2
+  exit 1
+fi
+if [[ "$backend" == "legacy" ]]; then
   echo "A tunnel from the old helper is still active. Disconnect it from the widget first." >&2
   exit 1
 fi
