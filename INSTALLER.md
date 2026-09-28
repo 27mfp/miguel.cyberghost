@@ -24,7 +24,6 @@ Since 1.7.0 the plugin installs nothing as root. The tunnel is an in-memory Netw
 - `~/.cyberghost/config.ini`: vendor CLI/legacy state. Native registration and developer reset do not overwrite or delete it.
 - NetworkManager profile **CyberGhost VPN** (interface `cyberghost`): created with `save no`, so it is never written to `/etc/NetworkManager/system-connections`. It is restricted to your user (`connection.permissions`). Its per-session private key reaches NetworkManager over stdin (`nmcli connection edit`), never through argv. Disconnect deletes it, and it also disappears when NetworkManager restarts.
 
-- `~/.cache/cyberghost/servers.json`: public server names from your last live lookup per country (no credentials), used for 30 days before the bundled snapshot takes over again.
-- `servers.json` (in the plugin): snapshot of CyberGhost's server names. Maintainers refresh it with `python3 scripts/update-servers.py` after linking an account. It is paced and backs off on rate limits (about 8 minutes).
+- `~/.cache/cyberghost/servers.json`: public server names for each country (no credentials), built from your own account. A background sync fills it while your login session is valid, paced at one country every 5 s, stopping at any rate limit and resuming later. Countries refreshed within a week are skipped. Connects refresh their own country. Entries do not expire, because every connect probes the names first.
 
 `omarchy plugin add` only installs the repository; it does not run these scripts or authorize system changes. The plugin stays in the existing shell process.
