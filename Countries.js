@@ -140,7 +140,9 @@ function dropdownOptions() {
   return allCountries.map(function(c) {
     return {
       value: c.code,
-      label: c.flag + "  " + c.name + " (" + c.code + ")"
+      // Text only, like Omarchy's own pickers: the bar font draws flag
+      // emoji as small colored blobs.
+      label: c.name + " (" + c.code + ")"
     };
   });
 }

@@ -54,7 +54,23 @@ def test_run_bounded_rejects_excessive_output():
 def test_native_api_runtime_errors_are_returned_without_traceback():
     requests_stub = mock.Mock()
     requests_stub.exceptions.RequestException = Exception
-    with mock.patch.object(runner, "get_credentials", return_value=("TOK", "SEC")):
+    # Never read the developer's real ~/.cyberghost or touch the network/NM.
+    account = {
+        "token": "TOK",
+        "secret": "SEC",
+        "username": "",
+        "path": "",
+        "source": "native",
+        "jwt": "",
+        "user_id": "",
+    }
+    with (
+        mock.patch.object(runner, "load_account", return_value=account),
+        mock.patch.object(runner, "nm_available", return_value=True),
+        mock.patch.object(runner, "legacy_tunnel_active", return_value=False),
+        mock.patch.object(runner, "system_binary", side_effect=lambda name: "/usr/bin/" + name),
+        mock.patch.object(runner, "reachable_endpoints", return_value=["lisbon-s401-i01.cg-dialup.net"]),
+    ):
         with mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)):
             with mock.patch.object(runner, "get_servers_for_country", return_value=[]):
                 with mock.patch.object(runner, "load_requests", return_value=requests_stub):
@@ -192,6 +208,19 @@ def test_run_bounded_timeout_kills_child_and_does_not_block_on_stdin():
         raise AssertionError("Expected subprocess timeout")
     except runner.subprocess.TimeoutExpired:
         pass
+
+
+def test_run_bounded_timeout_after_child_closes_output_streams():
+    started = time.monotonic()
+    try:
+        runner.run_bounded(
+            [sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(2)"],
+            timeout=0.1,
+        )
+        raise AssertionError("Expected subprocess timeout after output streams closed")
+    except runner.subprocess.TimeoutExpired:
+        pass
+    assert time.monotonic() - started < 1
 
 
 def test_read_response_bounded_closes_and_limits_body():

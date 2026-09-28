@@ -4,3 +4,5 @@ PanelSeparator 1.0 PanelSeparator.qml
 TextField 1.0 TextField.qml
 Dropdown 1.0 SearchableDropdown.qml
 SearchableDropdown 1.0 SearchableDropdown.qml
+PanelActionButton 1.0 PanelActionButton.qml
+PanelSectionHeader 1.0 PanelSectionHeader.qml

@@ -49,6 +49,7 @@ TestCase {
     var inventory = createTemporaryObject(factory, this)
     inventory.refresh()
     var process = inventory.children[0]
+    process.stdout.read('[{"server":"lisbon-s405-i19","city":"Lisbon","load":18}]')
     process.stderr.read("CLI authentication expired. Run setup again.")
     process.running = false
     process.exited(1)

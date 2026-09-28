@@ -32,10 +32,12 @@ TestCase {
   }
 
   function test_setupReadiness() {
-    compare(ServiceUtils.setupState(false, true, true, false, "", "1.5.4"), "first-run")
-    // An incompatible helper is present, but cannot be used to connect.
-    compare(ServiceUtils.setupState(true, true, true, false, "1.5.3", "1.5.4"), "update-available")
-    compare(ServiceUtils.setupState(true, true, true, true, "1.5.4", "1.5.4"), "ready")
+    // NetworkManager (network), python-requests and linked credentials are
+    // the only prerequisites; there is no helper to install or update.
+    compare(ServiceUtils.setupState(false, true, true), "first-run")
+    compare(ServiceUtils.setupState(true, false, true), "first-run")
+    compare(ServiceUtils.setupState(true, true, false), "first-run")
+    compare(ServiceUtils.setupState(true, true, true), "ready")
   }
 
   function test_staleInventoryCannotReplaceCurrentSelection() {
@@ -106,5 +108,20 @@ TestCase {
   function test_cleanProcessError() {
     compare(ServiceUtils.cleanProcessError("Traceback (most recent call last):\n  File \\\"runner.py\\\"\nError: failed", "fallback"), "failed")
     compare(ServiceUtils.cleanProcessError("", "fallback"), "fallback")
+  }
+
+  function test_transferFormattingMatchesOmarchyNetworkPanel() {
+    compare(ServiceUtils.formatBytes(-1), "--")
+    compare(ServiceUtils.formatBytes(0), "0 B")
+    compare(ServiceUtils.formatBytes(1536), "1.5 KB")
+    compare(ServiceUtils.formatBytes(282.4 * 1024 * 1024), "282.4 MB")
+    compare(ServiceUtils.formatBytes(8.2 * 1024 * 1024 * 1024), "8.20 GB")
+    compare(ServiceUtils.formatRate(-1), "--")
+    compare(ServiceUtils.formatRate(505036.8), "493.2 KB/s")
+  }
+
+  function test_actionResultAcceptsLogout() {
+    compare(ServiceUtils.parseActionResult('{"ok":true,"action":"logout"}').action, "logout")
+    compare(ServiceUtils.parseActionResult('{"ok":true,"action":"register"}'), null)
   }
 }

@@ -68,3 +68,65 @@ def test_cli_requires_its_own_account_setup(tmp_path):
         assert runner.cli_account_configured()
         vendor.chmod(0o644)
         assert not runner.cli_account_configured()
+
+
+@pytest.fixture
+def account_home(tmp_path, monkeypatch):
+    monkeypatch.delenv("CYBERGHOST_CONFIG", raising=False)
+    home = tmp_path / ".cyberghost"
+    home.mkdir(mode=0o700)
+    native = home / "native.ini"
+    vendor = home / "config.ini"
+    runner.write_user_config(str(native), "user@example.com", "laptop", {"token": "TOK", "secret": "SEC"})
+    monkeypatch.setattr(runner, "user_config_path", lambda: str(native))
+    monkeypatch.setattr(runner, "legacy_config_path", lambda: str(vendor))
+    monkeypatch.setattr(runner, "nm_available", lambda: False)
+    return native, vendor
+
+
+def test_account_metadata_identifies_the_plugin_login(account_home):
+    account = runner.load_account()
+    assert (account["username"], account["source"]) == ("user@example.com", "native")
+
+
+def test_logout_removes_only_the_plugin_credentials(account_home, capsys):
+    native, vendor = account_home
+    vendor.write_text("[account]\nusername=vendor\npassword=keep\n[device]\ntoken=V\nsecret=W\n")
+    vendor.chmod(0o600)
+    result = runner.logout()
+    assert not native.exists()
+    assert "password=keep" in vendor.read_text()
+    assert result == {"logged_out": True, "disconnected": False, "connected": False, "remaining_source": "legacy"}
+    assert runner.load_account()["source"] == "legacy"
+
+
+def test_logout_disconnects_our_tunnel_before_forgetting_the_device(account_home, monkeypatch):
+    native, _ = account_home
+    order = []
+    monkeypatch.setattr(runner, "nm_available", lambda: True)
+    monkeypatch.setattr(runner, "system_binary", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(runner, "legacy_tunnel_active", lambda ip: False)
+    monkeypatch.setattr(runner, "nm_active_state", lambda: "activated")
+    monkeypatch.setattr(
+        runner, "disconnect", lambda: order.append(("disconnect", native.exists())) or {"connected": False}
+    )
+    result = runner.logout()
+    assert order == [("disconnect", True)]
+    assert result["disconnected"] is True and result["remaining_source"] == ""
+    assert not native.exists()
+
+
+def test_logout_keeps_credentials_while_a_legacy_tunnel_is_up(account_home, monkeypatch):
+    native, _ = account_home
+    monkeypatch.setattr(runner, "nm_available", lambda: True)
+    monkeypatch.setattr(runner, "system_binary", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(runner, "legacy_tunnel_active", lambda ip: True)
+    with pytest.raises(runner.LegacyTunnelError):
+        runner.logout()
+    assert native.exists()
+
+
+def test_logout_without_a_linked_account_is_harmless(account_home):
+    native, _ = account_home
+    native.unlink()
+    assert runner.logout()["logged_out"] is False
