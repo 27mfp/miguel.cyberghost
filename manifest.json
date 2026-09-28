@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "miguel.cyberghost",
   "name": "CyberGhost VPN",
-  "version": "1.6.3",
+  "version": "1.7.0",
   "author": "Miguel",
   "license": "MIT",
-  "description": "Native CyberGhost WireGuard connections and country switching in the Omarchy bar.",
+  "description": "CyberGhost WireGuard connections through NetworkManager, with country switching in the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "CyberGhost VPN",
-    "description": "Choose a country and connect with native WireGuard and automatic server selection.",
+    "description": "Choose a country and connect over WireGuard as a NetworkManager connection, with automatic server selection.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",

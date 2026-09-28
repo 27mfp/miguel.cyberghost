@@ -1,3 +1,24 @@
+# 1.7.0 — NetworkManager release gates
+
+Published listing: [CyberGhost VPN for Omarchy](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
+
+Scope: replace the root helper with an unprivileged NetworkManager WireGuard connection, matching Omarchy's own network tooling. Release boundaries from 1.6.3 (WireGuard traffic mode, automatic server) are unchanged.
+
+## Evidence
+
+- [x] On Omarchy 4.0.4 (NetworkManager 1.58.1), the runner's own `nm_profile_args` → `nm_activate` → `status` → `disconnect` ran live as the desktop user with no password prompt. Routes used documentation prefixes and DNS was scoped to `~test.invalid`, so no user traffic was affected. Observed: `activated`; `connection.permissions user:<name>`; the key read back from NetworkManager matched and never appeared in argv; no file in `system-connections`; IPv4 and IPv6 routes on `cyberghost`; counters and endpoint reported; after disconnect, profile and interface verified absent.
+- [x] With `omarchy dns` global mode active, per-connection DNS is overridden by NetworkManager global DNS. `resolvectl` showed no link with a DNS default route, so only public global resolvers are used, and those are reached through the tunnel.
+- [x] X25519 matches the RFC 7748 vectors. Python suite 120 passed; Qt 44 UI and 11 utility cases passed. Mutation checks (key on argv or missing, no rollback, non-exclusive DNS, `ipv6.method disabled`, legacy tunnel ignored, persisted profile) each fail the suite.
+- [x] `scripts/remove-legacy-helper.sh` recognizer tested against all five historical `50-cyberghost.rules` versions (all removed) and a customized rule (left alone).
+- [x] Installed from the working tree into the running 4.0.4 shell: the plugin loads with no warnings, and the setup panel renders with host styling.
+- [x] Server coverage without the vendor CLI: all 94 countries were probed by DNS, then one node per country by TLS on port 1337 with certificate verification (no credentials). The old fixed fallback reached 60 countries. With the rack pool and city fixes, 93 are reachable (92 TLS-verified in the scan, plus France via its other racks). Bosnia had no reachable guessed server. `probe --all` reproduces the scan.
+- [x] Real server names superseded the guesses. The per-user background sync ran live against the owner's account: all 94 countries and 7,485 servers were cached with no HTTP 429 at a 5 s pace, and exactly one sync process ran under the lock. With no session and no CLI, every country selects a reachable real server (Kenya: 10 in 0.31 s). Kenya was first misread as having no WireGuard servers, because the API names them `Nairobi-401-i01` without the rack `s`. DNS and TLS confirmed `nairobi-s401-i01.cg-dialup.net` (same IP, `nairobi-rack401` certificate), and names are now normalized. Corrections the list revealed: Bosnia → Travnik, China → Shenzhen (previously guessed `hongkong`, i.e. Hong Kong), and many more racks than guessed (Romania s492, Germany s451–s472).
+- [x] Real CyberGhost connect with a linked account (Spain, 2026-09-28, `omarchy dns` Google global mode). IPv4 and IPv6 route lookups selected `cyberghost` through policy table 51838 (`not fwmark 0xca7e`, `suppress_prefixlength 0`). HTTPS egress reported Barcelona, Spain (M247). IPv6 egress timed out inside the tunnel, so the ISP's IPv6 address was not exposed. Uncached DNS went to 8.8.8.8 over DoT through the tunnel, and no link held a DNS default route. The tunnel survived a shell restart and the panel reconciled from status.
+- [x] Owner-tested country switching, disconnect, the formerly failing countries (Bosnia, China, Italy, Romania; Kenya was tested before its fix), and logout. After disconnect: no `cyberghost` interface or NetworkManager profile, no tunnel policy rules for either family, routes and HTTPS egress back on Ethernet (Portugal/MEO), and no CyberGhost resolver link.
+- [ ] DNS path in `omarchy dns DHCP` mode (VPN link `~.`), not exercised: this machine uses global Google DNS.
+- [ ] Upgrade path on a machine with a live 1.6.x tunnel: legacy disconnect through the installed helper, then legacy cleanup.
+- [ ] CI on the final commit.
+
 # 1.6.3 — native WireGuard release gates
 
 Published listing: [CyberGhost VPN for Omarchy](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
@@ -20,9 +41,10 @@ Scope agreed with the owner: ship native WireGuard traffic connections with coun
 - The native-only UI remains limited to WireGuard traffic with automatic server selection. Vendor inventory and OpenVPN/streaming/torrent controls are not exposed; a separately active vendor VPN is reported and cannot be silently managed by this plugin.
 - The backend now rejects explicit empty/invalid DNS, validates trusted WireGuard paths before `wg-quick`, uses a persistent root lifecycle lock, verifies interface/routes/rules/resolver cleanup, preserves recovery config on incomplete teardown, and skips optional vendor CLI execution in the root helper.
 - Helper-only updates preserve Polkit authorization. Explicit revocation verifies the plugin rule bytes; confirmation EOF fails closed; fresh reset stages and validates its replacement before teardown and preserves vendor `config.ini`.
-- [x] Python regression suite: 123 tests pass locally.
-- [x] Qt/QML behavior suite: 33 cases pass locally; live inventory handoff, stale status/action, malformed probes, timeout, recovery and cleanup paths have regression coverage.
-- [x] Ruff, formatting, Python compilation, JSON/standalone manifest validation, shell syntax, QML formatting, Omarchy manifest validation and `git diff --check` pass locally. QML lint reports 0 project diagnostics; only known host metadata warnings remain. ShellCheck passes in CI and via the disposable Docker check used here.
+- [x] Python regression suite: 126 tests pass locally, including subprocess exit deadlines and IPv6/selected-table cleanup checks.
+- [x] Qt/QML behavior suite: 36 UI cases and 11 utility cases pass locally, including pending lookup cancellation, readiness changes, and late external-VPN detection.
+- [x] Python compilation, JSON/standalone manifest validation, shell syntax, ShellCheck, QML formatting, Omarchy manifest validation, `git diff --check`, and QML lint pass locally. QML lint reports 0 project diagnostics; only known host metadata warnings remain.
+- [ ] Rerun Ruff and CI on the updated commit before publishing.
 - [x] No repository files are changed by the validation commands themselves; the final diff is limited to the remediation and regression/docs changes described above.
 - [ ] Recheck final native connection without configured vendor inventory in a disposable authorized environment.
 - [ ] Verify real activation failure/timeout recovery and residual routes/DNS in that environment.

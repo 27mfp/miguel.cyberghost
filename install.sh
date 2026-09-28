@@ -36,20 +36,13 @@ install_pacman() {
   fi
 }
 
-install_polkit_rule() {
-  if ! confirm "Install the required root helper?"; then
-    say "${DIM}- skipped root helper (connect is disabled until the helper is installed)${NC}"
-    return 0
-  fi
-
-  local answer=""
-  read -rp "Allow passwordless VPN actions for wheel members? [y/N] " answer || answer=""
-  if [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
-    bash "$DIR/install-helper.sh" --with-polkit-rule
-    say "${GREEN}✓${NC} Root helper and optional Polkit rule installed"
-  else
-    bash "$DIR/install-helper.sh" --no-polkit-rule
-    say "${GREEN}✓${NC} Root helper installed; existing Polkit authorization was preserved"
+remove_legacy_helper() {
+  # Releases before 1.7 installed a root helper; NetworkManager replaces it.
+  local legacy
+  legacy=$(/usr/bin/python3 "$DIR/cyberghost_runner.py" check | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print(1 if d.get("legacy_helper") or d.get("legacy_polkit_rule") else 0)')
+  [[ "$legacy" == 1 ]] || return 0
+  if confirm "Remove the old root helper and Polkit rule from a previous release?"; then
+    bash "$DIR/scripts/remove-legacy-helper.sh"
   fi
 }
 
@@ -79,13 +72,14 @@ try:
     data = json.loads(os.environ.get("STATUS_JSON", "{}"))
     def tick(key):
         return "\033[0;32m✓\033[0m" if data.get(key) else "\033[1;33m✗\033[0m"
-    print(f" {tick('wg_tools')} WireGuard tools (wg-quick)")
-    print(f" {tick('dns_tools')} VPN DNS provider (resolvconf)")
+    print(f" {tick('nm')} NetworkManager running")
+    permission = data.get("nm_permission") or "unknown"
+    mark = "\033[0;32m✓\033[0m" if permission in ("yes", "auth") else "\033[1;33m✗\033[0m"
+    print(f" {mark} Network permission ({permission})")
     print(f" {tick('requests')} Python requests (key negotiation)")
     print(f" {tick('credentials')} CyberGhost account credentials")
-    print(f" {tick('helper_installed')} Root helper binary (/usr/local/bin/cyberghost-runner)")
-    print(f" {tick('helper_present')} Trusted helper present (recovery cleanup)")
-    print(f" {tick('polkit_rule_installed')} Polkit rule (50-cyberghost.rules)")
+    if data.get("legacy_helper") or data.get("legacy_polkit_rule"):
+        print(" \033[1;33m!\033[0m Old root helper still installed (bash scripts/remove-legacy-helper.sh)")
 except Exception:
     print(" Check status unavailable")
 PY
@@ -96,22 +90,19 @@ PY
 
 say "CyberGhost VPN plugin — setup"
 
-# 1. System packages
-install_pacman wireguard-tools || true
-if ! command -v resolvconf >/dev/null 2>&1; then
-  install_pacman openresolv || true
-fi
+# 1. System packages. The tunnel itself is a NetworkManager connection, so
+# no WireGuard tools, resolvconf provider or root helper are needed.
 if /usr/bin/python3 -c 'import requests' >/dev/null 2>&1; then
   say "${GREEN}✓${NC} python-requests already installed"
 else
   install_pacman python-requests || true
 fi
 
-# 2. CyberGhost CLI (AUR) + account link
+# 2. CyberGhost account link (native, no CLI required)
 setup_account || true
 
-# 3. Passwordless privilege escalation
-install_polkit_rule
+# 3. Previous-release cleanup
+remove_legacy_helper || true
 
 # 4. Report
 summary

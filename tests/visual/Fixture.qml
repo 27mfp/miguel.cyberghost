@@ -80,6 +80,8 @@ Plugin.Panel {
         y: point.y,
         text: item.text && (item.objectName === "accountPassword" || item.objectName === "accountUsername") ? "<redacted>" : (item.text || ""),
         selected: item.selected === true,
+        checked: item.checked === true,
+        tooltipText: item.tooltipText || "",
         popupOpen: item.popupOpen === true
       }
     }
@@ -111,6 +113,12 @@ Plugin.Panel {
       sample.setupCardState = name === "setup" ? "first-run" : "ready"
       sample.setupDone = name !== "setup"
       sample.readyCreds = name !== "setup"
+      // "switch": connected to Portugal while Spain is selected.
+      sample.activeCountry = sample.connected || name === "switch" ? "PT" : ""
+      if (name === "switch") {
+        sample.connected = true
+        sample.setCountry("ES")
+      }
     }
   }
 
@@ -123,24 +131,36 @@ Plugin.Panel {
     property bool busy: false
     property bool setupDone: true
     property string setupCardState: "ready"
-    property bool readyWg: true
-    property bool readyDns: true
+    property bool readyNm: true
+    property bool readyNetwork: true
+    property string nmPermission: "yes"
     property bool readyRequests: true
     property bool readyCreds: true
-    property bool helperInstalled: true
+    property string accountName: "user@example.com"
+    property string accountSource: "native"
+    property string actionKind: ""
+    property bool resolvingAutomaticServer: false
+    property string activeCountry: ""
+    readonly property string activeCountryName: activeCountry === "PT" ? "Portugal" : ""
+    readonly property bool switchAvailable: connected && activeCountry !== "" && activeCountry !== country
+    property real rxRate: 505036.8
+    property real txRate: 18124.8
+    property real rxBytes: 8804682956.8
+    property real txBytes: 296122777.6
     property bool readyCli: true
     property bool cliConfigured: true
-    property bool readyPolkit: false
+    property bool legacyTunnel: false
+    property bool legacyCleanupAvailable: false
+    property string legacyStatus: ""
     property bool regBusy: false
     property string setupMsg: ""
     property string lastError: ""
     property string statusProbeError: ""
-    property bool externalVpn: false
     property string actionStatus: ""
     property string applyHint: ""
     property bool tunnelStale: false
-    property string lastBackend: "wireguard"
-    property int handshakeAgeSec: 240
+    property string lastBackend: "networkmanager"
+    property int rxIdleSec: 240
     property string country: "PT"
     property string countryName: "Portugal"
     property string countryFlag: "🇵🇹"
@@ -211,8 +231,11 @@ Plugin.Panel {
     function installDeps() {
       setupMsg = "Preview: package installation is not executed."
     }
-    function openHelperInstaller(withPolkit) {
-      lastError = "Preview: privileged installation is not executed."
+    function openLegacyCleanup() {
+      legacyStatus = "Preview: legacy helper removal is not executed."
+    }
+    function logout() {
+      lastError = "Preview: logout is not executed."
     }
     function registerAccount(user, password) {
       setupMsg = "Preview: account credentials are not sent or stored."

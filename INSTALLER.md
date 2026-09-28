@@ -2,33 +2,28 @@
 
 Published listing: [CyberGhost VPN for Omarchy](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
 
+Since 1.7.0 the plugin installs nothing as root. The tunnel is an in-memory NetworkManager WireGuard connection that the plugin creates as your user. NetworkManager's Polkit policy authorizes it, just as it does for Omarchy's own network panel.
+
 | Script | Purpose | Privileges |
 | --- | --- | --- |
-| `install.sh` | Guided native WireGuard dependency/account/helper setup. Does not install the vendor CLI. | Explicit terminal sudo for packages/helper. |
-| `install-helper.sh` | Install/update the fixed, root-owned connection helper. | Explicit terminal sudo; no mutable plugin path is executed as root. |
-| `fresh-install.sh` | Destructive developer reset/reinstall, not a normal upgrade. | Removes installed helper/rule with authorization. |
+| `install.sh` | Guided setup: `python-requests` if missing, account link, and removal of pre-1.7 files. Does not install the vendor CLI. | `sudo pacman` only if `python-requests` is missing. |
+| `scripts/remove-legacy-helper.sh` | Removes the root helper, Polkit rule and generated config left by releases before 1.7. The panel opens it in Omarchy's floating terminal. | One explicit `sudo` step, run in a visible terminal. |
+| `fresh-install.sh` | Destructive developer reset and reinstall, not a normal upgrade. | Removes legacy root files with authorization. |
 
-## Helper options
+## Legacy cleanup rules
 
-```bash
-bash install-helper.sh                     # helper only, normal authorization
-bash install-helper.sh --with-polkit-rule  # explicit passwordless opt-in
-bash install-helper.sh --no-polkit-rule    # equivalent to helper-only default
-bash install-helper.sh --revoke-polkit-rule # explicitly revoke this plugin rule
-```
+`remove-legacy-helper.sh` refuses to run while a tunnel from the old helper is still up, because only that helper can remove it. Disconnect from the panel first. It then removes only files it can recognize:
 
-Helper-only updates **preserve existing Polkit rules**. `--with-polkit-rule` generates a rule for the installing user only (and still requires that user to remain in `wheel`). `--revoke-polkit-rule` removes that rule only when its bytes still match the generated snapshot; customized or failed removals are refused and the UI marker is retained. The normal installer never silently revokes authorization.
-
-The installer snapshots regular source files before asking for sudo, copies them into a new root-only staging directory, verifies SHA-256 digests, and publishes fixed files through atomic renames. It rejects unsafe source/staging paths and only cleans staging it created successfully. These digests provide checkout-to-install integrity, not release provenance; use a trusted checkout or an independently verified signed release when provenance matters. Reinstall after a helper version or capability update; the panel detects mismatches.
+- `/usr/local/bin/cyberghost-runner`: only a root-owned regular file carrying the plugin's version marker.
+- `/etc/polkit-1/rules.d/50-cyberghost.rules`: only if its sole program match is the old helper, or it is one of the pre-1.5 rules that let `python3` run the user-writable plugin runner as root. Those older rules are a standing root grant and are always removed. A customized rule is left alone and reported.
+- `/etc/wireguard/cyberghost.conf` (only when no `cyberghost` interface exists) and `/run/lock/cyberghost.lock`.
 
 ## State ownership
 
-- `~/.cyberghost/native.ini`: plugin-native account identifier and device token/secret, private permissions; no password.
-- `~/.cyberghost/config.ini`: vendor CLI/legacy state. Native registration and developer reset do not overwrite/delete it.
-- `/usr/local/bin/cyberghost-runner`: root-owned lifecycle helper.
-- `/run/lock/cyberghost.lock`: persistent root-owned lifecycle lock; it is never removed after use.
-- `/etc/wireguard/cyberghost.conf`: root-owned generated tunnel configuration, including the private WireGuard key.
-- `/etc/polkit-1/rules.d/50-cyberghost.rules`: optional authorization rule.
-- `~/.local/state/cyberghost/polkit-rule-installed`: user-owned UI marker, not authorization.
+- `~/.cyberghost/native.ini`: plugin-native account identifier, device token/secret and the login session token (JWT) with the numeric account id. Mode 0600, owned by you, never the password. The session token reads CyberGhost's live server list (`/my/servers/filters/74`, the same endpoint the official CLI uses), which the device token cannot. It is checked locally for expiry and never sent once expired. Connects then fall back to probing, and **Link account** refreshes it. **Log out** deletes the whole file.
+- `~/.cyberghost/config.ini`: vendor CLI/legacy state. Native registration and developer reset do not overwrite or delete it.
+- NetworkManager profile **CyberGhost VPN** (interface `cyberghost`): created with `save no`, so it is never written to `/etc/NetworkManager/system-connections`. It is restricted to your user (`connection.permissions`). Its per-session private key reaches NetworkManager over stdin (`nmcli connection edit`), never through argv. Disconnect deletes it, and it also disappears when NetworkManager restarts.
 
-`omarchy plugin add` only installs the repository; it does not run these scripts or authorize system changes. The plugin stays in the existing shell process. Complete setup through its panel or a visible terminal.
+- `~/.cache/cyberghost/servers.json`: public server names for each country (no credentials), built from your own account. A background sync fills it while your login session is valid, paced at one country every 5 s, stopping at any rate limit and resuming later. Countries refreshed within a week are skipped. Connects refresh their own country. Entries do not expire, because every connect probes the names first.
+
+`omarchy plugin add` only installs the repository; it does not run these scripts or authorize system changes. The plugin stays in the existing shell process.
