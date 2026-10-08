@@ -184,6 +184,20 @@ Column {
     }
   }
 
+  Text {
+    objectName: "trafficSampling"
+    visible: root.tunnel && (root.service.rxRate < 0 || root.service.txRate < 0)
+    width: parent.width
+    text: "Sampling traffic… Rates appear after two status checks."
+    textFormat: Text.PlainText
+    color: root.foreground
+    opacity: 0.6
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    wrapMode: Text.WordWrap
+    Accessible.name: text
+  }
+
   // Short transfer values fit two per row, as in the network panel's grid.
   Grid {
     id: grid

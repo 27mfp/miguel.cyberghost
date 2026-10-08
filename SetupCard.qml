@@ -28,6 +28,11 @@ Column {
     clearPassword()
 
   function submit() {
+    if (service.connected || service.busy) {
+      service.setupMsg = "Disconnect the VPN and wait for pending operations before linking an account."
+      password.clear()
+      return
+    }
     if (!username.text.trim() || !password.text) {
       service.setupMsg = "Enter your CyberGhost username and password."
       if (!username.text.trim())
@@ -167,7 +172,7 @@ Column {
       text: root.service.regBusy ? "Linking account…" : "Link account"
       focusable: true
       bordered: true
-      enabled: !root.service.regBusy && root.formFilled
+      enabled: !root.service.regBusy && !root.service.connected && !root.service.busy && root.formFilled
       // The host Button has no disabled styling; dim it until it can act.
       foreground: enabled || root.service.regBusy ? root.brandYellow : root.dim
       fontFamily: root.fontFamily

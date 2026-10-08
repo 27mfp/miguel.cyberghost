@@ -4,7 +4,7 @@
 # Removes plugin-owned state (widget, helper/rule, native credentials), but
 # preserves the vendor CLI config, which may still satisfy legacy readiness.
 # Reinstalls from a staged and validated source. Configuration (dependencies,
-# account link, root-helper installation and optional passwordless rule) is
+# Python requests and account linking) is
 # completed through the widget's FIRST-RUN SETUP panel.
 #
 # Usage:
@@ -22,8 +22,6 @@ PLUGIN_ID="miguel.cyberghost"
 PLUGIN_URL="https://github.com/27mfp/miguel.cyberghost.git"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGINS_DIR="$HOME/.config/omarchy/plugins"
-POLKIT_RULE="/etc/polkit-1/rules.d/50-cyberghost.rules"
-POLKIT_MARKER="$HOME/.local/state/cyberghost/polkit-rule-installed"
 
 GREEN='\033[0;32m'; BOLD='\033[1m'; NC='\033[0m'
 step() { printf "\n${BOLD}==> %s${NC}\n" "$1"; }
@@ -117,22 +115,19 @@ fi
 ok "tunnel down"
 
 # ---------------------------------------------------------------------------
+step "Removing recognized legacy helper files before plugin teardown"
+# Use the same recognizers as ordinary migration. Authorization failure or an
+# unrecognized helper/rule aborts before the installed plugin is removed.
+bash "$SOURCE_DIR/scripts/remove-legacy-helper.sh" --yes --strict
+ok "legacy cleanup completed; ambiguous WireGuard configuration preserved"
+
+# ---------------------------------------------------------------------------
 step "Removing plugin from Omarchy"
 omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true
 omarchy plugin remove "$PLUGIN_ID" --yes >/dev/null 2>&1 || true
 # Remove only the fixed plugin target. Do not sweep unrelated Omarchy backups.
 rm -rf -- "${PLUGINS_DIR:?}/$PLUGIN_ID"
 ok "widget removed from bar and plugins dir"
-
-# ---------------------------------------------------------------------------
-step "Removing any pre-1.7 root helper (the disconnect above removed the NetworkManager profile)"
-if /usr/bin/sudo /usr/bin/rm -f -- "$POLKIT_RULE" /usr/local/bin/cyberghost-runner /etc/wireguard/cyberghost.conf; then
-  rm -f -- "$POLKIT_MARKER"
-  ok "legacy root files removed"
-else
-  echo "Could not remove the legacy root helper or Polkit rule; reset aborted." >&2
-  exit 1
-fi
 
 # ---------------------------------------------------------------------------
 step "Removing native plugin credentials (preserving the vendor CLI)"

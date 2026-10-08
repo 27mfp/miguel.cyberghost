@@ -7,6 +7,17 @@
 #   bash scripts/remove-legacy-helper.sh
 set -euo pipefail
 
+ASSUME_YES=0
+STRICT=0
+while (($#)); do
+  case "$1" in
+    --yes) ASSUME_YES=1 ;;
+    --strict) STRICT=1 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
 HELPER_PATH="/usr/local/bin/cyberghost-runner"
 RULE_PATH="/etc/polkit-1/rules.d/50-cyberghost.rules"
 WG_CONF_PATH="/etc/wireguard/cyberghost.conf"
@@ -34,22 +45,54 @@ fi
 echo "This removes the files installed by earlier CyberGhost plugin releases:"
 echo "  $HELPER_PATH"
 echo "  $RULE_PATH (only the plugin's own rule; a customized file is left alone)"
-echo "  $WG_CONF_PATH and $LOCK_PATH"
-read -rp "Continue? [y/N] " answer || answer=""
-[[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Nothing was changed."; exit 0; }
+echo "  $LOCK_PATH is preserved to avoid replacing a held advisory lock."
+echo "  $WG_CONF_PATH is preserved: its contents do not prove plugin ownership."
+if (( ! ASSUME_YES )); then
+  read -rp "Continue? [y/N] " answer || answer=""
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Nothing was changed."; exit 0; }
+fi
 
-/usr/bin/sudo /usr/bin/bash -s -- "$HELPER_PATH" "$RULE_PATH" "$WG_CONF_PATH" "$LOCK_PATH" <<'ROOT'
+/usr/bin/sudo /usr/bin/bash -s -- "$HELPER_PATH" "$RULE_PATH" "$WG_CONF_PATH" "$LOCK_PATH" "$STRICT" <<'ROOT'
 set -euo pipefail
-helper="$1" rule="$2" wg_conf="$3" lock="$4"
+helper="$1" rule="$2" wg_conf="$3" lock="$4" strict="$5"
 
 trusted_root_file() {
   [[ -f "$1" && ! -L "$1" && "$(/usr/bin/stat -c '%u' -- "$1")" == 0 ]]
 }
 
+recognized_helper() {
+  trusted_root_file "$helper" && /usr/bin/grep -q '^PLUGIN_VERSION = "' -- "$helper" \
+    && /usr/bin/grep -q 'cyberghost' -- "$helper"
+}
+
+recognized_rule() {
+  local programs
+  programs=$(/usr/bin/grep -o 'lookup("program") === "[^"]*"' -- "$rule" | /usr/bin/sort -u || true)
+  trusted_root_file "$rule" && { [[ "$programs" == "lookup(\"program\") === \"$helper\"" ]] \
+    || /usr/bin/grep -q 'cyberghost_runner\.py' -- "$rule"; }
+}
+
+# Preflight before deleting anything. Developer reset must preserve the current
+# plugin if authorization fails or a system file has an unknown owner/purpose.
+if (( strict )); then
+  for path in "$helper" "$rule"; do
+    if [[ -e "$path" || -L "$path" ]]; then
+      if [[ "$path" == "$helper" ]]; then
+        recognized_helper || { echo "Unrecognized helper; reset aborted." >&2; exit 1; }
+      else
+        recognized_rule || { echo "Customized rule; reset aborted." >&2; exit 1; }
+      fi
+    fi
+  done
+fi
+# Recheck after authorization, not only before the confirmation/password prompt.
+if /usr/bin/ip link show cyberghost >/dev/null 2>&1; then
+  echo "A cyberghost interface is present; disconnect before cleanup." >&2
+  exit 1
+fi
+
 if [[ -e "$helper" ]]; then
-  # Only delete the plugin's own helper, recognized by its version marker.
-  if trusted_root_file "$helper" && /usr/bin/grep -q '^PLUGIN_VERSION = "' -- "$helper" \
-    && /usr/bin/grep -q 'cyberghost' -- "$helper"; then
+  if recognized_helper; then
     /usr/bin/rm -f -- "$helper"
     echo "Removed $helper"
   else
@@ -58,11 +101,7 @@ if [[ -e "$helper" ]]; then
 fi
 
 if [[ -e "$rule" ]]; then
-  programs=$(/usr/bin/grep -o 'lookup("program") === "[^"]*"' -- "$rule" | /usr/bin/sort -u || true)
-  # Releases before 1.5 matched python3 running the user-writable plugin
-  # runner. Such a rule is a standing root grant and is always removed.
-  if trusted_root_file "$rule" && { [[ "$programs" == "lookup(\"program\") === \"$helper\"" ]] \
-    || /usr/bin/grep -q 'cyberghost_runner\.py' -- "$rule"; }; then
+  if recognized_rule; then
     /usr/bin/rm -f -- "$rule"
     echo "Removed $rule"
   else
@@ -70,14 +109,15 @@ if [[ -e "$rule" ]]; then
   fi
 fi
 
-if ! /usr/bin/ip link show cyberghost >/dev/null 2>&1; then
-  if trusted_root_file "$wg_conf"; then
-    /usr/bin/rm -f -- "$wg_conf"
-    echo "Removed $wg_conf"
-  fi
+# No unique ownership marker exists in historical WireGuard configs. Preserve
+# them rather than deleting a possibly customized or repurposed configuration.
+if [[ -e "$wg_conf" ]]; then
+  echo "Preserved $wg_conf; remove manually if no longer needed."
 fi
-if trusted_root_file "$lock"; then
-  /usr/bin/rm -f -- "$lock"
+# Advisory lock paths must persist: unlinking a held inode lets another
+# process lock a replacement inode and bypass lifecycle serialization.
+if [[ -e "$lock" ]]; then
+  echo "Preserved $lock (advisory lock)."
 fi
 ROOT
 

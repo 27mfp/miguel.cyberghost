@@ -92,6 +92,8 @@ TestCase {
     mockService.readyCreds = false
     mockService.setupCardState = "first-run"
     mockService.setupMsg = ""
+    mockService.connected = false
+    mockService.busy = false
     mockService.country = "PT"
     mockService.countryCalls = 0
     mockService.legacyCleanupAvailable = false
@@ -167,6 +169,19 @@ TestCase {
     compare(mockService.setupMsg, "demo:secret")
     compare(password.text, "")
     mockService.readyRequests = false
+  }
+
+  function test_accountLinkingRefusesAnActiveTunnel() {
+    mockService.readyRequests = true
+    var card = createTemporaryObject(setupFactory, this)
+    findChild(card, "accountUsername").text = "demo"
+    var password = findChild(card, "accountPassword")
+    password.text = "secret"
+    mockService.connected = true
+    verify(!findChild(card, "linkAccount").enabled)
+    card.submit()
+    verify(mockService.setupMsg.indexOf("Disconnect the VPN") >= 0)
+    compare(password.text, "")
   }
 
   function test_checklistMarksProgressAndOnlyShowsCurrentActions() {
