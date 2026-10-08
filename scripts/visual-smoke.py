@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TARGET = "test.cyberghost-visual"
+TARGET = "test.cyberghost-release-171"
 
 
 def run(tool, *args, data=None):
@@ -146,6 +146,8 @@ def main():
         shortcut("t")  # Synthetic service only: no NetworkManager profile is created.
         connected = wait_for(lambda state: state["connected"])
         require(connected["controls"]["vpnToggle"]["checked"], "Header switch did not follow the connection")
+        require(connected.get("activeCountry") == connected["country"], "Synthetic active country is stale")
+        require(connected["controls"]["locationHeader"]["text"] == "NEXT LOCATION", "Connected location label missing")
         capture(directory, "06-connected")
         shortcut("t")
         wait_for(lambda state: not state["connected"])
@@ -153,8 +155,39 @@ def main():
         capture(directory, "07-narrow")
         ipc("scenario", "stale")
         capture(directory, "08-stale")
+        for index, scenario in enumerate(("connecting", "unknown", "error", "switch", "sampling"), 9):
+            ipc("scenario", scenario)
+            state = capture(directory, f"{index:02d}-{scenario}")
+            if scenario in ("unknown", "error"):
+                require(state["controls"]["statusBanner"]["visible"], "Recovery notice is missing")
+                require(state["controls"]["statusRecheck"]["visible"], "Recheck action is missing")
+                previous = state["recheckCalls"]
+                activate("statusRecheck")
+                wait_for(lambda value, previous=previous: value["recheckCalls"] > previous)
+            if scenario == "connecting":
+                require(state["controls"]["vpnToggle"]["busy"], "Connecting switch is not busy")
+                require(not state["controls"]["countryPicker"]["enabled"], "Busy location remains editable")
+            if scenario == "switch":
+                require(state["controls"]["locationHeader"]["text"] == "NEXT LOCATION", "Next location is ambiguous")
+                activate("switchCountryButton")
+                wait_for(lambda value: value["activeCountry"] == "ES")
+            if scenario == "sampling":
+                require(state["controls"]["trafficSampling"]["visible"], "Sampling explanation missing")
+        ipc("scenario", "short-setup")
+        short = capture(directory, "14-short-setup")
+        viewport = short["controls"]["vpnPanelViewport"]
+        require(viewport["contentHeight"] > viewport["height"], "Short setup did not constrain height")
+        require(ipc("focus", "accountUsername") == "true", "Cannot focus short setup username")
+        run("wtype", "short@example.invalid", "-k", "Tab", "short-password", "-k", "Tab")
+        focused = snapshot()
+        viewport = focused["controls"]["vpnPanelViewport"]
+        button = focused["controls"]["linkAccount"]
+        require(
+            button["y"] >= viewport["y"] and button["y"] + button["height"] <= viewport["y"] + viewport["height"] + 1,
+            "Focused short-panel action is offscreen",
+        )
         ipc("scenario", "setup")
-        capture(directory, "09-setup")
+        capture(directory, "15-setup")
         require(ipc("focus", "accountUsername") == "true", "Cannot focus account username")
         run("wtype", "preview@example.invalid", "-k", "Return", "not-a-real-password", "-k", "Return")
         wait_for(lambda state: state["setupMsg"].startswith("Preview:"))
@@ -171,7 +204,7 @@ def main():
                 run("wl-copy", "--clear")
         run("omarchy-shell", "shell", "hide", TARGET)
         print(f"Artifacts: {directory}")
-    print(f"PASS: real-shell interactions, clipboard restoration and 9 captures. Review images in {directory}")
+    print(f"PASS: real-shell interactions, clipboard restoration and 15 captures. Review images in {directory}")
 
 
 if __name__ == "__main__":

@@ -6,9 +6,17 @@ import os
 import tempfile
 from unittest import mock
 
+import pytest
 from runner_support import load_runner
 
 runner = load_runner()
+
+
+@pytest.fixture(autouse=True)
+def disconnected_registration(monkeypatch):
+    monkeypatch.setattr(runner, "nm_active_state", lambda: "")
+    monkeypatch.setattr(runner, "_interface_state", lambda ip: False)
+    monkeypatch.setattr(runner, "system_binary", lambda name: "/mock/" + name)
 
 
 def test_find_config_path_env_override():
@@ -182,6 +190,39 @@ def test_register_uses_api_response_and_never_persists_password():
     assert "CG_PASSWORD" not in os.environ
     os.unlink(config_path)
     os.rmdir(d)
+
+
+def test_registered_device_is_saved_before_optional_metadata(tmp_path):
+    path = tmp_path / "native.ini"
+
+    def response(status, body):
+        item = mock.Mock(status_code=status)
+        item._cyberghost_body = json.dumps(body).encode()
+        return item
+
+    def metadata(jwt):
+        assert path.exists()
+        config = configparser.ConfigParser()
+        config.read(path)
+        assert config.get("device", "token") == "TOK"
+        assert config.get("session", "jwt") == "jwt-token"
+        return ""
+
+    with (
+        mock.patch.dict(os.environ, {"CG_USERNAME": "user@example.com", "CG_PASSWORD": "secret"}),
+        mock.patch.object(runner, "user_config_path", return_value=str(path)),
+        mock.patch.object(runner, "account_user_id", side_effect=metadata),
+        mock.patch.object(
+            runner,
+            "api_request",
+            side_effect=[
+                response(200, {"jwt": "jwt-token"}),
+                response(201, {"token": "TOK", "secret": "SEC"}),
+            ],
+        ),
+    ):
+        runner.register()
+    assert path.exists()
 
 
 def test_register_scrubs_env_vars_even_when_api_fails():

@@ -11,7 +11,7 @@ Requires Omarchy, `wtype`, `grim`, `wl-copy`, `wl-paste` and Python 3.9+. This t
 ```bash
 bash scripts/visual-preview.sh --install
 # Wait for plugin discovery, then:
-omarchy plugin enable test.cyberghost-visual
+omarchy plugin enable test.cyberghost-release-171
 python3 scripts/visual-smoke.py --run
 # Inspect the PNGs and JSON snapshots in the printed /tmp directory.
 bash scripts/visual-preview.sh --remove
@@ -33,7 +33,7 @@ If you edit imported QML after loading the fixture, a rescan may still use cache
 - Submit synthetic account fields and verify the password is cleared; close with an unsubmitted password and verify it is discarded.
 - Escape closes the panel.
 
-The script saves nine rendered captures: ready, filtered country, private details, Advanced, WireGuard-only controls, connected, narrow (280 logical units before host scaling), stale handshake and account setup. Snapshots mask entered account values. The test fails on missing controls or unsuccessful interactions; it does not silently skip unavailable IPC.
+The script saves fifteen rendered captures: ready, filtered country, private details, Advanced, WireGuard-only controls, connected, narrow (280 logical units before host scaling), stale traffic, connecting, unknown status, connection error, explicit country switch, traffic sampling, short-height setup and account setup. Unknown/error previews invoke Recheck and verify the synthetic counter increments. Switching verifies NEXT LOCATION and activates the switch action. Connecting verifies busy controls, and sampling verifies its explanation. The short-height case constrains content to 260 logical units, uses Tab through account fields, and checks that the focused Link account action scrolls fully into view. Snapshots mask entered account values. The test fails on missing controls or unsuccessful interactions; it does not silently skip unavailable IPC.
 
 ## Human visual review
 

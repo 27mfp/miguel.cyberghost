@@ -13,6 +13,8 @@ A WireGuard VPN plugin for the Omarchy bar. Choose a country and connect with on
   <img src="docs/screenshots/screenshot_connected.png" alt="CyberGhost VPN connected to Portugal with WireGuard active" width="360">
 </p>
 
+Preview images use synthetic account and connection data, not a live VPN session.
+
 ## Install
 
 ```bash
@@ -59,7 +61,9 @@ The plugin preserves the vendor's `~/.cyberghost/config.ini`. Disconnect before 
 omarchy plugin update miguel.cyberghost
 ```
 
-Updates need no extra step. **Upgrading from 1.6.x or earlier:** disconnect once (the old helper removes its own tunnel), then use **Settings → Advanced → Remove old root helper…**, or run `bash scripts/remove-legacy-helper.sh`. Disconnect before removal. See the [installer reference](INSTALLER.md) for details.
+The updater rescans plugins, but an already-loaded widget can retain cached QML. If the panel still shows old controls or setup instructions, run `omarchy restart shell`, then reopen the ghost icon. This briefly restarts the bar and shell UI; it does not restart NetworkManager.
+
+**Upgrading from 1.6.x or earlier:** disconnect once (the old helper removes its own tunnel), then use **Settings → Advanced → Remove old root helper…**, or run `bash scripts/remove-legacy-helper.sh`. Disconnect before removal. See the [installer reference](INSTALLER.md) for details.
 
 ## Development
 

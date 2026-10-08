@@ -84,7 +84,10 @@ TestCase {
     compare(findChild(details, "detailsHeader").text, "VPN CONNECTION")
     // No sample yet reads "--" instead of shifting the grid later.
     compare(findChild(details, "receivingValue").text, "--")
+    verify(findChild(details, "trafficSampling").visible)
+    model.txRate = 100
     model.rxRate = 505036.8
+    verify(!findChild(details, "trafficSampling").visible)
     model.rxBytes = 8.2 * 1024 * 1024 * 1024
     compare(findChild(details, "receivingValue").text, "493.2 KB/s")
     compare(findChild(details, "downloadedValue").text, "8.20 GB")

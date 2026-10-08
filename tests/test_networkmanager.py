@@ -452,6 +452,33 @@ def test_permission_reports_the_least_permitted_action(control, own, expected):
         assert runner.nm_permission() == expected
 
 
+def test_cancel_after_successful_activation_rolls_back_entire_connect():
+    nm = FakeNetworkManager()
+    first, second, third = nm.patches()
+    key_response = {
+        "dns_servers": ["1.1.1.1"],
+        "server_ip": "198.51.100.20",
+        "server_port": 1337,
+        "peer_ip": "10.2.0.2",
+        "server_key": SAMPLE_PUB,
+    }
+    with (
+        first,
+        second,
+        third,
+        mock.patch.object(runner.os, "geteuid", return_value=1000),
+        mock.patch.object(runner, "load_account", return_value={"token": "mock", "secret": "mock"}),
+        mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)),
+        mock.patch.object(runner, "select_native_candidates", return_value=("PT", ["mock"])),
+        mock.patch.object(runner, "exchange_wireguard_key", return_value=(key_response, "mock")),
+        mock.patch("builtins.print", side_effect=runner.OperationCancelled("cancelled during publication")),
+    ):
+        with pytest.raises(runner.OperationCancelled):
+            runner.connect()
+    assert any(call[0] == "--wait" for call in nm.calls)
+    assert not nm.profile and not nm.link and not nm.state
+
+
 def test_byte_formatting():
     assert runner.format_bytes(0) == "0 B"
     assert runner.format_bytes(1536) == "1.50 KiB"
