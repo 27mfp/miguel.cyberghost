@@ -225,6 +225,67 @@ def test_registered_device_is_saved_before_optional_metadata(tmp_path):
     assert path.exists()
 
 
+@pytest.mark.parametrize("failure", ["lookup", "save", "cancel"])
+def test_optional_metadata_failure_preserves_linked_device(tmp_path, capsys, failure):
+    path = tmp_path / "native.ini"
+
+    def response(status, body):
+        item = mock.Mock(status_code=status)
+        item._cyberghost_body = json.dumps(body).encode()
+        return item
+
+    original_replace = runner.os.replace
+    writes = []
+
+    def replace(source, target):
+        writes.append(target)
+        if failure == "save" and len(writes) == 2:
+            raise OSError("disk full")
+        return original_replace(source, target)
+
+    metadata_response = (
+        runner.OperationCancelled("cancelled")
+        if failure == "cancel"
+        else OSError("network unavailable")
+        if failure == "lookup"
+        else response(200, {"id": 424242})
+    )
+    with (
+        mock.patch.dict(os.environ, {"CG_USERNAME": "user@example.com", "CG_PASSWORD": "never-save-this"}),
+        mock.patch.object(runner, "user_config_path", return_value=str(path)),
+        mock.patch.object(runner.os, "replace", side_effect=replace),
+        mock.patch.object(
+            runner,
+            "api_request",
+            side_effect=[
+                response(200, {"jwt": "jwt-token"}),
+                response(201, {"token": "TOK", "secret": "SEC"}),
+                metadata_response,
+            ],
+        ) as request,
+    ):
+        if failure == "cancel":
+            with pytest.raises(runner.OperationCancelled):
+                runner.register()
+        else:
+            runner.register()
+        assert "CG_PASSWORD" not in os.environ and "CG_USERNAME" not in os.environ
+    assert request.call_count == 3
+    config = configparser.ConfigParser()
+    config.read(path)
+    assert config.get("device", "token") == "TOK"
+    assert config.get("device", "secret") == "SEC"
+    assert config.get("session", "jwt") == "jwt-token"
+    assert not config.has_option("session", "user_id")
+    assert "never-save-this" not in path.read_text()
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert not list(tmp_path.glob(".config_ini_*"))
+    output = capsys.readouterr().out
+    assert ("Account linked." in output) == (failure != "cancel")
+    if failure == "save":
+        assert "device credentials are already stored" in output
+
+
 def test_register_scrubs_env_vars_even_when_api_fails():
     """register() must clear CG_USERNAME/CG_PASSWORD from os.environ even if the API call raises."""
 

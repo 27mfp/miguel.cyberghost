@@ -2303,7 +2303,12 @@ def _register(config_path=None):
         user_id = account_user_id(jwt)
         if user_id:
             session["user_id"] = user_id
-            write_user_config(target, username, device_name, device, session=session)
+            try:
+                write_user_config(target, username, device_name, device, session=session)
+            except (OSError, RuntimeError):
+                # The first atomic write already stored usable credentials.
+                # Optional metadata failure must not encourage another device registration.
+                print("Optional account metadata could not be saved; device credentials are already stored.")
         print(f"Account linked. Device credentials stored in {target}")
     finally:
         # Defense in depth: drop the local copies and re-clear the env vars

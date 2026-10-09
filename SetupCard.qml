@@ -16,6 +16,7 @@ Column {
   readonly property bool needsPackages: !needsNetwork && !service.readyRequests
   readonly property bool needsAccount: !needsNetwork && !needsPackages && !service.readyCreds
   readonly property bool formFilled: username.text.trim() !== "" && password.text !== ""
+  readonly property string linkBlockedReason: service.regBusy ? "" : (service.connected ? "Disconnect the VPN before linking an account." : (service.busy ? "Wait for the current operation to finish before linking an account." : ""))
   readonly property var focusTarget: needsPackages ? installDependencies : (needsAccount ? username : recheckSetup)
   visible: service.setupCardState !== "ready"
   height: visible ? implicitHeight : 0
@@ -29,7 +30,7 @@ Column {
 
   function submit() {
     if (service.connected || service.busy) {
-      service.setupMsg = "Disconnect the VPN and wait for pending operations before linking an account."
+      service.setupMsg = linkBlockedReason || "Account linking is already in progress."
       password.clear()
       return
     }
@@ -176,8 +177,23 @@ Column {
       // The host Button has no disabled styling; dim it until it can act.
       foreground: enabled || root.service.regBusy ? root.brandYellow : root.dim
       fontFamily: root.fontFamily
-      tooltipText: "Register this device with your CyberGhost account"
+      tooltipText: root.linkBlockedReason || "Register this device with your CyberGhost account"
+      Accessible.description: tooltipText
       onClicked: root.submit()
+    }
+
+    Text {
+      objectName: "linkBlockedReason"
+      visible: root.linkBlockedReason !== ""
+      width: parent.width
+      text: root.linkBlockedReason
+      textFormat: Text.PlainText
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+      Accessible.role: Accessible.StaticText
+      Accessible.name: text
     }
 
     Row {

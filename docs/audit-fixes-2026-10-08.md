@@ -34,6 +34,16 @@ Regression tests cover cancellation in inventory/key exchange, cancellation afte
 
 Test homes and account paths are temporary. API and NetworkManager boundaries are mocked. Cleanup bodies run only against sandbox paths, never sudo. No real VPN connect/disconnect, account registration, network-stack restart, shell restart or privileged cleanup was performed.
 
+## PR improvement pass
+
+- Unknown status takes priority over operation errors. Stale-tunnel warnings take priority over progress text. Recheck is offered for unknown, failed or stale connection status; operation errors can be dismissed without a connection change.
+- Account linking explains connected/busy restrictions inline and in its accessible description before submission.
+- Failure to save optional account metadata does not turn already-published device credentials into a reported linking failure. Cancellation still propagates and saved credentials remain intact.
+- Python 3.9/3.12/3.14: 233 tests passed on each. Qt: 76 UI and 13 utility cases passed. Ruff lint/format, native QML lint, manifest validation and whitespace checks passed.
+- Added behavior coverage for mixed status/error states, dismissal preserving stale warnings, connected/busy linking explanations, cancellation after profile creation/key editing/activation/verification, and metadata lookup/save/cancellation after credential publication.
+
+This pass used offline component tests and mocked backend boundaries. Existing synthetic screenshots describe the earlier candidate; no new real-shell captures or live VPN actions were performed. Remote CI must be rerun on the committed improvement revision before publication.
+
 ## Deferred live checks
 
 - DHCP-mode DNS and real IPv4/IPv6 routing.

@@ -9,19 +9,20 @@ Rectangle {
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   readonly property bool problem: service.lastError !== "" || service.statusProbeError !== "" || service.statusUnknown || service.tunnelStale
+  readonly property bool needsStatusCheck: service.statusProbeError !== "" || service.statusUnknown || service.tunnelStale
   readonly property string message: {
-    if (service.lastError !== "")
-      return service.lastError
     if (service.statusProbeError !== "")
       return service.statusProbeError
     if (service.statusUnknown)
       return "VPN status could not be verified. Recheck before changing the connection."
+    if (service.lastError !== "")
+      return service.lastError
     if (service.legacyTunnel)
       return "This tunnel uses the previous helper. Disconnect once before removing it in Settings."
-    if (service.actionStatus !== "")
-      return service.actionStatus
     if (service.tunnelStale)
       return "No traffic received for " + Math.round(service.rxIdleSec / 60) + " min. The tunnel may be down."
+    if (service.actionStatus !== "")
+      return service.actionStatus
     return service.applyHint
   }
   objectName: "statusBanner"
@@ -56,7 +57,7 @@ Rectangle {
     }
     Button {
       objectName: "statusRecheck"
-      visible: root.problem
+      visible: root.needsStatusCheck
       text: "Recheck status"
       iconText: ""
       focusable: true
@@ -66,6 +67,17 @@ Rectangle {
       Accessible.name: "Recheck VPN status"
       tooltipText: "Refresh setup and connection status without connecting (r)"
       onClicked: root.service.recheck()
+    }
+    Button {
+      objectName: "dismissNotice"
+      visible: root.service.lastError !== "" && !root.service.statusUnknown && root.service.statusProbeError === ""
+      text: "Dismiss error"
+      focusable: true
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      Accessible.name: "Dismiss operation error"
+      tooltipText: "Clear this message without changing the connection"
+      onClicked: root.service.lastError = ""
     }
   }
 }
