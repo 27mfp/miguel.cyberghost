@@ -18,7 +18,8 @@ An attempted upstream raw clock URL returned 404. We used the installed, working
 | File | Responsibility |
 | --- | --- |
 | `BarWidget.qml` | Bar icon, service ownership, settings persistence, IPC and forwarding open/close/popout lifecycle to the nested panel. |
-| `Panel.qml` | Popup composition, focus, Escape, status banner and the primary connect/disconnect action. |
+| `Panel.qml` | Popup composition, focus (keeps the focused control scrolled into view), Escape and the primary connect/disconnect action. |
+| `StatusNotice.qml` | Shared status/error notice, shown during setup too, with **Recheck status** for connection-state problems and dismissal for operation errors. |
 | `SetupCard.qml` | Required setup steps, form validation and focus routing. |
 | `ConnectionSettings.qml` | Country selection and progressively disclosed advanced controls. |
 | `ConnectionDetails.qml` | Observed IP/session data in a Network-panel-style grid (live rates and totals while connected), masking and click-to-copy. |
@@ -38,6 +39,9 @@ The tunnel is a NetworkManager WireGuard connection that the runner creates **as
 - **Routing:** `allowed-ips=0.0.0.0/0;::/0` lets NetworkManager's WireGuard auto-default-route install the same fwmark and policy-table routing that `wg-quick` used. `ipv6.method link-local` is required for the `::/0` route to exist, so IPv6 cannot bypass the tunnel.
 - **DNS:** VPN servers go on the tunnel link with the `~.` routing domain and a negative `dns-priority`, making it the exclusive resolver in systemd-resolved. If the user picked a provider with `omarchy dns`, NetworkManager's global DNS overrides per-connection DNS by design. No link then holds a DNS default route, and those public resolvers are reached through the tunnel.
 - **Lifecycle:** connect removes any previous session of our profile, then runs add → key → `--wait` up → verify `activated` and the interface. Every failure rolls back with down and delete, followed by verification that the profile and interface are gone. Disconnect is the same removal. `nmcli` exit 10 (not found) makes it idempotent.
+- **Cancellation:** the panel's cancel sends SIGTERM, which raises `OperationCancelled` (a `BaseException`, so server fallback handlers cannot swallow it). Before the old session is replaced, cancel leaves it untouched; after that boundary, the new profile is removed again.
+- **Probing:** endpoint DNS/TCP probes run in forked worker processes (at most 16 at a time) under a total deadline. Workers still running at the deadline are killed, so a blocked resolver cannot stall a connect. Server-cache writes are serialized with a private lock file.
+- **Account linking:** `register` takes the lifecycle lock, refuses while our profile or interface is active (or when that cannot be verified), and stores device credentials before the optional account-id lookup.
 - **Liveness:** handshake age requires `CAP_NET_ADMIN`, so status reports world-readable `/sys/class/net/cyberghost/statistics` counters. The UI warns when nothing has been received for three minutes. WireGuard rekeys every two minutes, so a live tunnel always receives.
 - **Migration:** a `cyberghost` interface that isn't our active profile is a tunnel from the pre-1.7 root helper. Status reports `backend: "legacy"`. The UI shows it as connected and disconnects it through the already-installed helper (the only remaining `pkexec` call), and the runner refuses to stack a new connection on it. `scripts/remove-legacy-helper.sh` then removes the helper and its rules.
 

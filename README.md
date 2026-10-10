@@ -30,10 +30,12 @@ That's it: connecting uses NetworkManager, which Omarchy already runs, and its P
 
 ## Use
 
-- Select a country under **Location**.
+- Select a country under **Location**. While connected, the selector reads **Next location**: choosing a country alone never reconnects.
 - While connected, the tunnel also appears as **CyberGhost VPN** in `nmcli` and Omarchy's network tools. It lives only in memory and is gone after a NetworkManager restart or reboot.
-- Selecting a country alone never reconnects.
 - Use the switch in the panel header to connect or disconnect. If you pick a different country while connected, **Switch to …** moves the tunnel in one click; choosing a country alone never reconnects.
+- If the VPN status can't be verified, or the tunnel looks stale, the panel shows a notice with **Recheck status**, which never connects. Operation errors can be dismissed.
+- Traffic rates appear after two status checks; until then the details show "Sampling traffic…".
+- **Link account** needs the VPN disconnected; the panel explains inline when linking is blocked.
 - Panel shortcuts: `t` or Enter toggles the VPN, `c` copies the public IP (or click the IP), `h` hides details, `r` refreshes, Esc closes.
 - **Account → Log out** forgets this device's login (`~/.cyberghost/native.ini`) after a second confirming click, disconnecting first if needed. An account from the CyberGhost CLI's own `config.ini` is shown but left alone. Logging out does not remove the device from your CyberGhost account; do that on CyberGhost's website if you no longer use it.
 - Left-click opens the panel; middle- and right-click toggle the VPN.
