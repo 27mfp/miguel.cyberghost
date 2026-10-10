@@ -1,14 +1,14 @@
 # 1.7.1 patch release
 
-Date: 2026-10-08
+Date: 2026-10-10
 POC: Miguel
 TL;DR: Offline fixes and UI refinements; no live network certification is added.
 
 - [x] Manifest and runner versions agree at 1.7.1; changelog updated.
-- [x] Final Python 3.9/3.12/3.14: 227 passed on each; Qt: 72 UI and 13 utility cases passed. Ruff, ShellCheck, native QML lint (0 project diagnostics), manifest and whitespace validation passed.
+- [x] Final Python 3.9/3.12/3.14: 233 passed on each; Qt: 76 UI and 13 utility cases passed. Ruff, ShellCheck, native QML lint (0 project diagnostics), manifest and whitespace validation passed.
 - [x] Fifteen synthetic real-shell captures; recovery button invocation, busy controls, country switching, sampling notice and short-height keyboard focus visibility checked. Clipboard restored; fixture removed; no VPN action performed.
 - [x] Refreshed README and marketplace preview images with labeled synthetic data.
-- [ ] PR CI on the release branch.
+- [x] PR CI on the release branch (lint-test on Python 3.9, 3.12 and 3.14).
 - [ ] Live routing/DHCP DNS, connection recovery and legacy migration, deferred to a safe environment.
 
 # 1.7.0 — NetworkManager release gates
