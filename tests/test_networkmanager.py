@@ -422,19 +422,27 @@ def test_lifecycle_operations_are_serialized(isolated_home):
         pass  # free again once the other operation ends
 
 
-def test_cancel_becomes_a_normal_failure_so_rollback_runs():
+@pytest.mark.parametrize("boundary", ["add", "edit", "up", "verify"])
+def test_activation_cancellation_rolls_back_at_each_boundary(boundary):
     nm = FakeNetworkManager()
 
-    def cancelled_up(args, timeout=15, input_data=None):
-        if args[0] == "--wait":
-            runner._cancel_on_sigterm(15, None)  # SIGTERM arrives during activation
-        return nm.nmcli(args, timeout, input_data)
+    def cancelled_step(args, timeout=15, input_data=None):
+        result = nm.nmcli(args, timeout, input_data)
+        step = "up" if args[0] == "--wait" else args[1]
+        if step == boundary:
+            runner._cancel_on_sigterm(15, None)
+        return result
 
-    with mock.patch.object(runner, "nmcli", side_effect=cancelled_up):
-        with mock.patch.object(runner, "_interface_state", side_effect=lambda ip: nm.link):
+    def interface_state(ip):
+        if boundary == "verify" and nm.state:
+            runner._cancel_on_sigterm(15, None)
+        return nm.link
+
+    with mock.patch.object(runner, "nmcli", side_effect=cancelled_step):
+        with mock.patch.object(runner, "_interface_state", side_effect=interface_state):
             with pytest.raises(RuntimeError, match="cancelled"):
                 runner.nm_activate(profile_args(), SAMPLE_PRIV, "/usr/bin/ip", runner.time.monotonic() + 60)
-    assert not nm.profile  # rolled back, not left half-created
+    assert not nm.profile and not nm.link and not nm.state
 
 
 @pytest.mark.parametrize(
@@ -450,6 +458,33 @@ def test_permission_reports_the_least_permitted_action(control, own, expected):
         lines.append(f"org.freedesktop.NetworkManager.settings.modify.own:{own}")
     with mock.patch.object(runner, "nmcli", return_value=completed(0, "\n".join(lines))):
         assert runner.nm_permission() == expected
+
+
+def test_cancel_after_successful_activation_rolls_back_entire_connect():
+    nm = FakeNetworkManager()
+    first, second, third = nm.patches()
+    key_response = {
+        "dns_servers": ["1.1.1.1"],
+        "server_ip": "198.51.100.20",
+        "server_port": 1337,
+        "peer_ip": "10.2.0.2",
+        "server_key": SAMPLE_PUB,
+    }
+    with (
+        first,
+        second,
+        third,
+        mock.patch.object(runner.os, "geteuid", return_value=1000),
+        mock.patch.object(runner, "load_account", return_value={"token": "mock", "secret": "mock"}),
+        mock.patch.object(runner, "generate_wireguard_keys", return_value=(SAMPLE_PRIV, SAMPLE_PUB)),
+        mock.patch.object(runner, "select_native_candidates", return_value=("PT", ["mock"])),
+        mock.patch.object(runner, "exchange_wireguard_key", return_value=(key_response, "mock")),
+        mock.patch("builtins.print", side_effect=runner.OperationCancelled("cancelled during publication")),
+    ):
+        with pytest.raises(runner.OperationCancelled):
+            runner.connect()
+    assert any(call[0] == "--wait" for call in nm.calls)
+    assert not nm.profile and not nm.link and not nm.state
 
 
 def test_byte_formatting():

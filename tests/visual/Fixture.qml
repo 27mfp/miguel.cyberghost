@@ -8,7 +8,7 @@ import "ServiceUtils.js" as Logic
 // Only this synthetic service replaces the network/account boundary.
 Plugin.Panel {
   id: preview
-  moduleName: "test.cyberghost-visual"
+  moduleName: "test.cyberghost-release-171"
   ipcTarget: moduleName
   cyberghost: sample
   settings: ({
@@ -58,6 +58,8 @@ Plugin.Panel {
       setupMsg: sample.setupMsg,
       country: sample.country,
       connected: sample.connected,
+      activeCountry: sample.activeCountry,
+      recheckCalls: sample.recheckCalls,
       hideDetails: sample.hideDetails,
       mode: sample.serverType,
       protocol: sample.protocol,
@@ -82,14 +84,18 @@ Plugin.Panel {
         selected: item.selected === true,
         checked: item.checked === true,
         tooltipText: item.tooltipText || "",
-        popupOpen: item.popupOpen === true
+        popupOpen: item.popupOpen === true,
+        enabled: item.enabled !== false,
+        busy: item.busy === true,
+        contentHeight: item.contentHeight || 0,
+        contentY: item.contentY || 0
       }
     }
     return JSON.stringify(data)
   }
 
   IpcHandler {
-    target: "test.cyberghost-visual"
+    target: "test.cyberghost-release-171"
     function snapshot(): string {
       return preview.snapshot()
     }
@@ -97,6 +103,17 @@ Plugin.Panel {
       return preview.focusControl(preview.find(name))
     }
     function scenario(name: string): void {
+      sample.connecting = name === "connecting"
+      sample.disconnecting = false
+      sample.busy = sample.connecting
+      sample.statusUnknown = name === "unknown"
+      sample.statusProbeError = ""
+      sample.actionStatus = ""
+      sample.lastError = name === "error" ? "Could not reach the VPN server. Your connection was not changed." : ""
+      sample.hideDetails = false
+      sample.setCountry("PT")
+      sample.rxRate = name === "sampling" ? -1 : 505036.8
+      sample.txRate = name === "sampling" ? -1 : 18124.8
       if (name === "disconnected") {
         sample.setCountry("PT")
         sample.hideDetails = false
@@ -108,11 +125,13 @@ Plugin.Panel {
       sample.readyCli = name !== "missing-cli"
       sample.cliConfigured = sample.readyCli
       sample.tunnelStale = name === "stale"
-      sample.connected = name === "connected" || name === "stale"
+      sample.connected = name === "connected" || name === "stale" || name === "sampling"
       preview.preferredContentWidth = name === "narrow" ? 280 : 380
-      sample.setupCardState = name === "setup" ? "first-run" : "ready"
-      sample.setupDone = name !== "setup"
-      sample.readyCreds = name !== "setup"
+      preview.maximumContentHeight = name === "short-setup" ? 260 : 0
+      var setup = name === "setup" || name === "short-setup"
+      sample.setupCardState = setup ? "first-run" : "ready"
+      sample.setupDone = !setup
+      sample.readyCreds = !setup
       // "switch": connected to Portugal while Spain is selected.
       sample.activeCountry = sample.connected || name === "switch" ? "PT" : ""
       if (name === "switch") {
@@ -124,10 +143,12 @@ Plugin.Panel {
 
   QtObject {
     id: sample
+    property bool statusUnknown: false
+    property int recheckCalls: 0
     property bool connected: false
     property bool connecting: false
     property bool disconnecting: false
-    readonly property bool active: connected
+    readonly property bool active: connected || connecting
     property bool busy: false
     property bool setupDone: true
     property string setupCardState: "ready"
@@ -141,7 +162,7 @@ Plugin.Panel {
     property string actionKind: ""
     property bool resolvingAutomaticServer: false
     property string activeCountry: ""
-    readonly property string activeCountryName: activeCountry === "PT" ? "Portugal" : ""
+    readonly property string activeCountryName: activeCountry ? Countries.countryName(activeCountry) : ""
     readonly property bool switchAvailable: connected && activeCountry !== "" && activeCountry !== country
     property real rxRate: 505036.8
     property real txRate: 18124.8
@@ -197,6 +218,10 @@ Plugin.Panel {
     property string publicOrg: "Example Network — synthetic organization for wrapping checks"
     property string transferText: "↓ 12 MiB · ↑ 3 MiB"
     property string endpoint: "198.51.100.20:1337"
+    onActiveCountryChanged: {
+      publicCountry = activeCountry || "PT"
+      publicCity = activeCountry === "ES" ? "Madrid" : "Lisbon"
+    }
     function setCountry(code) {
       var c = Countries.countryByCode(code)
       country = c.code
@@ -219,14 +244,23 @@ Plugin.Panel {
       hideDetails = value
     }
     function toggle() {
-      lastBackend = protocol === "wireguard" ? "wireguard" : "cli"
+      if (busy || statusUnknown)
+        return
+      lastBackend = "networkmanager"
       connected = !connected
+      activeCountry = connected ? country : ""
+    }
+    function connectTo(code) {
+      setCountry(code)
+      activeCountry = country
+      connected = true
     }
     function refreshServers() {
     }
     function refreshIpInfo(force) {
     }
     function recheck() {
+      recheckCalls++
     }
     function installDeps() {
       setupMsg = "Preview: package installation is not executed."

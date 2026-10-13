@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls as QQC
 import qs.Commons
 import qs.Ui
@@ -15,6 +16,7 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property real preferredContentWidth: 380
+  property real maximumContentHeight: 0
   readonly property var barIdentity: hostWidget || root
   function switchPanel(direction) {
     return bar && typeof bar.switchPanelFrom === "function" ? bar.switchPanelFrom(barIdentity, direction) : false
@@ -41,7 +43,7 @@ Panel {
     if (vpn.disconnecting)
       return "Disconnecting…"
     if (vpn.statusUnknown)
-      return "Status unavailable"
+      return "Status unknown"
     if (vpn.legacyTunnel)
       return "Connected · previous helper"
     // GeoIP location is private data; only the chosen country shows when hidden.
@@ -127,7 +129,7 @@ Panel {
     // KeyboardPanel owns the popup padding, while the content column fills
     // the available inner width without a second manual inset.
     contentWidth: panel.fittedContentWidth(Style.space(root.preferredContentWidth))
-    contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(root.maximumContentHeight > 0 ? Math.min(mainColumn.implicitHeight, Style.space(root.maximumContentHeight)) : mainColumn.implicitHeight)
 
     PanelKeyCatcher {
       anchors.fill: parent
@@ -147,6 +149,25 @@ Panel {
         interactive: contentHeight > height
         QQC.ScrollBar.vertical: QQC.ScrollBar {
           policy: QQC.ScrollBar.AsNeeded
+        }
+
+        Connections {
+          target: scroll.Window.window
+          function onActiveFocusItemChanged() {
+            var item = scroll.Window.window.activeFocusItem
+            if (!item)
+              return
+            var ancestor = item
+            while (ancestor && ancestor !== mainColumn)
+              ancestor = ancestor.parent
+            if (ancestor !== mainColumn)
+              return
+            var point = item.mapToItem(mainColumn, 0, 0)
+            if (point.y < scroll.contentY)
+              scroll.contentY = Math.max(0, point.y)
+            else if (point.y + item.height > scroll.contentY + scroll.height)
+              scroll.contentY = Math.min(Math.max(0, scroll.contentHeight - scroll.height), point.y + item.height - scroll.height)
+          }
         }
 
         // KeyboardPanel is a window, so keep the Escape handler on this
@@ -226,44 +247,12 @@ Panel {
           // -------------------------------------------------------------
           // 2. ERROR / STATUS BANNER
           // -------------------------------------------------------------
-          Rectangle {
-            id: statusBanner
-            objectName: "statusBanner"
-            readonly property bool isError: root.cyberghost.lastError !== "" || root.cyberghost.statusProbeError !== "" || root.cyberghost.tunnelStale
-            visible: root.cyberghost.setupDone && (root.cyberghost.lastError !== "" || root.cyberghost.statusProbeError !== "" || root.cyberghost.actionStatus !== "" || root.cyberghost.applyHint !== "" || root.cyberghost.legacyTunnel || root.cyberghost.tunnelStale)
-            width: parent.width
-            implicitHeight: visible ? bannerText.implicitHeight + Style.space(12) : 0
-            height: implicitHeight
-            clip: true
-            radius: Style.cornerRadius > 0 ? Style.space(6) : 0
-            color: statusBanner.isError ? Util.alpha(Color.urgent, 0.15) : Util.alpha(Color.accent, 0.15)
-            border.width: 1
-            border.color: statusBanner.isError ? Util.alpha(Color.urgent, 0.35) : Util.alpha(Color.accent, 0.35)
 
-            Text {
-              id: bannerText
-              textFormat: Text.PlainText
-              anchors.fill: parent
-              anchors.margins: Style.space(6)
-              text: {
-                if (root.cyberghost.lastError !== "")
-                  return root.cyberghost.lastError
-                if (root.cyberghost.statusProbeError !== "")
-                  return root.cyberghost.statusProbeError
-                if (root.cyberghost.legacyTunnel)
-                  return "This tunnel was started by the previous root helper. Disconnect it once; new connections use NetworkManager."
-                if (root.cyberghost.actionStatus !== "")
-                  return root.cyberghost.actionStatus
-                if (root.cyberghost.tunnelStale)
-                  return "Nothing received for " + Math.round(root.cyberghost.rxIdleSec / 60) + " min — tunnel may be down. Reconnect recommended."
-                return root.cyberghost.applyHint
-              }
-              color: statusBanner.isError ? Color.urgent : Color.accent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-              verticalAlignment: Text.AlignVCenter
-            }
+          StatusNotice {
+            width: parent.width
+            service: root.cyberghost
+            foreground: root.foreground
+            fontFamily: root.fontFamily
           }
 
           SetupCard {

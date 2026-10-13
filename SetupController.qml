@@ -174,7 +174,8 @@ Item {
       registerProcess.pendingCredentials = ""
       registerProcess.environment = ({})
       if (timedOut) {
-        root.setupMsg = "Account linking timed out. Check your network and try again."
+        root.setupMsg = "Account linking timed out; the outcome is unknown. Recheck setup before retrying. "
+          + "If a device was created but no login was saved, remove the unused device on CyberGhost's website."
       } else if (exitCode === 0) {
         root.setupMsg = ""
         root.registered()
@@ -229,7 +230,9 @@ Item {
 
   Timer {
     id: registerTimeoutTimer
-    interval: 45000
+    // Lock wait + state checks + two bounded account requests + optional
+    // metadata lookup. Do not kill a valid link at the old 45-second limit.
+    interval: 120000
     repeat: false
     onTriggered: {
       if (registerProcess.running) {

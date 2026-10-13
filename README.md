@@ -13,6 +13,8 @@ A WireGuard VPN plugin for the Omarchy bar. Choose a country and connect with on
   <img src="docs/screenshots/screenshot_connected.png" alt="CyberGhost VPN connected to Portugal with WireGuard active" width="360">
 </p>
 
+Preview images use synthetic account and connection data, not a live VPN session.
+
 ## Install
 
 ```bash
@@ -28,10 +30,12 @@ That's it: connecting uses NetworkManager, which Omarchy already runs, and its P
 
 ## Use
 
-- Select a country under **Location**.
+- Select a country under **Location**. While connected, the selector reads **Next location**: choosing a country alone never reconnects.
 - While connected, the tunnel also appears as **CyberGhost VPN** in `nmcli` and Omarchy's network tools. It lives only in memory and is gone after a NetworkManager restart or reboot.
-- Selecting a country alone never reconnects.
 - Use the switch in the panel header to connect or disconnect. If you pick a different country while connected, **Switch to …** moves the tunnel in one click; choosing a country alone never reconnects.
+- If the VPN status can't be verified, or the tunnel looks stale, the panel shows a notice with **Recheck status**, which never connects. Operation errors can be dismissed.
+- Traffic rates appear after two status checks; until then the details show "Sampling traffic…".
+- **Link account** needs the VPN disconnected; the panel explains inline when linking is blocked.
 - Panel shortcuts: `t` or Enter toggles the VPN, `c` copies the public IP (or click the IP), `h` hides details, `r` refreshes, Esc closes.
 - **Account → Log out** forgets this device's login (`~/.cyberghost/native.ini`) after a second confirming click, disconnecting first if needed. An account from the CyberGhost CLI's own `config.ini` is shown but left alone. Logging out does not remove the device from your CyberGhost account; do that on CyberGhost's website if you no longer use it.
 - Left-click opens the panel; middle- and right-click toggle the VPN.
@@ -59,7 +63,9 @@ The plugin preserves the vendor's `~/.cyberghost/config.ini`. Disconnect before 
 omarchy plugin update miguel.cyberghost
 ```
 
-Updates need no extra step. **Upgrading from 1.6.x or earlier:** disconnect once (the old helper removes its own tunnel), then use **Settings → Advanced → Remove old root helper…**, or run `bash scripts/remove-legacy-helper.sh`. Disconnect before removal. See the [installer reference](INSTALLER.md) for details.
+The updater rescans plugins, but an already-loaded widget can retain cached QML. If the panel still shows old controls or setup instructions, run `omarchy restart shell`, then reopen the ghost icon. This briefly restarts the bar and shell UI; it does not restart NetworkManager.
+
+**Upgrading from 1.6.x or earlier:** disconnect once (the old helper removes its own tunnel), then use **Settings → Advanced → Remove old root helper…**, or run `bash scripts/remove-legacy-helper.sh`. Disconnect before removal. See the [installer reference](INSTALLER.md) for details.
 
 ## Development
 
