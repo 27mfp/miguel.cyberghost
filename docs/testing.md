@@ -1,6 +1,6 @@
 # Tests and verification
 
-For the current 1.7.0 NetworkManager release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify 1.7.0.
+For the current 1.7.1 NetworkManager patch release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify 1.7.0.
 
 ## What changed in the test strategy
 
@@ -22,8 +22,17 @@ The old `tests/test_runner.py` is split into domain-focused files. `tests/runner
 
 ## Commands
 
+Use Python 3.9 or newer for the suite. Prefer `python3 -m pytest -q` over a global `pytest` executable, which may belong to a different interpreter. If the system Python has no test dependencies, use isolated environments:
+
 ```bash
-pytest -q
+uv run --no-project --python 3.9 --with pytest --with requests python -m pytest -q
+uv run --no-project --python 3.14 --with pytest --with requests python -m pytest -q
+```
+
+The audit regressions use temporary homes, fake NetworkManager/API boundaries and sandbox cleanup paths. Probe deadline tests deliberately block mocked workers and assert that they are killed and reaped. None activates a VPN, registers a real device or invokes sudo.
+
+```bash
+python3 -m pytest -q
 ruff check .
 ruff format --check .
 bash scripts/test-qml.sh
@@ -50,7 +59,7 @@ Quickshell maps the shell root to `qs` at runtime. `scripts/check_qml.py` create
 
 The checker fails new/project diagnostics. It records a narrow allowlist of known host metadata limitations: exact dynamic `QObject` members used by Omarchy's style/bar/loader APIs and the missing `QProcess::ExitStatus` annotation. This is **not warning-free lint**. Full diagnostics are saved to a uniquely created temporary JSON file; missing imports, project-property errors and misspelled host members are not exempted. The exception policy has its own regression test.
 
-CI runs Python 3.9/3.12 tests, Ruff, shell syntax/ShellCheck, standalone manifest validation, QML parsing and Qt behavior tests. When the Omarchy validator is installed it also runs the host validator; otherwise CI reports that limitation explicitly. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
+CI runs Python 3.9/3.12/3.14 tests, Ruff, shell syntax/ShellCheck, standalone manifest validation, QML parsing and Qt behavior tests. When the Omarchy validator is installed it also runs the host validator; otherwise CI reports that limitation explicitly. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
 
 ## Refactor baseline (1.6.0)
 

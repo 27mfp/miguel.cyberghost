@@ -2,7 +2,7 @@
 # Explicit, synthetic-data preview in the existing Omarchy shell.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-ID="test.cyberghost-visual"
+ID="test.cyberghost-release-171"
 TARGET="$HOME/.config/omarchy/plugins/$ID"
 case "${1:---help}" in
   --install)
@@ -10,7 +10,7 @@ case "${1:---help}" in
     STAGE=$(mktemp -d)
     trap 'rm -rf -- "$STAGE"' EXIT
     cp "$ROOT"/*.qml "$ROOT"/*.js "$STAGE/"
-    cp "$ROOT/tests/visual/Fixture.qml" "$STAGE/"
+    cp "$ROOT/tests/visual/Fixture.qml" "$STAGE/Fixture.qml"
     cp "$ROOT/tests/visual/manifest.json" "$STAGE/manifest.json"
     omarchy plugin validate "$STAGE"
     mv "$STAGE" "$TARGET"

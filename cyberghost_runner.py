@@ -10,7 +10,6 @@ Polkit authorize the network change, so no root helper is installed.
 import argparse
 import base64
 import binascii
-import concurrent.futures
 import configparser
 import contextlib
 import fcntl
@@ -18,6 +17,8 @@ import importlib.util
 import io
 import ipaddress
 import json
+import multiprocessing
+import multiprocessing.connection
 import os
 import pwd
 import random
@@ -47,7 +48,7 @@ LEGACY_HELPER_PATH = "/usr/local/bin/cyberghost-runner"
 LEGACY_POLKIT_RULE_PATH = "/etc/polkit-1/rules.d/50-cyberghost.rules"
 LEGACY_POLKIT_MARKER_RELATIVE_PATH = os.path.join(".local", "state", "cyberghost", "polkit-rule-installed")
 LEGACY_POLKIT_MARKER_CONTENT = "cyberghost-polkit-rule-v1"
-PLUGIN_VERSION = "1.7.0"
+PLUGIN_VERSION = "1.7.1"
 MAX_CONFIG_BYTES = 64 * 1024
 MAX_HTTP_RESPONSE_BYTES = 64 * 1024
 MAX_SUBPROCESS_INPUT_BYTES = 64 * 1024
@@ -1072,7 +1073,10 @@ def known_servers(country_code):
     names drift slowly and every connect probes them before use.
     """
     cc = validate_country_code(country_code)
-    cached = _read_server_list(server_cache_path()).get("countries", {}).get(cc)
+    countries = _read_server_list(server_cache_path()).get("countries")
+    if not isinstance(countries, dict):
+        return None
+    cached = countries.get(cc)
     if not isinstance(cached, dict) or not isinstance(cached.get("servers"), dict):
         return None
     return expand_server_names(cached["servers"])
@@ -1081,21 +1085,32 @@ def known_servers(country_code):
 def remember_servers(country_code, names):
     """Best-effort: keep the latest live list so later fallbacks stay current."""
     path = server_cache_path()
+    temp_name = None
     try:
         directory = os.path.dirname(path)
         os.makedirs(directory, mode=0o700, exist_ok=True)
-        data = _read_server_list(path)
-        countries = data.get("countries") if isinstance(data.get("countries"), dict) else {}
-        countries[validate_country_code(country_code)] = {
-            "updated": int(time.time()),
-            "servers": group_server_names(names),
-        }
-        with tempfile.NamedTemporaryFile("w", dir=directory, delete=False, prefix=".servers_", encoding="utf-8") as tf:
-            json.dump({"countries": countries}, tf, separators=(",", ":"))
-            temp_name = tf.name
-        os.replace(temp_name, path)
-    except (OSError, ValueError):
+        with user_file_lock(path + ".lock"):
+            data = _read_server_list(path)
+            countries = data.get("countries") if isinstance(data.get("countries"), dict) else {}
+            countries[validate_country_code(country_code)] = {
+                "updated": int(time.time()),
+                "servers": group_server_names(names),
+            }
+            with tempfile.NamedTemporaryFile(
+                "w", dir=directory, delete=False, prefix=".servers_", encoding="utf-8"
+            ) as tf:
+                temp_name = tf.name
+                json.dump({"countries": countries}, tf, separators=(",", ":"))
+            os.replace(temp_name, path)
+            temp_name = None
+    except (OSError, ValueError, RuntimeError):
         pass
+    finally:
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
 
 def is_nospy(name):
@@ -1496,21 +1511,46 @@ def _probe_endpoint(host, port=1337, timeout=ENDPOINT_PROBE_TIMEOUT_SECONDS):
     return host, time.monotonic() - started
 
 
-def reachable_endpoints(hosts, budget=ENDPOINT_PROBE_BUDGET_SECONDS, grace=ENDPOINT_PROBE_GRACE_SECONDS):
-    """Probe hosts in parallel within a hard budget; reachable ones, fastest first.
+def _probe_worker(host, output):
+    """Isolate blocking NSS resolution so the parent can enforce its deadline."""
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    try:
+        output.send(_probe_endpoint(host))
+    finally:
+        output.close()
 
-    No credentials are sent: this is DNS plus a TCP connect to port 1337. Once
-    the first host answers, slower ones get only `grace` seconds more (None
-    waits for the whole budget), so dead racks never stall a connect.
-    """
-    if not hosts:
+
+def reachable_endpoints(hosts, budget=ENDPOINT_PROBE_BUDGET_SECONDS, grace=ENDPOINT_PROBE_GRACE_SECONDS):
+    """Probe DNS/TCP in killable workers within a total deadline, without credentials."""
+    if not hosts or budget <= 0:
         return []
+    # Omarchy is Linux. Explicit fork also keeps worker startup inexpensive.
+    context = multiprocessing.get_context("fork")
     deadline = time.monotonic() + budget
     first_answer_at = None
     answered = []
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(16, len(hosts)))
+    pending = {}
+    workers = []
+    remaining_hosts = iter(hosts)
+
+    def start_worker(host):
+        reader, writer = context.Pipe(duplex=False)
+        process = context.Process(target=_probe_worker, args=(host, writer))
+        try:
+            process.start()
+        except BaseException:
+            reader.close()
+            writer.close()
+            raise
+        writer.close()
+        workers.append(process)
+        pending[reader] = process
+
     try:
-        pending = {executor.submit(_probe_endpoint, host) for host in hosts}
+        for _ in range(min(16, len(hosts))):
+            if time.monotonic() >= deadline:
+                break
+            start_worker(next(remaining_hosts))
         while pending and len(answered) < MAX_NATIVE_CANDIDATES:
             limit = deadline
             if first_answer_at is not None and grace is not None:
@@ -1518,18 +1558,34 @@ def reachable_endpoints(hosts, budget=ENDPOINT_PROBE_BUDGET_SECONDS, grace=ENDPO
             remaining = limit - time.monotonic()
             if remaining <= 0:
                 break
-            done, pending = concurrent.futures.wait(
-                pending, timeout=remaining, return_when=concurrent.futures.FIRST_COMPLETED
-            )
-            for future in done:
-                host, latency = future.result()
+            for reader in multiprocessing.connection.wait(pending, timeout=remaining):
+                process = pending.pop(reader)
+                try:
+                    host, latency = reader.recv()
+                except EOFError:
+                    latency = None
+                finally:
+                    reader.close()
+                process.join(timeout=0)
                 if latency is not None:
                     answered.append((host, latency))
                     if first_answer_at is None:
                         first_answer_at = time.monotonic()
+                if len(answered) >= MAX_NATIVE_CANDIDATES or time.monotonic() >= limit:
+                    break
+                next_host = next(remaining_hosts, None)
+                if next_host is not None:
+                    start_worker(next_host)
     finally:
-        # Never wait on a stuck resolver beyond the budget.
-        executor.shutdown(wait=False, cancel_futures=True)
+        # Kill all workers before joining any: no resolver can hold process exit.
+        for process in workers:
+            if process.is_alive():
+                process.kill()
+        for process in workers:
+            process.join()
+            process.close()
+        for reader in pending:
+            reader.close()
     return [host for host, _ in sorted(answered, key=lambda item: item[1])]
 
 
@@ -1594,7 +1650,8 @@ def exchange_wireguard_key(candidates, pub_key, token, secret, country_code, dea
                     last_error_msg = str(data.get("error"))[:256]
             elif response.status_code in (401, 403):
                 raise RuntimeError(
-                    "Authentication failed. Please verify your CyberGhost subscription or run 'cyberghostvpn --setup'."
+                    "Authentication failed. Verify your CyberGhost subscription, then use Link account "
+                    "in the plugin to refresh your device credentials."
                 )
             else:
                 last_error_msg = f"CyberGhost API returned HTTP {response.status_code}"
@@ -1610,7 +1667,7 @@ def exchange_wireguard_key(candidates, pub_key, token, secret, country_code, dea
         if last_error_msg:
             err += f" ({last_error_msg})"
         if last_error_msg and re.search(r"TLS|certificate|hostname|SSL", last_error_msg, re.I):
-            err += " Install or configure the official cyberghostvpn CLI; its current server inventory is supported."
+            err += " Check your system clock, CA certificates and network, then retry or refresh with Link account."
         raise RuntimeError(err)
     return addkey_data, connected_host
 
@@ -1902,7 +1959,7 @@ def nm_activate(profile_args, private_key, ip_binary, deadline):
             )
         if nm_active_state() != "activated" or _interface_state(ip_binary) is not True:
             raise RuntimeError("NetworkManager reported success but the CyberGhost interface is not active")
-    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+    except (OperationCancelled, OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
         problems = nm_remove_profile(ip_binary)
         message = clean_command_error(exc, "WireGuard activation failed")
         if problems:
@@ -1911,7 +1968,20 @@ def nm_activate(profile_args, private_key, ip_binary, deadline):
 
 
 def connect(country_code="PT", server_type="traffic", city=None, config_path=None, server=None):
-    """Negotiate a CyberGhost peer and activate it as a NetworkManager connection."""
+    """Roll back cancellation through the entire connection publication boundary."""
+    replacement = {"started": False}
+    try:
+        return _connect(country_code, server_type, city, config_path, server, replacement)
+    except OperationCancelled as exc:
+        if replacement["started"]:
+            problems = nm_remove_profile(system_binary("ip"))
+            if problems:
+                raise RuntimeError("Operation cancelled; rollback incomplete: " + "; ".join(problems)) from exc
+        raise
+
+
+def _connect(country_code, server_type, city, config_path, server, replacement):
+    """Negotiate a CyberGhost peer and activate it as an in-memory NM connection."""
     if os.geteuid() == 0:
         raise RuntimeError("Run CyberGhost as your desktop user; NetworkManager authorizes the connection.")
     deadline = time.monotonic() + NATIVE_CONNECT_BUDGET_SECONDS
@@ -1940,6 +2010,8 @@ def connect(country_code="PT", server_type="traffic", city=None, config_path=Non
     server_key = validate_wireguard_key(addkey_data.get("server_key", ""))
     profile_args = nm_profile_args(peer_ip, server_key, server_ip, server_port, dns_servers)
 
+    # Before this boundary cancellation leaves any existing session untouched.
+    replacement["started"] = True
     # Replace a previous session of our own profile; nothing else is touched.
     problems = nm_remove_profile(ip_binary)
     if problems:
@@ -2138,6 +2210,16 @@ def write_user_config(path, username, device_name, device, session=None):
 
 
 def register(config_path=None):
+    """Serialize account publication with connect, disconnect and logout."""
+    try:
+        with lifecycle_lock():
+            return _register(config_path)
+    finally:
+        os.environ.pop("CG_USERNAME", None)
+        os.environ.pop("CG_PASSWORD", None)
+
+
+def _register(config_path=None):
     """Link a CyberGhost account natively — no cyberghostvpn CLI required.
 
     Credentials come from CG_USERNAME/CG_PASSWORD (used by the GUI so they
@@ -2161,6 +2243,14 @@ def register(config_path=None):
             raise RuntimeError(
                 "Native registration cannot overwrite the vendor CLI config. Use ~/.cyberghost/native.ini."
             )
+        # Fail closed if ownership/state cannot be verified. Account replacement
+        # must never silently leave a tunnel authenticated by the previous login.
+        state = nm_active_state()
+        link = _interface_state(system_binary("ip"))
+        if link is None:
+            raise RuntimeError("Could not verify VPN state. Recheck setup before linking an account.")
+        if state or link:
+            raise RuntimeError("Disconnect the VPN before linking or refreshing your CyberGhost account.")
         username = env_username.strip()[:256]
         password = env_password[:256]
         if not username or not password:
@@ -2206,8 +2296,19 @@ def register(config_path=None):
         if not device.get("token"):
             raise RuntimeError("Device registration response missing token.")
 
-        session = {"jwt": jwt, "user_id": account_user_id(jwt)}
+        # Publish the device immediately. Optional account metadata must not
+        # delay saving credentials for a device already created remotely.
+        session = {"jwt": jwt}
         write_user_config(target, username, device_name, device, session=session)
+        user_id = account_user_id(jwt)
+        if user_id:
+            session["user_id"] = user_id
+            try:
+                write_user_config(target, username, device_name, device, session=session)
+            except (OSError, RuntimeError):
+                # The first atomic write already stored usable credentials.
+                # Optional metadata failure must not encourage another device registration.
+                print("Optional account metadata could not be saved; device credentials are already stored.")
         print(f"Account linked. Device credentials stored in {target}")
     finally:
         # Defense in depth: drop the local copies and re-clear the env vars
@@ -2322,8 +2423,8 @@ def validate_request(args):
     return args
 
 
-class OperationCancelled(RuntimeError):
-    """SIGTERM from the panel's cancel: fail normally so rollback runs."""
+class OperationCancelled(BaseException):
+    """Cancellation bypasses fallback handlers and is handled at rollback boundaries."""
 
 
 def _cancel_on_sigterm(signum, frame):
@@ -2338,8 +2439,19 @@ def lifecycle_lock(wait=LIFECYCLE_LOCK_WAIT_SECONDS):
     waits for it instead of racing it on the same NetworkManager profile.
     """
     path = os.path.join(invoking_user().pw_dir, LIFECYCLE_LOCK_RELATIVE_PATH)
+    with user_file_lock(path, wait):
+        yield
+
+
+@contextlib.contextmanager
+def user_file_lock(path, wait=LIFECYCLE_LOCK_WAIT_SECONDS):
+    """Bounded lock shared by all writers of a private user-state file."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != invoking_user().pw_uid or info.st_mode & 0o077:
+        os.close(fd)
+        raise RuntimeError("Unsafe CyberGhost state lock")
     try:
         deadline = time.monotonic() + wait
         while True:
@@ -2445,7 +2557,7 @@ def main():
                         live = entry["live"]
                         state += f" | live API: {len(live)} servers" + (f", lowest load {live[0]}" if live else "")
                     print(f"{code}  {entry['city'] or '-':<14} {state}")
-    except Exception as e:
+    except (OperationCancelled, Exception) as e:
         if args is not None and args.json and args.action in ACTIONS:
             print(
                 json.dumps(

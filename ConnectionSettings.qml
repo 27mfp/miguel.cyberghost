@@ -27,7 +27,8 @@ Column {
   }
 
   PanelSectionHeader {
-    text: "LOCATION"
+    objectName: "locationHeader"
+    text: root.service.connected ? "NEXT LOCATION" : "LOCATION"
     foreground: root.foreground
     fontFamily: root.fontFamily
   }
@@ -62,6 +63,7 @@ Column {
     enabled: !root.service.busy
     foreground: "#FFCE00"
     fontFamily: root.fontFamily
+    Accessible.name: text
     tooltipText: "Reconnect through " + root.service.countryName + " (currently " + root.service.activeCountryName + ")"
     onClicked: root.service.connectTo(root.service.country)
   }

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.1
+
+- Preserve cancellation through server fallback and roll back interrupted connection publication.
+- Bound DNS/TCP probes with killable workers; validate malformed caches, serialize cache writers, and remove failed-write temporary files.
+- Serialize account linking with lifecycle operations, refuse relinking active or unverified tunnels, and save device credentials before optional metadata lookup.
+- Make developer reset recognize legacy files before plugin teardown and preserve customized configurations and advisory locks.
+- Add visible status recovery during setup, clearer next-location labeling, and traffic sampling feedback using Omarchy controls.
+- Prioritize unknown status over operation errors and stale-tunnel warnings over progress; offer status checks for connection-state problems and dismissal for operation errors.
+- Explain blocked account linking inline and keep linking successful when optional metadata cannot be saved after device credentials are stored.
+- Correct native recovery and cached-QML update guidance; refresh screenshots with clearly labeled synthetic data.
+- Add offline regressions and expand synthetic real-shell interaction coverage. Live routing, DHCP DNS and legacy migration remain separate integration checks.
+
 ## 1.7.0
 
 - Run the tunnel as an in-memory NetworkManager WireGuard connection created by the desktop user, the same way Omarchy's network panel manages connections. NetworkManager's Polkit policy authorizes it. The root helper, optional passwordless Polkit rule, `pkexec` connect/disconnect, `wg-quick`, root lifecycle lock, and the `wireguard-tools`/`resolvconf` dependencies are gone.

@@ -92,6 +92,9 @@ TestCase {
     mockService.readyCreds = false
     mockService.setupCardState = "first-run"
     mockService.setupMsg = ""
+    mockService.connected = false
+    mockService.busy = false
+    mockService.regBusy = false
     mockService.country = "PT"
     mockService.countryCalls = 0
     mockService.legacyCleanupAvailable = false
@@ -167,6 +170,42 @@ TestCase {
     compare(mockService.setupMsg, "demo:secret")
     compare(password.text, "")
     mockService.readyRequests = false
+  }
+
+  function test_accountLinkingRefusesAnActiveTunnel() {
+    mockService.readyRequests = true
+    var card = createTemporaryObject(setupFactory, this)
+    findChild(card, "accountUsername").text = "demo"
+    var password = findChild(card, "accountPassword")
+    password.text = "secret"
+    mockService.connected = true
+    verify(!findChild(card, "linkAccount").enabled)
+    card.submit()
+    verify(mockService.setupMsg.indexOf("Disconnect the VPN") >= 0)
+    compare(password.text, "")
+  }
+
+  function test_accountLinkingExplainsBlockedStatesBeforeSubmission() {
+    mockService.readyRequests = true
+    var card = createTemporaryObject(setupFactory, this)
+    findChild(card, "accountUsername").text = "demo"
+    findChild(card, "accountPassword").text = "secret"
+    var submit = findChild(card, "linkAccount")
+    var reason = findChild(card, "linkBlockedReason")
+    verify(!reason.visible)
+    mockService.busy = true
+    verify(!submit.enabled && reason.visible)
+    verify(reason.text.indexOf("Wait for the current operation") >= 0)
+    compare(mockService.setupMsg, "")
+    mockService.connected = true
+    verify(reason.text.indexOf("Disconnect the VPN") >= 0)
+    mockService.connected = false
+    mockService.regBusy = true
+    verify(!reason.visible)
+    compare(submit.text, "Linking account…")
+    mockService.regBusy = false
+    mockService.busy = false
+    verify(submit.enabled && !reason.visible)
   }
 
   function test_checklistMarksProgressAndOnlyShowsCurrentActions() {
