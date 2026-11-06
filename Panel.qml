@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls as QQC
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Countries.js" as Countries
 
@@ -22,7 +23,7 @@ Panel {
     return bar && typeof bar.switchPanelFrom === "function" ? bar.switchPanelFrom(barIdentity, direction) : false
   }
 
-  readonly property color foreground: bar ? bar.barForeground : Color.foreground
+  readonly property color foreground: bar ? bar.barForeground : Commons.Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.25)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color brandYellow: "#FFCE00"
@@ -212,7 +213,7 @@ Panel {
                 GhostIcon {
                   iconSize: Style.font.display
                   color: root.cyberghost.active ? root.brandYellow : root.dim
-                  innerColor: Color.popups.background
+                  innerColor: Commons.Color.popups.background
                   active: root.cyberghost.active
                   connecting: root.cyberghost.connecting || root.cyberghost.disconnecting
                   reducedMotion: root.reduceMotion

@@ -265,7 +265,7 @@ Item {
         root.setServerSelection("fastest")
       if (root.resolvingAutomaticServer) {
         root.resolvingAutomaticServer = false
-        var liveServer = options.length > 1 ? String(options[1].value || "") : ""
+        let liveServer = options.length > 1 ? String(options[1].value || "") : ""
         root.startNativeConnect(liveServer)
       }
     }
@@ -544,7 +544,7 @@ Item {
       }
       var parsed = []
       try {
-        var raw = JSON.parse(String(root.streamingServicesOutput || "[]").substring(0, 16384))
+        let raw = JSON.parse(String(root.streamingServicesOutput || "[]").substring(0, 16384))
         if (Array.isArray(raw))
           parsed = raw
       } catch (e) {
@@ -556,7 +556,7 @@ Item {
       }))
         root.streamingService = parsed.length > 0 ? String(parsed[0].value || "") : ""
       if (exitCode !== 0 || parsed.length === 0) {
-        var cliError = String(root.streamingServicesErrorOutput || "").trim()
+        let cliError = String(root.streamingServicesErrorOutput || "").trim()
         root.streamingError = cliError !== "" ? ServiceUtils.cleanProcessError(cliError, "Could not load streaming services.") : (root.readyCli ? "No streaming services are available for this country." : "Install and set up the cyberghostvpn CLI to load streaming services.")
       }
       root.streamingServicesOutput = ""
@@ -622,7 +622,7 @@ Item {
           root.parseStatus(out)
         } else {
           root.statusUnknown = true
-          var err = String(root.statusError || "").substring(0, 512).trim()
+          let err = String(root.statusError || "").substring(0, 512).trim()
           root.statusProbeError = timedOut ? "VPN status check timed out; current state is unknown." : (err !== "" ? err.substring(0, 120) : "VPN status check failed; current state is unknown.")
         }
       }
@@ -663,8 +663,8 @@ Item {
 
   function sendNotification(title, message, urgency) {
     try {
-      var safeTitle = String(title || "CyberGhost VPN").substring(0, 64)
-      var safeMsg = String(message || "").substring(0, 160)
+      let safeTitle = String(title || "CyberGhost VPN").substring(0, 64)
+      let safeMsg = String(message || "").substring(0, 160)
       notifyProcess.command = ["/usr/bin/notify-send", "-a", "CyberGhost VPN", "-u", urgency || "normal", "--", safeTitle, safeMsg]
       notifyProcess.running = true
     } catch (e) {
@@ -742,7 +742,7 @@ Item {
         } else if (exitCode === 0 && result.ok && result.action === "connect") {
           root.connected = true
           root.activeCountry = typeof result.country === "string" && /^[A-Z]{2}$/.test(result.country) ? result.country : root.pendingCountry
-          var server = typeof result.server === "string" ? result.server.replace(/\.cg-dialup\.net$/, "").toLowerCase() : ""
+          let server = typeof result.server === "string" ? result.server.replace(/\.cg-dialup\.net$/, "").toLowerCase() : ""
           root.activeServer = ServiceUtils.isValidServerSelector(server) && server !== "fastest" ? server : ""
           root.legacyTunnel = false
           root.statusUnknown = false
@@ -810,10 +810,10 @@ Item {
     if (isConnected && !legacyTunnel) {
       endpoint = String(data.endpoint || "").substring(0, 64).trim()
       transferText = String(data.transfer || "").substring(0, 64).trim()
-      var rx = typeof data.rx_bytes === "number" && data.rx_bytes >= 0 ? data.rx_bytes : -1
-      var tx = typeof data.tx_bytes === "number" && data.tx_bytes >= 0 ? data.tx_bytes : -1
-      var now = Date.now()
-      var elapsed = (now - counterSampleAt) / 1000
+      let rx = typeof data.rx_bytes === "number" && data.rx_bytes >= 0 ? data.rx_bytes : -1
+      let tx = typeof data.tx_bytes === "number" && data.tx_bytes >= 0 ? data.tx_bytes : -1
+      let now = Date.now()
+      let elapsed = (now - counterSampleAt) / 1000
       if (rx < 0 || tx < 0 || rx < sampleRx || tx < sampleTx) {
         // Missing counters or a reset (new interface): restart sampling.
         rxRate = -1
@@ -881,16 +881,16 @@ Item {
     if (!jsonStr || jsonStr.trim() === "")
       return
     try {
-      var data = JSON.parse(jsonStr.substring(0, 4096))
+      let data = JSON.parse(jsonStr.substring(0, 4096))
       if (data && data.success !== false && data.ip) {
-        var candidateIp = String(data.ip || "").substring(0, 45).trim()
+        let candidateIp = String(data.ip || "").substring(0, 45).trim()
         if (!/^[0-9A-Fa-f:.]+$/.test(candidateIp))
           return
-        var candidateCountry = String(data.country_code || data.country || "").substring(0, 2).trim().toUpperCase()
+        let candidateCountry = String(data.country_code || data.country || "").substring(0, 2).trim().toUpperCase()
         publicIp = candidateIp
         publicCity = String(data.city || "").substring(0, 64).trim()
         publicCountry = /^[A-Z]{2}$/.test(candidateCountry) ? candidateCountry : ""
-        var connection = data.connection || {}
+        let connection = data.connection || {}
         publicOrg = String(data.org || connection.org || connection.isp || "").substring(0, 128).trim()
 
         // GeoIP describes the egress address, not the selected CyberGhost

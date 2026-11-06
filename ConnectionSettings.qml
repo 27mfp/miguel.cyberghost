@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Countries.js" as Countries
 
@@ -7,7 +8,7 @@ import "Countries.js" as Countries
 Column {
   id: root
   required property var service
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property bool advanced: false
   property Component connectionDetails: null

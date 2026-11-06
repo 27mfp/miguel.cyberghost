@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Countries.js" as Countries
 import "ServiceUtils.js" as ServiceUtils
@@ -12,7 +13,7 @@ import "ServiceUtils.js" as ServiceUtils
 Column {
   id: root
   required property var service
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property bool ipCopied: false
   property bool copyTimedOut: false
@@ -166,7 +167,7 @@ Column {
           text: row.modelData.text
           textFormat: Text.PlainText
           horizontalAlignment: Text.AlignRight
-          color: row.modelData.name === "ipValue" && root.ipCopied ? Color.accent : root.foreground
+          color: row.modelData.name === "ipValue" && root.ipCopied ? Commons.Color.accent : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           wrapMode: row.modelData.lines > 1 ? Text.WordWrap : Text.NoWrap

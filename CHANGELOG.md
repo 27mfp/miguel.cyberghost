@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.2 — Unreleased
+
+- Resolve Omarchy palette colors explicitly through `Commons.Color`, avoiding the Qt 6.12 `Color` type collision and restoring setup error/status colors.
+- Rename the password-field id so it no longer shadows the host control’s password property; retain masked input, focus navigation and password clearing.
+- Type the loaded panel before injecting its host properties and use block-scoped declarations where Qt 6.12 diagnoses hoisting.
+- Prepare the Omarchy 4.5 follow-up plan with explicit acceptance criteria for a shared service, lazy UI and native integration. This patch retains the current per-widget architecture.
+
 ## 1.7.1
 
 - Preserve cancellation through server fallback and roll back interrupted connection publication.

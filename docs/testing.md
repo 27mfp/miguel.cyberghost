@@ -1,6 +1,6 @@
 # Tests and verification
 
-For the current 1.7.1 NetworkManager patch release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify 1.7.0.
+For the current 1.7.2 compatibility patch release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify the current release.
 
 ## What changed in the test strategy
 
@@ -52,6 +52,8 @@ Qt tools default to `/usr/lib/qt6/bin`; override with `QT_BIN` if necessary. The
 These tests prove plugin bindings and orchestration, **not** Omarchy rendering, compositor focus or actual VPN routing. They are complemented by real installed-import linting and the [real-shell visual smoke fixture](visual-testing.md). The latter uses real host controls, synthetic service data, keyboard interactions and rendered captures—not the component-test doubles.
 
 `qmltestrunner` cannot load this distribution's statically registered Quickshell plugin. Trying to use real shell controls directly in it fails with `quickshell-coreplugin not found`. That is why the doubles are explicit rather than pretending a standalone test runner is the shell.
+
+The 1.7.2 local target is Omarchy 4.5.0-3 / Qt 6.12.0. The unpatched production components pass 76 Qt UI entries and 13 utility entries without undefined-color warnings; the backend suite passes 233 cases. Native lint reports zero project diagnostics and 53 narrowly identified host metadata warnings. This does not establish live VPN routing or shared multi-monitor operation.
 
 ### Native lint policy
 
