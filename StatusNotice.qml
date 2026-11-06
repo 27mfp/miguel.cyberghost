@@ -1,12 +1,13 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Shared recovery surface, including errors that occur before setup completes.
 Rectangle {
   id: root
   required property var service
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   readonly property bool problem: service.lastError !== "" || service.statusProbeError !== "" || service.statusUnknown || service.tunnelStale
   readonly property bool needsStatusCheck: service.statusProbeError !== "" || service.statusUnknown || service.tunnelStale
@@ -31,7 +32,7 @@ Rectangle {
   implicitHeight: visible ? content.implicitHeight + Style.space(12) : 0
   height: implicitHeight
   radius: Style.cornerRadius > 0 ? Style.space(6) : 0
-  readonly property color noticeColor: problem ? Color.urgent : Color.accent
+  readonly property color noticeColor: problem ? Commons.Color.urgent : Commons.Color.accent
   color: Qt.rgba(noticeColor.r, noticeColor.g, noticeColor.b, 0.12)
   border.width: 1
   border.color: Qt.rgba(noticeColor.r, noticeColor.g, noticeColor.b, 0.3)
@@ -48,7 +49,7 @@ Rectangle {
       width: parent.width
       text: root.message
       textFormat: Text.PlainText
-      color: root.problem ? Color.urgent : root.foreground
+      color: root.problem ? Commons.Color.urgent : root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
       wrapMode: Text.WordWrap

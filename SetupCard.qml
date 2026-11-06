@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Required setup only. Optional preferences belong under Advanced.
@@ -8,14 +9,14 @@ import qs.Ui
 Column {
   id: root
   required property var service
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property color brandYellow: "#FFCE00"
   readonly property bool needsNetwork: !service.readyNetwork
   readonly property bool needsPackages: !needsNetwork && !service.readyRequests
   readonly property bool needsAccount: !needsNetwork && !needsPackages && !service.readyCreds
-  readonly property bool formFilled: username.text.trim() !== "" && password.text !== ""
+  readonly property bool formFilled: username.text.trim() !== "" && passwordField.text !== ""
   readonly property string linkBlockedReason: service.regBusy ? "" : (service.connected ? "Disconnect the VPN before linking an account." : (service.busy ? "Wait for the current operation to finish before linking an account." : ""))
   readonly property var focusTarget: needsPackages ? installDependencies : (needsAccount ? username : recheckSetup)
   visible: service.setupCardState !== "ready"
@@ -23,7 +24,7 @@ Column {
   spacing: visible ? Style.space(10) : 0
 
   function clearPassword() {
-    password.clear()
+    passwordField.clear()
   }
   onVisibleChanged: if (!visible)
     clearPassword()
@@ -31,19 +32,19 @@ Column {
   function submit() {
     if (service.connected || service.busy) {
       service.setupMsg = linkBlockedReason || "Account linking is already in progress."
-      password.clear()
+      passwordField.clear()
       return
     }
-    if (!username.text.trim() || !password.text) {
+    if (!username.text.trim() || !passwordField.text) {
       service.setupMsg = "Enter your CyberGhost username and password."
       if (!username.text.trim())
         username.forceActiveFocus()
       else
-        password.forceActiveFocus()
+        passwordField.forceActiveFocus()
       return
     }
-    service.registerAccount(username.text.trim(), password.text)
-    password.clear()
+    service.registerAccount(username.text.trim(), passwordField.text)
+    passwordField.clear()
   }
 
   // ---- Checklist -----------------------------------------------------------
@@ -146,11 +147,11 @@ Column {
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       selectByMouse: true
-      onAccepted: password.forceActiveFocus()
+      onAccepted: passwordField.forceActiveFocus()
     }
 
     TextField {
-      id: password
+      id: passwordField
       objectName: "accountPassword"
       width: parent.width
       enabled: !root.service.regBusy
@@ -226,7 +227,7 @@ Column {
     width: parent.width
     text: root.service.setupMsg
     textFormat: Text.PlainText
-    color: root.service.busy ? root.dim : Color.urgent
+    color: root.service.busy ? root.dim : Commons.Color.urgent
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
     wrapMode: Text.WordWrap
@@ -242,7 +243,7 @@ Column {
     focusable: true
     bordered: true
     enabled: !root.service.busy
-    foreground: Color.urgent
+    foreground: Commons.Color.urgent
     fontFamily: root.fontFamily
     onClicked: root.service.disconnect()
   }
@@ -258,7 +259,7 @@ Column {
     property bool current: false
     default property alias trailing: trailingSlot.data
     // Inline components cannot see the card's ids; styling is passed in.
-    property color foreground: Color.foreground
+    property color foreground: Commons.Color.foreground
     property color highlight: "#FFCE00"
     property string fontFamily: Style.font.family
     readonly property color dim: Qt.darker(foreground, 1.4)
@@ -276,7 +277,7 @@ Column {
       // check for done, filled dot for the current step, open circle for later
       text: step.done ? "" : (step.current ? "" : "")
       textFormat: Text.PlainText
-      color: step.done ? Color.accent : (step.current ? step.highlight : step.tone)
+      color: step.done ? Commons.Color.accent : (step.current ? step.highlight : step.tone)
       font.family: step.fontFamily
       // The solid dot reads heavier than the check glyph; keep them balanced.
       font.pixelSize: step.current && !step.done ? Math.round(Style.font.caption * 0.7) : Style.font.caption

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Signed-in identity and logout. Only the plugin's own login (native.ini) can
@@ -8,7 +9,7 @@ import qs.Ui
 Column {
   id: root
   required property var service
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property bool pluginLogin: service.accountSource === "native"
@@ -113,7 +114,7 @@ Column {
       focusable: true
       bordered: root.armed
       enabled: !root.service.busy
-      foreground: root.armed ? Color.urgent : root.foreground
+      foreground: root.armed ? Commons.Color.urgent : root.foreground
       fontFamily: root.fontFamily
       tooltipText: root.armed ? "Click again to forget this device's CyberGhost login" : "Forget this device's CyberGhost login. You will need your password to link it again."
       Accessible.name: text

@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 
 Ui.BarWidget {
@@ -40,7 +41,7 @@ Ui.BarWidget {
   }
 
   function injectPanel() {
-    var panel = panelLoader.item
+    var panel = panelLoader.item as Panel
     if (!panel)
       return
     panel.bar = root.bar
@@ -58,7 +59,7 @@ Ui.BarWidget {
     onSettingChanged: function (key, value) {
       var current = root.settings || {}
       var entry = { id: root.moduleName }
-      for (var name in current)
+      for (let name in current)
         entry[name] = current[name]
       entry[key] = value
       var acknowledged = false
@@ -137,7 +138,7 @@ Ui.BarWidget {
       if (cyberghost.disconnecting)
         return "CyberGhost VPN: Disconnecting…"
       if (cyberghost.connected) {
-        var ipPart = (!cyberghost.hideDetails && cyberghost.publicIp !== "") ? (" • " + cyberghost.publicIp) : ""
+        let ipPart = (!cyberghost.hideDetails && cyberghost.publicIp !== "") ? (" • " + cyberghost.publicIp) : ""
         return "CyberGhost VPN: Connected" + ipPart
       }
       return "CyberGhost VPN: Disconnected (Click to open)"
@@ -150,8 +151,8 @@ Ui.BarWidget {
         GhostIcon {
           anchors.centerIn: parent
           iconSize: Style.font.icon
-          color: cyberghost.active ? root.brandYellow : (root.bar ? root.bar.barForeground : Color.foreground)
-          innerColor: Color.bar.background
+          color: cyberghost.active ? root.brandYellow : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
+          innerColor: Commons.Color.bar.background
           active: cyberghost.active
           connecting: cyberghost.connecting || cyberghost.disconnecting
           reducedMotion: root.reduceMotion
@@ -169,8 +170,8 @@ Ui.BarWidget {
         return
       }
       if (buttonCode === Qt.MiddleButton || buttonCode === Qt.RightButton) {
-        var widgets = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : [root]
-        var owner = widgets.length > 0 && widgets[0] && widgets[0].actionService ? widgets[0].actionService : cyberghost
+        let widgets = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : [root]
+        let owner = widgets.length > 0 && widgets[0] && widgets[0].actionService ? widgets[0].actionService : cyberghost
         owner.toggle()
       }
     }

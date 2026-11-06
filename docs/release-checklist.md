@@ -1,3 +1,19 @@
+# 1.7.2 — Omarchy 4.5 compatibility patch (unreleased)
+
+Local verification: 2026-11-06, Omarchy 4.5.0-3 / Qt 6.12.0.
+
+- [x] Manifest and runner agree at 1.7.2; changelog updated.
+- [x] Python: 233 passed on the system interpreter.
+- [x] Unpatched Qt: 76 UI and 13 utility entries passed, with no undefined-color warnings.
+- [x] Native QML lint: zero project diagnostics; 53 existing, exact host metadata exceptions. No exception was broadened.
+- [x] Ruff 0.16.9 lint/format, manifest validation, Omarchy validator, ShellCheck and whitespace checks passed.
+- [ ] Hosted Python 3.9/3.12/3.14 CI on the PR head.
+- [ ] Review and merge the compatibility PR before publishing a tag/release.
+
+The existing per-widget service and eager panel loading remain. Shared services, native multi-monitor/lifecycle coverage and live VPN integration belong to the [follow-up plan](omarchy-4.5-plan.md). No account linking, tunnel activation, disconnection or installed-plugin change was performed for this patch.
+
+Earlier sections below record historical releases and host versions, including the obsolete root-helper architecture. Their completed checks do not certify this release on Omarchy 4.5.
+
 # 1.7.1 patch release
 
 Date: 2026-10-10
