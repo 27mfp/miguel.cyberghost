@@ -1,6 +1,6 @@
 # Tests and verification
 
-For the current 1.7.1 NetworkManager patch release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify 1.7.0.
+For the current 1.8.0 release, see the [release gates and live findings](release-checklist.md). Historical evidence below describes the earlier root-helper design and does not certify the current release.
 
 ## What changed in the test strategy
 
@@ -33,13 +33,17 @@ The audit regressions use temporary homes, fake NetworkManager/API boundaries an
 
 ```bash
 python3 -m pytest -q
+python3 -m pytest -q --cov=cyberghost --cov-report=term-missing   # pytest-cov
 ruff check .
 ruff format --check .
+mypy
 bash scripts/test-qml.sh
 python3 scripts/check_manifest.py
 python3 scripts/check_qml.py
+python3 scripts/sync-preview.py --check
 omarchy plugin validate "$PWD"
-shellcheck install.sh fresh-install.sh scripts/test-qml.sh scripts/visual-preview.sh
+shellcheck install.sh fresh-install.sh scripts/*.sh
+shfmt -i 2 -ci -d install.sh fresh-install.sh scripts/*.sh
 git diff --check
 ```
 
@@ -51,7 +55,14 @@ Qt tools default to `/usr/lib/qt6/bin`; override with `QT_BIN` if necessary. The
 
 These tests prove plugin bindings and orchestration, **not** Omarchy rendering, compositor focus or actual VPN routing. They are complemented by real installed-import linting and the [real-shell visual smoke fixture](visual-testing.md). The latter uses real host controls, synthetic service data, keyboard interactions and rendered captures—not the component-test doubles.
 
+The QML suite runs on both Ubuntu CI's Qt 6.4 and the Omarchy 4.5 target
+(Qt 6.12). The dashboard subviews are loaded by URL because Qt 6.4 rejects
+`Loader.sourceComponent` for components declared in a
+`pragma ComponentBehavior: Bound` file; the same code passes both versions.
+
 `qmltestrunner` cannot load this distribution's statically registered Quickshell plugin. Trying to use real shell controls directly in it fails with `quickshell-coreplugin not found`. That is why the doubles are explicit rather than pretending a standalone test runner is the shell.
+
+The 1.8.0 local target is Omarchy 4.5.0-3 / Qt 6.12.0. The production components pass 121 Qt UI entries and 20 utility entries without undefined-color warnings; the backend suite passes 252 cases, including the facade-patch contract in `tests/test_module_facade.py` and the country-table/asset sync gates. The dashboard, destination, summary and onboarding suites exercise the redesigned UI directly. Native lint reports zero project diagnostics and 93 narrowly identified host metadata warnings. This does not establish live VPN routing or shared multi-monitor operation.
 
 ### Native lint policy
 
@@ -59,7 +70,7 @@ Quickshell maps the shell root to `qs` at runtime. `scripts/check_qml.py` create
 
 The checker fails new/project diagnostics. It records a narrow allowlist of known host metadata limitations: exact dynamic `QObject` members used by Omarchy's style/bar/loader APIs and the missing `QProcess::ExitStatus` annotation. This is **not warning-free lint**. Full diagnostics are saved to a uniquely created temporary JSON file; missing imports, project-property errors and misspelled host members are not exempted. The exception policy has its own regression test.
 
-CI runs Python 3.9/3.12/3.14 tests, Ruff, shell syntax/ShellCheck, standalone manifest validation, QML parsing and Qt behavior tests. When the Omarchy validator is installed it also runs the host validator; otherwise CI reports that limitation explicitly. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
+CI runs Python 3.9/3.12/3.14 tests (with coverage reporting), Ruff lint/format, mypy, shell syntax/ShellCheck, `shfmt -i 2 -ci`, standalone manifest and preview-sync validation, QML parsing and Qt behavior tests. When the Omarchy validator is installed it also runs the host validator; otherwise CI reports that limitation explicitly. Native import linting requires the installed target shell and is a separate local gate—not a claim made by Ubuntu's test doubles.
 
 ## Refactor baseline (1.6.0)
 

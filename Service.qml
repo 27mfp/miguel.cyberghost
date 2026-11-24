@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import "Countries.js" as Countries
+import "CountryRecents.js" as CountryRecents
 import "ServiceUtils.js" as ServiceUtils
 
 Item {
@@ -21,6 +22,10 @@ Item {
   property string country: "PT"
   property string countryName: "Portugal"
   property string countryFlag: "🇵🇹"
+  // Short canonical CSVs in shell settings; lists exposed to QML controls.
+  property var favoriteCountries: []
+  property var recentCountries: []
+  property string _recentObservedCountry: ""
   // `fastest` means the lowest-load live instance for the selected country.
   // A concrete value is an exact server name returned by the official CLI.
   property string serverSelection: "fastest"
@@ -87,6 +92,10 @@ Item {
   property int statusGeneration: 0
   property bool statusRefreshPending: false
   property bool statusUnknown: false
+  // Timestamp of the last accepted, current-generation status response.
+  property real statusObservedAt: 0
+  onStatusUnknownChanged: if (statusUnknown) statusObservedAt = 0
+  onStatusProbeErrorChanged: if (statusProbeError !== "") statusObservedAt = 0
   // A tunnel created by the pre-1.7 root helper. It can only be removed by
   // that installed helper, so it keeps its own disconnect path.
   property bool legacyTunnel: false
@@ -192,6 +201,36 @@ Item {
     settingChanged(key, value)
   }
 
+  function toggleFavorite(code) {
+    const normalized = CountryRecents.normalizeCode(code)
+    if (!normalized)
+      return false
+    const current = CountryRecents.normalizeList(favoriteCountries, 8)
+    const index = current.indexOf(normalized)
+    if (index >= 0) {
+      current.splice(index, 1)
+    } else {
+      if (current.length >= 8)
+        return false
+      current.push(normalized)
+    }
+    favoriteCountries = current
+    persistSetting("favoriteCountries", CountryRecents.toCsv(current, 8))
+    return true
+  }
+
+  function recordVerifiedRecent() {
+    const normalized = CountryRecents.normalizeCode(activeCountry)
+    if (!normalized || _recentObservedCountry === normalized)
+      return
+    _recentObservedCountry = normalized
+    const updated = CountryRecents.addRecent(recentCountries, normalized)
+    if (updated.join(",") === CountryRecents.toCsv(recentCountries, 5))
+      return
+    recentCountries = updated
+    persistSetting("recentCountries", CountryRecents.toCsv(updated, 5))
+  }
+
   function setCountry(code) {
     var normalized = String(code || "").trim().toUpperCase()
     if (!/^[A-Z]{2}$/.test(normalized) || !Countries.isSupportedCountry(normalized)) {
@@ -265,7 +304,7 @@ Item {
         root.setServerSelection("fastest")
       if (root.resolvingAutomaticServer) {
         root.resolvingAutomaticServer = false
-        var liveServer = options.length > 1 ? String(options[1].value || "") : ""
+        let liveServer = options.length > 1 ? String(options[1].value || "") : ""
         root.startNativeConnect(liveServer)
       }
     }
@@ -544,7 +583,7 @@ Item {
       }
       var parsed = []
       try {
-        var raw = JSON.parse(String(root.streamingServicesOutput || "[]").substring(0, 16384))
+        let raw = JSON.parse(String(root.streamingServicesOutput || "[]").substring(0, 16384))
         if (Array.isArray(raw))
           parsed = raw
       } catch (e) {
@@ -556,7 +595,7 @@ Item {
       }))
         root.streamingService = parsed.length > 0 ? String(parsed[0].value || "") : ""
       if (exitCode !== 0 || parsed.length === 0) {
-        var cliError = String(root.streamingServicesErrorOutput || "").trim()
+        let cliError = String(root.streamingServicesErrorOutput || "").trim()
         root.streamingError = cliError !== "" ? ServiceUtils.cleanProcessError(cliError, "Could not load streaming services.") : (root.readyCli ? "No streaming services are available for this country." : "Install and set up the cyberghostvpn CLI to load streaming services.")
       }
       root.streamingServicesOutput = ""
@@ -622,7 +661,7 @@ Item {
           root.parseStatus(out)
         } else {
           root.statusUnknown = true
-          var err = String(root.statusError || "").substring(0, 512).trim()
+          let err = String(root.statusError || "").substring(0, 512).trim()
           root.statusProbeError = timedOut ? "VPN status check timed out; current state is unknown." : (err !== "" ? err.substring(0, 120) : "VPN status check failed; current state is unknown.")
         }
       }
@@ -663,8 +702,8 @@ Item {
 
   function sendNotification(title, message, urgency) {
     try {
-      var safeTitle = String(title || "CyberGhost VPN").substring(0, 64)
-      var safeMsg = String(message || "").substring(0, 160)
+      let safeTitle = String(title || "CyberGhost VPN").substring(0, 64)
+      let safeMsg = String(message || "").substring(0, 160)
       notifyProcess.command = ["/usr/bin/notify-send", "-a", "CyberGhost VPN", "-u", urgency || "normal", "--", safeTitle, safeMsg]
       notifyProcess.running = true
     } catch (e) {
@@ -740,10 +779,10 @@ Item {
           root.sendNotification("CyberGhost VPN Disconnected", "VPN tunnel disconnected. Public IP exposed.", "normal")
           root.refreshIpInfo(true)
         } else if (exitCode === 0 && result.ok && result.action === "connect") {
+          let connectedTarget = ServiceUtils.connectResult(result, root.pendingCountry)
           root.connected = true
-          root.activeCountry = typeof result.country === "string" && /^[A-Z]{2}$/.test(result.country) ? result.country : root.pendingCountry
-          var server = typeof result.server === "string" ? result.server.replace(/\.cg-dialup\.net$/, "").toLowerCase() : ""
-          root.activeServer = ServiceUtils.isValidServerSelector(server) && server !== "fastest" ? server : ""
+          root.activeCountry = connectedTarget.country
+          root.activeServer = connectedTarget.server
           root.legacyTunnel = false
           root.statusUnknown = false
           root.statusProbeError = ""
@@ -804,61 +843,47 @@ Item {
       statusProbeError = rawStatusText === "" ? "VPN status response was empty; current state is unknown." : "VPN status response was invalid; current state is unknown."
       return
     }
+    statusObservedAt = Date.now()
     lastBackend = typeof data.backend === "string" ? data.backend.substring(0, 32) : ""
     legacyTunnel = data.connected && lastBackend === "legacy"
     var isConnected = data.connected
-    if (isConnected && !legacyTunnel) {
-      endpoint = String(data.endpoint || "").substring(0, 64).trim()
-      transferText = String(data.transfer || "").substring(0, 64).trim()
-      var rx = typeof data.rx_bytes === "number" && data.rx_bytes >= 0 ? data.rx_bytes : -1
-      var tx = typeof data.tx_bytes === "number" && data.tx_bytes >= 0 ? data.tx_bytes : -1
-      var now = Date.now()
-      var elapsed = (now - counterSampleAt) / 1000
-      if (rx < 0 || tx < 0 || rx < sampleRx || tx < sampleTx) {
-        // Missing counters or a reset (new interface): restart sampling.
-        rxRate = -1
-        txRate = -1
-        counterSampleAt = rx >= 0 && tx >= 0 ? now : 0
-        sampleRx = rx
-        sampleTx = tx
-      } else if (counterSampleAt === 0 || elapsed >= 1) {
-        // Rates need two samples of the same session at least 1s apart.
-        if (counterSampleAt > 0) {
-          rxRate = (rx - sampleRx) / elapsed
-          txRate = (tx - sampleTx) / elapsed
-        }
-        counterSampleAt = now
-        sampleRx = rx
-        sampleTx = tx
-      }
-      txBytes = tx
-      if (rx < 0 || rx !== rxBytes || rxChangedAt === 0) {
-        rxBytes = rx
-        rxChangedAt = now
-      }
-      rxIdleSec = rx < 0 ? 0 : Math.floor((now - rxChangedAt) / 1000)
-    } else {
-      endpoint = ""
-      transferText = ""
-      rxBytes = -1
-      rxChangedAt = 0
-      rxIdleSec = 0
-      txBytes = -1
-      rxRate = -1
-      txRate = -1
-      counterSampleAt = 0
-      sampleRx = -1
-      sampleTx = -1
-      if (!isConnected || legacyTunnel) {
-        activeCountry = legacyTunnel ? activeCountry : ""
-        activeServer = ""
-      }
+    var sample = ServiceUtils.statusSample(data, {
+      rxBytes: rxBytes,
+      rxChangedAt: rxChangedAt,
+      rxRate: rxRate,
+      txRate: txRate,
+      counterSampleAt: counterSampleAt,
+      sampleRx: sampleRx,
+      sampleTx: sampleTx
+    }, Date.now())
+    endpoint = sample.endpoint
+    transferText = sample.transferText
+    rxBytes = sample.rxBytes
+    rxChangedAt = sample.rxChangedAt
+    rxIdleSec = sample.rxIdleSec
+    txBytes = sample.txBytes
+    rxRate = sample.rxRate
+    txRate = sample.txRate
+    counterSampleAt = sample.counterSampleAt
+    sampleRx = sample.sampleRx
+    sampleTx = sample.sampleTx
+    if (!isConnected || legacyTunnel) {
+      activeCountry = legacyTunnel ? activeCountry : ""
+      activeServer = ""
     }
 
     var wasConnected = connected
     statusUnknown = false
     statusProbeError = ""
     connected = isConnected
+
+    // A selection or even a successful action reply does not establish an
+    // observed active tunnel. Only a verified NetworkManager status does.
+    if (isConnected && !legacyTunnel && lastBackend === "networkmanager"
+        && data.state === "activated" && !connecting && !disconnecting)
+      recordVerifiedRecent()
+    else if (!isConnected || legacyTunnel)
+      _recentObservedCountry = ""
 
     if (isConnected && !wasConnected)
       staleNotified = false
@@ -878,28 +903,16 @@ Item {
   }
 
   function parseIpInfo(jsonStr) {
-    if (!jsonStr || jsonStr.trim() === "")
+    // GeoIP describes the egress address, not the selected CyberGhost server.
+    // Exit IPs are often registered in a neighbouring country; never
+    // overwrite the user's next-connect target with that result.
+    var info = ServiceUtils.ipInfo(jsonStr)
+    if (!info)
       return
-    try {
-      var data = JSON.parse(jsonStr.substring(0, 4096))
-      if (data && data.success !== false && data.ip) {
-        var candidateIp = String(data.ip || "").substring(0, 45).trim()
-        if (!/^[0-9A-Fa-f:.]+$/.test(candidateIp))
-          return
-        var candidateCountry = String(data.country_code || data.country || "").substring(0, 2).trim().toUpperCase()
-        publicIp = candidateIp
-        publicCity = String(data.city || "").substring(0, 64).trim()
-        publicCountry = /^[A-Z]{2}$/.test(candidateCountry) ? candidateCountry : ""
-        var connection = data.connection || {}
-        publicOrg = String(data.org || connection.org || connection.isp || "").substring(0, 128).trim()
-
-        // GeoIP describes the egress address, not the selected CyberGhost
-        // server. Exit IPs are often registered in a neighbouring country;
-        // never overwrite the user's next-connect target with that result.
-      }
-    } catch (e) {
-      // ignore
-    }
+    publicIp = info.ip
+    publicCity = info.city
+    publicCountry = info.country
+    publicOrg = info.org
   }
 
   // ---- Timers ----
@@ -976,6 +989,8 @@ Item {
     serverType = saved.serverType
     serverSelection = saved.serverSelection
     hideDetails = saved.hideDetails
+    favoriteCountries = CountryRecents.fromCsv(setting("favoriteCountries", ""), 8)
+    recentCountries = CountryRecents.fromCsv(setting("recentCountries", ""), 5)
   }
   onSettingsChanged: restoreSettings()
   Component.onCompleted: {

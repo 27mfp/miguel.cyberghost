@@ -7,8 +7,16 @@ Since 1.7.0 the plugin installs nothing as root. The tunnel is an in-memory Netw
 | Script | Purpose | Privileges |
 | --- | --- | --- |
 | `install.sh` | Guided setup: `python-requests` if missing, account link, and removal of pre-1.7 files. Does not install the vendor CLI. | `sudo pacman` only if `python-requests` is missing. |
+| `bash install.sh --uninstall` | Stops the tunnel, removes recognized legacy files, the plugin registration and `~/.cyberghost/native.ini`. Keeps the vendor CLI config. | One explicit `sudo` step for recognized legacy files. |
+| `bash install.sh --fresh` | Destructive developer reset and reinstall from this checkout (`--local`) or GitHub, not a normal upgrade. Stages and validates the replacement first. | Removes legacy root files with authorization. |
 | `scripts/remove-legacy-helper.sh` | Removes recognized root helper and Polkit rule files left by releases before 1.7. The panel opens it in Omarchy's floating terminal. | One explicit `sudo` step, run in a visible terminal. |
-| `fresh-install.sh` | Destructive developer reset and reinstall, not a normal upgrade. | Removes legacy root files with authorization. |
+| `fresh-install.sh` | **Deprecated** wrapper for `install.sh --fresh`; kept for existing docs and bookmarks and may be removed after 1.8.0. | Same as `install.sh --fresh`. |
+
+Common options: `--dry-run` prints every planned action without changing
+state, `-y`/`--yes` answers prompts, `--purge-deps` also removes
+`python-requests` in reset/uninstall modes, and `--help` lists the rest. All
+prompts fail closed: EOF, blank input or anything but an explicit `y`/`yes`
+leaves the system unchanged.
 
 ## Legacy cleanup rules
 
@@ -20,6 +28,18 @@ Since 1.7.0 the plugin installs nothing as root. The tunnel is an in-memory Netw
 - `/run/lock/cyberghost.lock` is preserved. Removing an advisory lock path can bypass serialization if another process still holds its old inode.
 
 Cleanup rechecks that no `cyberghost` interface exists after authorization; disconnect before running it, including a new NetworkManager tunnel. Developer reset uses `--yes --strict`: unknown helpers and customized rules cause it to abort before removing the installed plugin.
+
+### Deprecation windows
+
+- `scripts/remove-legacy-helper.sh` has no removal date yet; it is the only
+  path that can clean a pre-1.7 root helper. It may be removed once the 1.6.x
+  upgrade window closes, no earlier than the release after 1.8.0. Until then
+  it stays documented and tested against the five historical rule variants.
+- `fresh-install.sh` is a thin wrapper and may be removed after 1.8.0; new
+  automation must call `install.sh --fresh`.
+- `scripts/install-openvpn-compat.sh` and `scripts/openvpn-compat.sh` remain
+  experimental developer material for the unsupported vendor modes. They are
+  not invoked by the plugin, installer or release workflow.
 
 ## State ownership
 

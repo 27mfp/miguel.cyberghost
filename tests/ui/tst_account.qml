@@ -22,6 +22,18 @@ TestCase {
     property bool syncingServers: false
     property string syncProgress: ""
     property int logoutCalls: 0
+    property string setupCardState: "ready"
+    property bool readyNm: true
+    property bool readyNetwork: true
+    property bool readyRequests: true
+    property bool regBusy: false
+    property bool depsBusy: false
+    property string setupMsg: ""
+    property int linkCalls: 0
+    function registerAccount(username, password) { linkCalls++ }
+    function recheck() {}
+    function installDeps() {}
+    function disconnect() {}
     function logout() {
       logoutCalls++
     }
@@ -41,6 +53,10 @@ TestCase {
     account.accountSource = "native"
     account.serverList = "live"
     account.logoutCalls = 0
+    account.linkCalls = 0
+    account.busy = false
+    account.regBusy = false
+    account.setupMsg = ""
   }
 
   function test_logoutNeedsASecondDeliberateClick() {
@@ -99,7 +115,51 @@ TestCase {
     compare(caption.text, "This device · syncing servers 12/94")
     account.syncingServers = false
     account.serverList = "probe"
-    compare(caption.text, "This device · relink to refresh servers")
+    compare(caption.text, "This device")
+    verify(findChild(section, "accountRelinkHint").visible)
+    verify(findChild(section, "accountRelink").visible)
     account.serverList = "live"
+  }
+
+  function test_relinkIsExplicitKeepsCredentialsAndClearsPassword() {
+    account.serverList = "probe"
+    var section = createTemporaryObject(factory, this, {showHeading: false, width: 280})
+    var hint = findChild(section, "accountRelinkHint")
+    compare(hint.wrapMode, Text.WordWrap)
+    verify(hint.visible)
+    verify(!section.relinking)
+    compare(findChild(section, "accountPassword"), null)
+    findChild(section, "accountRelink").clicked()
+    tryVerify(function() { return findChild(section, "accountPassword") !== null })
+    var username = findChild(section, "accountUsername")
+    var password = findChild(section, "accountPassword")
+    verify(username.visible && password.visible)
+    username.text = "preview@example.invalid"
+    password.text = "not-real"
+    password.accepted()
+    compare(account.linkCalls, 1)
+    compare(account.logoutCalls, 0)
+    verify(account.readyCreds)
+    compare(password.text, "")
+    password.text = "discard-draft"
+    section.clearPassword()
+    compare(password.text, "")
+    findChild(section, "accountRelinkCancel").clicked()
+    verify(!section.relinking)
+    tryVerify(function() { return findChild(section, "accountPassword") === null })
+  }
+
+  function test_connectedRelinkExplainsDisconnectWithoutDoingIt() {
+    account.serverList = "probe"
+    account.connected = true
+    var section = createTemporaryObject(factory, this)
+    findChild(section, "accountRelink").clicked()
+    tryVerify(function() { return findChild(section, "linkBlockedReason") !== null })
+    var blocked = findChild(section, "linkBlockedReason")
+    verify(blocked.visible)
+    verify(blocked.text.indexOf("Disconnect") >= 0)
+    verify(!findChild(section, "linkAccount").enabled)
+    compare(account.linkCalls, 0)
+    compare(account.logoutCalls, 0)
   }
 }

@@ -11,7 +11,7 @@ Requires Omarchy, `wtype`, `grim`, `wl-copy`, `wl-paste` and Python 3.9+. This t
 ```bash
 bash scripts/visual-preview.sh --install
 # Wait for plugin discovery, then:
-omarchy plugin enable test.cyberghost-release-171
+omarchy plugin enable test.cyberghost-release-180
 python3 scripts/visual-smoke.py --run
 # Inspect the PNGs and JSON snapshots in the printed /tmp directory.
 bash scripts/visual-preview.sh --remove
@@ -27,13 +27,15 @@ If you edit imported QML after loading the fixture, a rescan may still use cache
 - Hide/reopen with a dropdown open; confirm the popup is closed.
 - Toggle privacy and verify displayed values are masked.
 - Copy the synthetic public IP through the real `wl-copy` process, verify clipboard contents and restore the previous clipboard.
-- Expand Settings without moving Connect below its controls.
+- Open Settings, change the display-privacy preference and return to the dashboard.
+- Check Details exposes copy/privacy controls independently of its heading.
+- Capture keyboard focus on Connect and the Account subview.
 - Verify vendor-dependent mode, protocol, streaming and server controls are absent.
 - Exercise Connect/Disconnect against the synthetic service.
 - Submit synthetic account fields and verify the password is cleared; close with an unsubmitted password and verify it is discarded.
 - Escape closes the panel.
 
-The script saves fifteen rendered captures: ready, filtered country, private details, Advanced, WireGuard-only controls, connected, narrow (280 logical units before host scaling), stale traffic, connecting, unknown status, connection error, explicit country switch, traffic sampling, short-height setup and account setup. Unknown/error previews invoke Recheck and verify the synthetic counter increments. Switching verifies NEXT LOCATION and activates the switch action. Connecting verifies busy controls, and sampling verifies its explanation. The short-height case constrains content to 260 logical units, uses Tab through account fields, and checks that the focused Link account action scrolls fully into view. Snapshots mask entered account values. The test fails on missing controls or unsuccessful interactions; it does not silently skip unavailable IPC.
+The script saves nineteen rendered captures: ready, filtered country, private details, Settings, WireGuard-only controls, connected, narrow (280 logical units before host scaling), stale traffic, connecting, unknown status, connection error, explicit country switch, traffic sampling, short-height setup, account setup, focused primary action, Details, Account and sampling details. Unknown status invokes Recheck and verifies the synthetic counter increments; operation errors exercise Dismiss. Switching verifies NEXT LOCATION and activates the primary switch action. Connecting verifies busy controls, and sampling verifies its explanation in Details. The short-height case constrains content to 260 logical units, uses Tab through account fields, and checks that the focused Link account action scrolls fully into view. Snapshots mask entered account values. The test fails on missing controls or unsuccessful interactions; it does not silently skip unavailable IPC.
 
 ## Human visual review
 

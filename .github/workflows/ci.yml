@@ -13,9 +13,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-test:
-    # Pinned so the ubuntu-latest move to 26.04 cannot silently change the Qt 6
-    # packages the QML tests depend on; upgrade deliberately.
+  lint:
+    # Pinned so the ubuntu-latest move to 26.04 cannot silently change the
+    # toolchain; upgrade deliberately.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install lint tooling
+        run: |
+          python -m pip install -r requirements-dev.txt
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Ruff lint and format
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Static types
+        run: mypy
+
+      - name: Shell syntax and ShellCheck
+        run: |
+          for file in install.sh fresh-install.sh scripts/*.sh; do
+            bash -n "$file"
+          done
+          shellcheck install.sh fresh-install.sh scripts/*.sh
+
+      - name: Shell formatting (shfmt)
+        run: |
+          curl -fsSL -o /tmp/shfmt \
+            https://github.com/mvdan/sh/releases/download/v3.10.0/shfmt_v3.10.0_linux_amd64
+          chmod +x /tmp/shfmt
+          /tmp/shfmt -i 2 -ci -d install.sh fresh-install.sh scripts/*.sh
+
+      - name: Python and manifest validation
+        run: |
+          python -m py_compile cyberghost_runner.py cyberghost/*.py scripts/*.py
+          python -m json.tool manifest.json >/dev/null
+          python scripts/check_manifest.py
+          python scripts/sync-preview.py --check
+          git diff --check
+
+  test:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -29,42 +74,54 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install tooling
+      - name: Install test dependencies
+        run: python -m pip install pytest pytest-cov requests
+
+      - name: Run tests with coverage
+        run: python -m pytest -q --cov=cyberghost --cov-report=term-missing
+
+  qml:
+    # The QML suite needs Qt 6; it does not need a Quickshell process.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Qt tooling
         run: |
-          # ruff is pinned to the version the code is formatted with.
-          python -m pip install ruff==0.16.9 pytest requests
           sudo apt-get update
-          sudo apt-get install -y shellcheck qt6-declarative-dev-tools qml6-module-qttest qml6-module-qtqml-workerscript qml6-module-qtquick-window qml6-module-qtquick-controls qml6-module-qtquick-templates
+          sudo apt-get install -y \
+            qt6-declarative-dev-tools \
+            qml6-module-qtqml-workerscript \
+            qml6-module-qtquick-controls \
+            qml6-module-qtquick-shapes \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-window \
+            qml6-module-qttest
 
-      - name: Lint backend
+      - name: Parse every QML file
+        # qmlformat output differs between Ubuntu's Qt and Omarchy's Qt, so this
+        # is a parse check only; formatting is reviewed against .qmlformat.ini.
         run: |
-          ruff check .
-          ruff format --check .
-
-      - name: Run tests
-        run: pytest -q
-
-      - name: Validate plugin files
-        run: |
-          python -m py_compile cyberghost_runner.py
-          python -m json.tool manifest.json >/dev/null
-          python scripts/check_manifest.py
-          for file in install.sh fresh-install.sh scripts/*.sh; do
-            bash -n "$file"
-          done
-          shellcheck install.sh fresh-install.sh scripts/*.sh
-          # qmlformat parses every QML file. Formatter output differs between
-          # the Ubuntu Qt version and Omarchy's Qt version, so do not compare it.
           for file in *.qml tests/qml/*.qml tests/ui/*.qml tests/visual/*.qml; do
             /usr/lib/qt6/bin/qmlformat "$file" >/dev/null
           done
-          bash scripts/test-qml.sh
+
+      - name: Run QML behaviour tests
+        run: bash scripts/test-qml.sh
+
+      - name: Omarchy manifest validator (when installed)
+        run: |
           if command -v omarchy-plugin-validate >/dev/null 2>&1; then
             omarchy-plugin-validate "$PWD"
           else
-            echo "Omarchy validator unavailable on Ubuntu; standalone manifest validation ran above."
+            echo "Omarchy validator unavailable on Ubuntu; standalone manifest validation ran in the lint job."
           fi
-          # Installed Omarchy + Quickshell metadata is needed for real import
-          # linting. Run scripts/check_qml.py on the target machine; the test
-          # doubles above are not evidence of full shell integration.
-          git diff --check
+
+      - name: Native import lint limitation
+        run: |
+          # scripts/check_qml.py needs the installed Omarchy shell imports.
+          echo "Run scripts/check_qml.py on the target Omarchy machine; test doubles are not shell evidence."

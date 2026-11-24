@@ -17,7 +17,7 @@ filter_openvpn_arguments() {
     previous="$argument"
   done
   for argument in "$@"; do
-    if (( has_server && has_auth )) && [[ "$argument" == --ncp-disable ]]; then
+    if ((has_server && has_auth)) && [[ "$argument" == --ncp-disable ]]; then
       continue
     fi
     OPENVPN_ARGUMENTS+=("$argument")

@@ -87,6 +87,29 @@ TestCase {
   function test_countryCompatibility() {
     verify(Countries.isSupportedCountry("UK"))
     compare(Countries.countryByCode("UK").code, "GB")
+    verify(Countries.isSupportedCountry(" pt "))
+    verify(!Countries.isSupportedCountry("XX"))
+  }
+
+  function test_countryTableShapeAndDropdown() {
+    compare(Countries.allCountries.length, 94)
+    var seen = {}
+    for (var i = 0; i < Countries.allCountries.length; i++) {
+      var country = Countries.allCountries[i]
+      verify(/^[A-Z]{2}$/.test(country.code))
+      verify(!seen[country.code])
+      verify(country.name.length > 0)
+      verify(country.flag.length > 0)
+      seen[country.code] = true
+    }
+    compare(Countries.popularCountries.length, 8)
+    for (var j = 0; j < Countries.popularCountries.length; j++)
+      verify(Countries.popularCountries[j].code.length === 2)
+    var options = Countries.dropdownOptions()
+    compare(options.length, 94)
+    compare(options[0].label.indexOf(options[0].value) !== -1, true)
+    compare(Countries.countryName("PT"), "Portugal")
+    compare(Countries.countryFlag("PT"), "🇵🇹")
   }
 
   function test_serverSelectorValidation() {
@@ -120,8 +143,141 @@ TestCase {
     compare(ServiceUtils.formatRate(505036.8), "493.2 KB/s")
   }
 
+  function test_barTooltipMatchesConnectionState() {
+    compare(ServiceUtils.barTooltip({}), "CyberGhost VPN: setup incomplete — click for steps")
+    compare(ServiceUtils.barTooltip({ setupDone: true, statusUnknown: true }), "CyberGhost VPN: status unavailable — click to reconcile")
+    compare(ServiceUtils.barTooltip({ setupDone: true, legacyTunnel: true }), "CyberGhost VPN: previous helper tunnel active — click to disconnect")
+    compare(ServiceUtils.barTooltip({
+      setupDone: true,
+      connecting: true,
+      country: "ES",
+      countryName: "Spain"
+    }), "CyberGhost VPN: Connecting to Spain (ES)…")
+    compare(ServiceUtils.barTooltip({ setupDone: true, disconnecting: true }), "CyberGhost VPN: Disconnecting…")
+    compare(ServiceUtils.barTooltip({
+      setupDone: true,
+      connected: true,
+      publicIp: "198.51.100.7"
+    }), "CyberGhost VPN: Connected • 198.51.100.7")
+    compare(ServiceUtils.barTooltip({
+      setupDone: true,
+      connected: true,
+      hideDetails: true,
+      publicIp: "198.51.100.7"
+    }), "CyberGhost VPN: Connected")
+    compare(ServiceUtils.barTooltip({ setupDone: true }), "CyberGhost VPN: Disconnected (Click to open)")
+  }
+
   function test_actionResultAcceptsLogout() {
     compare(ServiceUtils.parseActionResult('{"ok":true,"action":"logout"}').action, "logout")
     compare(ServiceUtils.parseActionResult('{"ok":true,"action":"register"}'), null)
+  }
+
+  function test_statusSampleNeedsTwoSamplesForARate() {
+    var first = ServiceUtils.statusSample({
+      connected: true,
+      rx_bytes: 1000,
+      tx_bytes: 500,
+      endpoint: "198.51.100.10:1337",
+      transfer: "1000 B received, 500 B sent"
+    }, {}, 1000)
+    compare(first.rxRate, -1)
+    compare(first.txRate, -1)
+    compare(first.counterSampleAt, 1000)
+    compare(first.rxBytes, 1000)
+    compare(first.txBytes, 500)
+    compare(first.endpoint, "198.51.100.10:1337")
+    compare(first.rxIdleSec, 0)
+
+    var second = ServiceUtils.statusSample({
+      connected: true,
+      rx_bytes: 1400,
+      tx_bytes: 600
+    }, first, 3000)
+    compare(second.rxRate, 200)
+    compare(second.txRate, 50)
+    compare(second.counterSampleAt, 3000)
+    // New traffic means the idle watchdog restarts.
+    compare(second.rxChangedAt, 3000)
+  }
+
+  function test_statusSampleCountsIdleSecondsWithoutTraffic() {
+    var first = ServiceUtils.statusSample({
+      connected: true,
+      rx_bytes: 1000,
+      tx_bytes: 500
+    }, {}, 1000)
+    var second = ServiceUtils.statusSample({
+      connected: true,
+      rx_bytes: 1000,
+      tx_bytes: 500
+    }, first, 4000)
+    compare(second.rxChangedAt, 1000)
+    compare(second.rxIdleSec, 3)
+  }
+
+  function test_statusSampleResetsOnCounterResetOrMissingData() {
+    var reset = ServiceUtils.statusSample({
+      connected: true,
+      rx_bytes: 10,
+      tx_bytes: 5
+    }, {
+      rxBytes: 1000,
+      txBytes: 500,
+      rxRate: 10,
+      txRate: 5,
+      counterSampleAt: 1000,
+      sampleRx: 1000,
+      sampleTx: 500
+    }, 2000)
+    compare(reset.rxRate, -1)
+    compare(reset.txRate, -1)
+    compare(reset.counterSampleAt, 2000)
+
+    var missing = ServiceUtils.statusSample({
+      connected: true
+    }, {}, 2000)
+    compare(missing.rxBytes, -1)
+    compare(missing.counterSampleAt, 0)
+    compare(missing.rxIdleSec, 0)
+
+    var legacy = ServiceUtils.statusSample({
+      connected: true,
+      backend: "legacy",
+      rx_bytes: 10
+    }, {}, 2000)
+    compare(legacy.rxBytes, -1)
+  }
+
+  function test_ipInfoValidatesAndNormalizesTheResponse() {
+    var info = ServiceUtils.ipInfo('{"success":true,"ip":"198.51.100.7","city":"Lisbon","country_code":"pt","connection":{"isp":"Example"}}')
+    compare(info.ip, "198.51.100.7")
+    compare(info.city, "Lisbon")
+    compare(info.country, "PT")
+    compare(info.org, "Example")
+    compare(ServiceUtils.ipInfo('{"ip":"not an ip"}'), null)
+    compare(ServiceUtils.ipInfo('{"success":false,"ip":"198.51.100.7"}'), null)
+    compare(ServiceUtils.ipInfo("not json"), null)
+    compare(ServiceUtils.ipInfo(""), null)
+  }
+
+  function test_connectResultOnlyAcceptsValidatedServers() {
+    var result = ServiceUtils.connectResult({
+      country: "ES",
+      server: "madrid-s402-i05.cg-dialup.net"
+    }, "PT")
+    compare(result.country, "ES")
+    compare(result.server, "madrid-s402-i05")
+    var fallback = ServiceUtils.connectResult({
+      country: "not-a-code",
+      server: "fastest"
+    }, "PT")
+    compare(fallback.country, "PT")
+    compare(fallback.server, "")
+    var invalid = ServiceUtils.connectResult({
+      country: "ES",
+      server: "madrid-s402-i05.evil.example"
+    }, "PT")
+    compare(invalid.server, "")
   }
 }

@@ -2,11 +2,14 @@
 # Explicit, synthetic-data preview in the existing Omarchy shell.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-ID="test.cyberghost-release-171"
+ID="test.cyberghost-release-180"
 TARGET="$HOME/.config/omarchy/plugins/$ID"
 case "${1:---help}" in
   --install)
-    [[ ! -e "$TARGET" && ! -L "$TARGET" ]] || { echo "Preview already exists; remove it first." >&2; exit 1; }
+    [[ ! -e "$TARGET" && ! -L "$TARGET" ]] || {
+      echo "Preview already exists; remove it first." >&2
+      exit 1
+    }
     STAGE=$(mktemp -d)
     trap 'rm -rf -- "$STAGE"' EXIT
     cp "$ROOT"/*.qml "$ROOT"/*.js "$STAGE/"

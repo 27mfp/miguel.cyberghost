@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in the plugin, installer or bar widget is not working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real CyberGhost credentials, device tokens, session JWTs,
+        public IPs or `~/.cyberghost/*.ini` contents. For a security issue, use
+        the private process in SECURITY.md instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the bar widget
+        2. Select ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Plugin version (manifest.json):
+        - Omarchy version:
+        - Qt version (qmake6 -query QT_VERSION):
+        - NetworkManager version:
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: |
+        Output of `python3 cyberghost_runner.py check` and
+        `python3 cyberghost_runner.py status --json` (redact account and IP).
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed credentials, tokens, account identifiers and public IPs.
+          required: true

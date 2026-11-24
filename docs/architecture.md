@@ -17,18 +17,81 @@ An attempted upstream raw clock URL returned 404. We used the installed, working
 
 | File | Responsibility |
 | --- | --- |
-| `BarWidget.qml` | Bar icon, service ownership, settings persistence, IPC and forwarding open/close/popout lifecycle to the nested panel. |
-| `Panel.qml` | Popup composition, focus (keeps the focused control scrolled into view), Escape and the primary connect/disconnect action. |
+| `BarWidget.qml` | Bar icon, service ownership, settings persistence, IPC, and forwarding open/close/popout lifecycle to the nested panel. |
+| `Panel.qml` | Host panel lifecycle: builds `KeyboardPanel.content` on first open, keeps the service/IPC alive while closed, holds focus and Escape/Ctrl+Tab, and forwards the primary action. |
+| `VpnDashboard.qml` | Presentation-only dashboard: observed-state hero, context-aware primary action, destination picker, Quick destinations, IP utility row, and the Details/Account/Settings subviews with Back/Escape. |
+| `ConnectionStage.qml` | Quiet central visual for connecting/connected/disconnecting/unknown/legacy/stale state; never infers VPN status from the public IP. |
+| `ConnectionSummary.qml` | Compact read-only IP/transfer row with privacy masking, copy and failure feedback. |
+| `QuickDestinations.qml` | Bounded favorites and recent verified NetworkManager destinations; choosing one only changes the next destination. |
 | `StatusNotice.qml` | Shared status/error notice, shown during setup too, with **Recheck status** for connection-state problems and dismissal for operation errors. |
-| `SetupCard.qml` | Required setup steps, form validation and focus routing. |
-| `ConnectionSettings.qml` | Country selection and progressively disclosed advanced controls. |
-| `ConnectionDetails.qml` | Observed IP/session data in a Network-panel-style grid (live rates and totals while connected), masking and click-to-copy. |
-| `AccountSection.qml` | Signed-in identity and two-step logout of the plugin's own login. |
-| `Service.qml` | Connection state, status/action/streaming processes, settings restoration and notifications. |
-| `SetupController.qml` | Independent dependency, account, legacy-cleanup and readiness processes. |
+| `SetupCard.qml` | One-requirement-at-a-time onboarding, completed-step summary, form validation and focus routing. |
+| `ConnectionSettings.qml` | Standalone country/advanced selector retained as a component-test surface; the dashboard owns the production destination picker. |
+| `ConnectionDetails.qml` | Observed IP/session data in a Network-panel-style grid in the Details subview (live rates and totals while connected), masking and click-to-copy. |
+| `AccountSection.qml` | Signed-in identity, relinking without logout, and two-step logout of the plugin's own login. |
+| `Service.qml` | Connection state, status/action/streaming processes, settings restoration, favorites/recents, status observation time and notifications. |
+| `SetupController.qml` | Independent dependency, account, legacy-cleanup, readiness and background-sync processes. |
 | `ServerInventory.qml` | Bounded optional inventory request with selection-key validation. |
-| `ServiceUtils.js` | Pure normalization/readiness/inventory/result helpers, exercised directly in Qt tests. |
-| `cyberghost_runner.py` | Unprivileged backend: validation, transport, credential handling, key generation and the NetworkManager tunnel lifecycle. |
+| `ServiceUtils.js` | Pure normalization/readiness/inventory/result/status-sampling/GeoIP/compatibility helpers, exercised directly in Qt tests. |
+| `Translations.js` | Plugin-owned English and pt-PT strings; the caller supplies the live Omarchy language, and backend errors are never translated. |
+| `CountryRecents.js` | Strict normalization/serialization of the favorite and recent country CSVs. |
+| `cyberghost_runner.py` | Stable CLI entry point and compatibility facade; delegates to the internal `cyberghost` package. |
+
+### Backend package (split in 1.8.0)
+
+The former ~2,600-line `cyberghost_runner.py` monolith now lives in
+`cyberghost/`, split along the domains the tests already exercise:
+
+| Module | Responsibility |
+| --- | --- |
+| `constants.py` | Release constants, action set and the country → city tables (`CITY_MAP`, `DIALUP_CITY_MAP`). |
+| `system.py` | Bounded subprocess I/O, private state files, the per-user lifecycle lock, cancellation and system-file recognizers. |
+| `validation.py` | Strict validation of keys, IPs, ports, hosts, country codes, selectors, DNS and bounded config text. |
+| `transport.py` | Pinned-TLS endpoint requests, the account JSON API and request payload builders. |
+| `wireguard.py` | RFC 7748 X25519 key generation (no `wireguard-tools`). |
+| `credentials.py` | Native/legacy config paths, credential loading and atomic profile writes. |
+| `vendor.py` | Optional, read-only inventory through the official CLI. |
+| `server_data.py` | Server cache, live inventory, JWT/session metadata and the paced background sync. |
+| `server_selection.py` | Candidate ordering, killable reachability probes and key exchange. |
+| `networkmanager.py` | `nmcli` lifecycle, connect/disconnect/logout, counters and `status`. |
+| `setup.py` | Native account registration and the readiness payload for the setup card. |
+| `cli.py` | `argparse` surface and the JSON action envelope. |
+
+`cyberghost_runner.py` re-exports the historical module surface and forwards
+attribute patches to the submodule that owns each name (`cyberghost/_compat.py`).
+That keeps two contracts intact without weakening the split: `Service.qml`
+still executes one stable CLI file, and the test suite can keep doing
+`mock.patch.object(runner, "nm_active_state", …)` exactly as before.
+`tests/test_module_facade.py` guards the behaviour. Import order is acyclic;
+`logout` lives with the NetworkManager lifecycle, which is why the credentials
+module does not import it back.
+
+### Why the QML components stay at the plugin root
+
+`Panel.qml` resolves `AccountSection`, `ConnectionSettings`, `ConnectionDetails`,
+`StatusNotice`, `SetupCard`, `SetupController`, `ServerInventory` and
+`GhostIcon` as sibling files. Moving them into `components/` would require a
+directory import in every consumer, and the tests import the repository root as
+a QML module (`import "../.." as Plugin`) to instantiate `Plugin.SetupCard` and
+`Plugin.ConnectionSettings` directly. `scripts/visual-preview.sh` and the
+visual fixture also copy root-level `*.qml` into a temporary plugin. Only
+`manifest.json` entry points must remain at the root, but the test and fixture
+tooling makes a subdirectory a breaking change for no runtime benefit, so the
+components stay where they are.
+
+### Country data
+
+`Countries.js` (UI labels, flags and the quick-connect set) and the backend
+`CITY_MAP`/`DIALUP_CITY_MAP` (CLI slugs) are one logical table in two runtimes.
+`tests/test_contracts.py` now enforces the exact set relationship, with `UK`
+as the only documented alias (`UK → GB` in the UI, a CLI alias in the backend).
+Adding a country in one place fails the suite until the other side matches.
+
+### Installers
+
+`install.sh` is the single owner of guided setup, `--uninstall` and the
+destructive `--fresh` reset; `--dry-run` plans every mode without changing
+state. `fresh-install.sh` is a deprecated wrapper that delegates to
+`install.sh --fresh` for existing documentation and bookmarks.
 
 ## Privilege model (1.7.0)
 

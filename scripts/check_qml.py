@@ -27,9 +27,11 @@ HOST_MEMBERS = {
     "icon",
     "open",
     "opened",
+    "panelGap",
     "popoutSwitchClosing",
     "shell",
     "switchPanelFrom",
+    "subtitle",
     "text",
     "urgent",
 }

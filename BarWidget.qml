@@ -3,14 +3,16 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
+import "ServiceUtils.js" as ServiceUtils
 
 Ui.BarWidget {
   id: root
   moduleName: "miguel.cyberghost"
   readonly property color brandYellow: "#FFCE00"
   readonly property color successGreen: "#10B981"
-  readonly property bool reduceMotion: !!setting("reduceMotion", false)
+  readonly property bool reduceMotion: Style.reduceMotion || !!setting("reduceMotion", false)
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing : false
   readonly property var actionService: cyberghost
@@ -40,14 +42,14 @@ Ui.BarWidget {
   }
 
   function injectPanel() {
-    var panel = panelLoader.item
+    // The Loader creates the plugin's Panel.qml dynamically. A cast to the
+    // local `Panel` type succeeds in qmllint but is null at runtime on Qt 6.12.
+    // Its Ui.Panel base is stable and carries the two late host injections.
+    var panel = panelLoader.item as Ui.Panel
     if (!panel)
       return
     panel.bar = root.bar
     panel.settings = root.settings
-    panel.anchorItem = button
-    panel.hostWidget = root
-    panel.cyberghost = cyberghost
   }
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
@@ -58,7 +60,7 @@ Ui.BarWidget {
     onSettingChanged: function (key, value) {
       var current = root.settings || {}
       var entry = { id: root.moduleName }
-      for (var name in current)
+      for (let name in current)
         entry[name] = current[name]
       entry[key] = value
       var acknowledged = false
@@ -78,6 +80,8 @@ Ui.BarWidget {
     active: true
     visible: false
     Component.onCompleted: setSource(Qt.resolvedUrl("Panel.qml"), {
+      // Stable references are assigned at creation; bar/settings above must
+      // be refreshed when the shell injects them later.
       cyberghost: cyberghost,
       bar: root.bar,
       settings: root.settings,
@@ -125,23 +129,18 @@ Ui.BarWidget {
     bar: root.bar
     active: root.opened
     Accessible.name: tooltipText
-    tooltipText: {
-      if (!cyberghost.setupDone)
-        return "CyberGhost VPN: setup incomplete — click for steps"
-      if (cyberghost.statusUnknown)
-        return "CyberGhost VPN: status unavailable — click to reconcile"
-      if (cyberghost.legacyTunnel)
-        return "CyberGhost VPN: previous helper tunnel active — click to disconnect"
-      if (cyberghost.connecting)
-        return "CyberGhost VPN: Connecting to " + cyberghost.countryName + " (" + cyberghost.country + ")…"
-      if (cyberghost.disconnecting)
-        return "CyberGhost VPN: Disconnecting…"
-      if (cyberghost.connected) {
-        var ipPart = (!cyberghost.hideDetails && cyberghost.publicIp !== "") ? (" • " + cyberghost.publicIp) : ""
-        return "CyberGhost VPN: Connected" + ipPart
-      }
-      return "CyberGhost VPN: Disconnected (Click to open)"
-    }
+    tooltipText: ServiceUtils.barTooltip({
+      setupDone: cyberghost.setupDone,
+      statusUnknown: cyberghost.statusUnknown,
+      legacyTunnel: cyberghost.legacyTunnel,
+      connecting: cyberghost.connecting,
+      disconnecting: cyberghost.disconnecting,
+      connected: cyberghost.connected,
+      hideDetails: cyberghost.hideDetails,
+      publicIp: cyberghost.publicIp,
+      country: cyberghost.country,
+      countryName: cyberghost.countryName
+    })
 
     iconComponent: Component {
       Item {
@@ -149,9 +148,9 @@ Ui.BarWidget {
 
         GhostIcon {
           anchors.centerIn: parent
-          iconSize: Style.font.icon
-          color: cyberghost.active ? root.brandYellow : (root.bar ? root.bar.barForeground : Color.foreground)
-          innerColor: Color.bar.background
+          iconSize: button.iconSize
+          color: cyberghost.active ? root.brandYellow : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
+          innerColor: Commons.Color.bar.background
           active: cyberghost.active
           connecting: cyberghost.connecting || cyberghost.disconnecting
           reducedMotion: root.reduceMotion
@@ -169,8 +168,8 @@ Ui.BarWidget {
         return
       }
       if (buttonCode === Qt.MiddleButton || buttonCode === Qt.RightButton) {
-        var widgets = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : [root]
-        var owner = widgets.length > 0 && widgets[0] && widgets[0].actionService ? widgets[0].actionService : cyberghost
+        let widgets = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : [root]
+        let owner = widgets.length > 0 && widgets[0] && widgets[0].actionService ? widgets[0].actionService : cyberghost
         owner.toggle()
       }
     }
@@ -206,12 +205,12 @@ Ui.BarWidget {
       loops: Animation.Infinite
       NumberAnimation {
         to: 0.25
-        duration: 500
+        duration: Style.duration(500)
         easing.type: Easing.InOutSine
       }
       NumberAnimation {
         to: 1.0
-        duration: 500
+        duration: Style.duration(500)
         easing.type: Easing.InOutSine
       }
     }

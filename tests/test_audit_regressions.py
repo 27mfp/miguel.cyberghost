@@ -199,11 +199,13 @@ def test_authentication_error_recommends_native_linking(status):
 
 
 def test_reset_cleanup_precedes_plugin_removal():
-    source = (ROOT / "fresh-install.sh").read_text()
-    assert source.index('bash "$SOURCE_DIR/scripts/remove-legacy-helper.sh" --yes --strict') < source.index(
-        'omarchy plugin disable "$PLUGIN_ID"'
-    )
+    # The destructive reset now lives in install.sh --fresh; fresh-install.sh
+    # is a deprecated wrapper. The ordering guarantee moved with the code.
+    source = (ROOT / "install.sh").read_text()
+    fresh = source[source.index("fresh_install() {") :]
+    assert fresh.index('remove-legacy-helper.sh" --yes --strict') < fresh.index("remove_plugin_registration")
     assert "/usr/bin/sudo /usr/bin/rm -f" not in source
+    assert 'install.sh" --fresh' in (ROOT / "fresh-install.sh").read_text()
 
 
 @pytest.mark.parametrize("custom", ["helper", "rule"])

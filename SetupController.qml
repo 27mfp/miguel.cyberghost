@@ -111,7 +111,7 @@ Item {
     stdout: SplitParser {
       onRead: function (line) {
         try {
-          var step = JSON.parse(String(line).substring(0, 256))
+          let step = JSON.parse(String(line).substring(0, 256))
           if (typeof step.progress === "number" && typeof step.total === "number")
             root.syncProgress = step.progress + "/" + step.total
         } catch (e) {
@@ -181,7 +181,7 @@ Item {
         root.registered()
         root.sendNotification("CyberGhost VPN", "Account linked. Setup will be rechecked.", "normal")
       } else {
-        var cleanErr = ServiceUtils.cleanProcessError(err || out, "Could not link account.")
+        let cleanErr = ServiceUtils.cleanProcessError(err || out, "Could not link account.")
         root.setupMsg = cleanErr
       }
       root.registerOutput = ""
@@ -203,7 +203,7 @@ Item {
     onExited: function (exitCode) {
       var d = {}
       try {
-        var text = String(root.checkOutput || "{}").substring(0, 4096)
+        let text = String(root.checkOutput || "{}").substring(0, 4096)
         if (exitCode === 0)
           d = JSON.parse(text)
       } catch (e) {

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/27mfp/miguel.cyberghost/security/advisories/new
+    about: Report credential, IPC or NetworkManager issues privately.
+  - name: Contributing and local checks
+    url: https://github.com/27mfp/miguel.cyberghost/blob/master/CONTRIBUTING.md
+    about: Setup, test commands and conventions.
+  - name: Omarchy itself
+    url: https://github.com/basecamp/omarchy/issues
+    about: Shell, bar, plugin loader and packaging issues outside this plugin.

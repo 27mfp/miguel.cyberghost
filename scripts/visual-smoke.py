@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TARGET = "test.cyberghost-release-171"
+TARGET = "test.cyberghost-release-180"
 
 
 def run(tool, *args, data=None):
@@ -102,57 +102,75 @@ def main():
         ipc("scenario", "disconnected")
         run("omarchy-shell", "shell", "summon", TARGET, "{}")
         wait_for(lambda state: state["opened"])
-        if snapshot()["controls"]["advancedToggle"]["selected"]:
-            activate("advancedToggle")
         ready = capture(directory, "01-ready")
+        require(ready["controls"]["vpnPanelViewport"]["height"] > 0, "Preview viewport is empty")
         require(
             not ready["controls"].get("statusBanner", {}).get("visible", False),
             "Ready preview contains an unexpected status banner",
         )
-        activate("countryPicker")
-        wait_for(lambda state: state["controls"]["countryPicker"]["popupOpen"])
+        activate("dashboardCountryPicker")
+        wait_for(lambda state: state["controls"]["dashboardCountryPicker"]["popupOpen"])
         run("wtype", "Spain")
         capture(directory, "02-filtered-country")
         run("wtype", "-k", "Down", "-k", "Return")
         wait_for(lambda state: state["country"] == "ES")
         require(not snapshot()["connected"], "Country selection connected without consent")
-        activate("countryPicker")
-        wait_for(lambda state: state["controls"]["countryPicker"]["popupOpen"])
+        activate("dashboardCountryPicker")
+        wait_for(lambda state: state["controls"]["dashboardCountryPicker"]["popupOpen"])
         run("omarchy-shell", "shell", "hide", TARGET)
         run("omarchy-shell", "shell", "summon", TARGET, "{}")
-        wait_for(lambda state: not state["controls"]["countryPicker"]["popupOpen"])
-        activate("privacyToggle")
-        wait_for(lambda state: state["controls"]["ipValue"]["text"] == "Hidden")
+        wait_for(lambda state: not state["controls"]["dashboardCountryPicker"]["popupOpen"])
+        activate("summaryCompactPrivacy")
+        wait_for(lambda state: state["controls"]["summaryCompactIp"]["text"] == "Hidden")
         capture(directory, "03-private")
-        activate("privacyToggle")
-        activate("copyIpButton")
+        activate("summaryCompactPrivacy")
         copied = True
-        wait_for(lambda state: state["controls"]["copyIpButton"]["tooltipText"] == "Copied")
+        activate("summaryCompactCopy")
+        wait_for(lambda state: state["controls"]["summaryCompactCopy"]["tooltipText"] == "Copied")
         require(
             run("wl-paste", "--no-newline").decode() == "203.0.113.42", "Clipboard did not receive the displayed IP"
         )
-        activate("advancedToggle")
-        expanded = wait_for(lambda state: state["controls"]["advancedToggle"]["selected"])
-        require(
-            expanded["controls"]["countryPicker"]["y"] == ready["controls"]["countryPicker"]["y"],
-            "Opening Settings moved the location picker",
-        )
-        capture(directory, "04-advanced")
+        activate("vpnSettingsShortcut")
+        expanded = wait_for(lambda state: state["controls"]["vpnPrivacySetting"]["visible"])
+        activate("vpnPrivacySetting")
+        wait_for(lambda state: state["hideDetails"])
+        activate("vpnPrivacySetting")
+        wait_for(lambda state: not state["hideDetails"])
+        capture(directory, "04-settings")
         for name in ("modePicker", "protocolPicker", "streamingPicker", "serverPicker"):
             require(name not in expanded["controls"], "Unsupported vendor control is exposed: " + name)
         require(expanded["protocol"] == "wireguard" and expanded["mode"] == "traffic", "Wrong release mode")
-        activate("advancedToggle")
+        activate("vpnBack")
         capture(directory, "05-wireguard-only")
+        require(ipc("focus", "vpnPrimaryAction") == "true", "Cannot focus primary action")
+        capture(directory, "16-primary-focused")
+        activate("vpnOpenDetails")
+        details = capture(directory, "17-details")
+        require(details["controls"]["privacyToggle"]["visible"], "Details privacy control is hidden")
+        require(details["controls"]["copyIpButton"]["visible"], "Details copy control is hidden")
+        activate("vpnAccountShortcut")
+        capture(directory, "18-account")
+        activate("vpnBack")
         shortcut("t")  # Synthetic service only: no NetworkManager profile is created.
         connected = wait_for(lambda state: state["connected"])
-        require(connected["controls"]["vpnToggle"]["checked"], "Header switch did not follow the connection")
+        require(
+            connected["controls"]["vpnPrimaryAction"]["text"] == "Disconnect",
+            "Primary action did not follow the connection",
+        )
         require(connected.get("activeCountry") == connected["country"], "Synthetic active country is stale")
-        require(connected["controls"]["locationHeader"]["text"] == "NEXT LOCATION", "Connected location label missing")
+        require(
+            connected["controls"]["dashboardLocationLabel"]["text"] == "NEXT LOCATION",
+            "Connected location label missing",
+        )
         capture(directory, "06-connected")
         shortcut("t")
         wait_for(lambda state: not state["connected"])
         ipc("scenario", "narrow")
-        capture(directory, "07-narrow")
+        narrow = capture(directory, "07-narrow")
+        require(
+            narrow["controls"]["dashboardCountryPicker"]["value"] == narrow["country"],
+            "Country picker stopped following the service after user selection",
+        )
         ipc("scenario", "stale")
         capture(directory, "08-stale")
         for index, scenario in enumerate(("connecting", "unknown", "error", "switch", "sampling"), 9):
@@ -160,19 +178,27 @@ def main():
             state = capture(directory, f"{index:02d}-{scenario}")
             if scenario in ("unknown", "error"):
                 require(state["controls"]["statusBanner"]["visible"], "Recovery notice is missing")
-                require(state["controls"]["statusRecheck"]["visible"], "Recheck action is missing")
-                previous = state["recheckCalls"]
-                activate("statusRecheck")
-                wait_for(lambda value, previous=previous: value["recheckCalls"] > previous)
+                if scenario == "unknown":
+                    require(state["controls"]["statusRecheck"]["visible"], "Recheck action is missing")
+                    previous = state["recheckCalls"]
+                    activate("statusRecheck")
+                    wait_for(lambda value, previous=previous: value["recheckCalls"] > previous)
+                else:
+                    activate("dismissNotice")
+                    wait_for(lambda value: not value["controls"]["statusBanner"]["visible"])
             if scenario == "connecting":
-                require(state["controls"]["vpnToggle"]["busy"], "Connecting switch is not busy")
-                require(not state["controls"]["countryPicker"]["enabled"], "Busy location remains editable")
+                require(not state["controls"]["vpnPrimaryAction"]["enabled"], "Connecting action is not busy")
+                require(not state["controls"]["dashboardCountryPicker"]["enabled"], "Busy location remains editable")
             if scenario == "switch":
-                require(state["controls"]["locationHeader"]["text"] == "NEXT LOCATION", "Next location is ambiguous")
-                activate("switchCountryButton")
+                require(
+                    state["controls"]["dashboardLocationLabel"]["text"] == "NEXT LOCATION", "Next location is ambiguous"
+                )
+                activate("vpnPrimaryAction")
                 wait_for(lambda value: value["activeCountry"] == "ES")
             if scenario == "sampling":
-                require(state["controls"]["trafficSampling"]["visible"], "Sampling explanation missing")
+                activate("vpnOpenDetails")
+                detail = capture(directory, "19-sampling-details")
+                require(detail["controls"]["trafficSampling"]["visible"], "Sampling explanation missing")
         ipc("scenario", "short-setup")
         short = capture(directory, "14-short-setup")
         viewport = short["controls"]["vpnPanelViewport"]
@@ -204,7 +230,8 @@ def main():
                 run("wl-copy", "--clear")
         run("omarchy-shell", "shell", "hide", TARGET)
         print(f"Artifacts: {directory}")
-    print(f"PASS: real-shell interactions, clipboard restoration and 15 captures. Review images in {directory}")
+    count = len(list(directory.glob("*.png")))
+    print(f"PASS: real-shell interactions, clipboard restoration and {count} captures. Review images in {directory}")
 
 
 if __name__ == "__main__":

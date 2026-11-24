@@ -85,6 +85,16 @@ TestCase {
     }
   }
 
+  Component {
+    id: technicalDetailsFactory
+    Item { objectName: "lazyTechnicalDetails"; implicitHeight: 75 }
+  }
+
+  Component {
+    id: accountDetailsFactory
+    Item { objectName: "lazyAccountDetails"; implicitHeight: 65 }
+  }
+
   function init() {
     mockService.readyNm = true
     mockService.readyNetwork = true
@@ -295,5 +305,29 @@ TestCase {
     compare(mockService.connectCalls, 1)
     compare(mockService.lastConnectTarget, "ES")
     mockService.countryName = "Portugal"
+  }
+
+  function test_disclosuresLoadOnlyWhenOpenedAndUnloadWhenClosed() {
+    mockService.readyCreds = true
+    var controls = createTemporaryObject(preferencesFactory, this)
+    controls.connectionDetails = technicalDetailsFactory
+    controls.accountSection = accountDetailsFactory
+
+    compare(controls.detailsExpanded, false)
+    compare(controls.accountExpanded, false)
+    compare(findChild(controls, "lazyTechnicalDetails"), null)
+    compare(findChild(controls, "lazyAccountDetails"), null)
+
+    findChild(controls, "detailsToggle").clicked()
+    tryVerify(function() { return findChild(controls, "lazyTechnicalDetails") !== null })
+    compare(findChild(controls, "lazyAccountDetails"), null)
+
+    findChild(controls, "accountToggle").clicked()
+    tryVerify(function() { return findChild(controls, "lazyAccountDetails") !== null })
+    findChild(controls, "detailsToggle").clicked()
+    tryCompare(controls, "detailsExpanded", false)
+    // Loader destroys the previous item on a subsequent Qt event turn.
+    tryVerify(function() { return findChild(controls, "lazyTechnicalDetails") === null })
+    verify(findChild(controls, "lazyAccountDetails") !== null)
   }
 }
