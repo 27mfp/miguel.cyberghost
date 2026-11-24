@@ -1,8 +1,8 @@
 # Development and CI tooling. The plugin's only runtime Python dependency is
 # `requests`, which Omarchy installs as python-requests; it is listed here so
 # CI and Dependabot track it.
-mypy==1.18.2
-pytest>=8,<10
-pytest-cov>=6,<8
-requests>=2.31
-ruff==0.16.9
+mypy==2.4.1
+pytest>=9.2.0,<10
+pytest-cov>=7.1.0,<8
+requests>=2.34.2
+ruff==0.17.6
