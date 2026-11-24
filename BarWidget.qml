@@ -5,6 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
+import "ServiceUtils.js" as ServiceUtils
 
 Ui.BarWidget {
   id: root
@@ -126,23 +127,18 @@ Ui.BarWidget {
     bar: root.bar
     active: root.opened
     Accessible.name: tooltipText
-    tooltipText: {
-      if (!cyberghost.setupDone)
-        return "CyberGhost VPN: setup incomplete — click for steps"
-      if (cyberghost.statusUnknown)
-        return "CyberGhost VPN: status unavailable — click to reconcile"
-      if (cyberghost.legacyTunnel)
-        return "CyberGhost VPN: previous helper tunnel active — click to disconnect"
-      if (cyberghost.connecting)
-        return "CyberGhost VPN: Connecting to " + cyberghost.countryName + " (" + cyberghost.country + ")…"
-      if (cyberghost.disconnecting)
-        return "CyberGhost VPN: Disconnecting…"
-      if (cyberghost.connected) {
-        let ipPart = (!cyberghost.hideDetails && cyberghost.publicIp !== "") ? (" • " + cyberghost.publicIp) : ""
-        return "CyberGhost VPN: Connected" + ipPart
-      }
-      return "CyberGhost VPN: Disconnected (Click to open)"
-    }
+    tooltipText: ServiceUtils.barTooltip({
+      setupDone: cyberghost.setupDone,
+      statusUnknown: cyberghost.statusUnknown,
+      legacyTunnel: cyberghost.legacyTunnel,
+      connecting: cyberghost.connecting,
+      disconnecting: cyberghost.disconnecting,
+      connected: cyberghost.connected,
+      hideDetails: cyberghost.hideDetails,
+      publicIp: cyberghost.publicIp,
+      country: cyberghost.country,
+      countryName: cyberghost.countryName
+    })
 
     iconComponent: Component {
       Item {

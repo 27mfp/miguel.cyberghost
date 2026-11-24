@@ -212,6 +212,38 @@ def test_ui_privilege_boundary_contract():
     assert "https://ipwho.is/," not in qml
 
 
+def test_country_tables_stay_in_sync_with_the_qml_selector():
+    """Countries.js and the backend city maps are one logical table.
+
+    The UI must not offer a country the backend cannot map to a city, and the
+    backend must not silently grow a country the UI cannot select. ``UK`` is
+    the single documented alias: Countries.js normalizes it to ``GB``.
+    """
+    import re
+
+    countries = set(re.findall(r'"code": "([A-Z]{2})"', (ROOT / "Countries.js").read_text()))
+    expected = countries | {"UK"}
+    assert len(countries) == 94
+    assert set(runner.CITY_MAP) == expected
+    assert set(runner.DIALUP_CITY_MAP) == expected
+    # Every mapped value must be a safe CLI slug, never a display label.
+    for table in (runner.CITY_MAP, runner.DIALUP_CITY_MAP):
+        for code, slug in table.items():
+            assert re.fullmatch(r"[a-z]+", slug), f"{code} has an unsafe city slug: {slug!r}"
+
+
+def test_bar_widget_ipc_contract():
+    """The bar entry point owns the documented IPC surface and election guard."""
+    bar = (ROOT / "BarWidget.qml").read_text()
+    assert "IpcHandler" in bar
+    for method in ("open", "close", "show", "hide", "toggle", "refresh", "connect", "disconnect"):
+        assert f"function {method}(" in bar
+    # Only the elected first widget answers IPC, while every monitor keeps its
+    # own click target and panel anchor.
+    assert "moduleWidgets(root.moduleName)[0] === root" in bar
+    assert "ServiceUtils.barTooltip" in bar
+
+
 def test_ui_contract_uses_json_actions_and_separate_streaming_stderr():
     service = (ROOT / "Service.qml").read_text()
     assert '"--json"' in service
