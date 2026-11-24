@@ -6,6 +6,12 @@ Base: versão 1.7.1, commit 581755f; análise de 6 de novembro de 2026. Este fic
 
 CG-01 e CG-02 foram tratados no patch de compatibilidade: Commons.Color explícito, id do campo de password sem colisão, cast do painel e declarações de bloco corrigidas. Verificação local em Omarchy 4.5.0-3 / Qt 6.12.0: 233 testes Python, 76 entradas Qt UI e 13 utilitários; zero avisos de cor indefinida; lint nativo com zero diagnósticos de projeto e as mesmas 53 exceções de metadados. Os itens CG-03 a CG-10 continuam por implementar/validar. Esta evidência não certifica ligações VPN reais nem serviço único.
 
+Pré-visualização local posterior: o popup foi corrigido para abrir sob o ícone. A primeira etapa visual de CG-07/08/09 implementa resumo de estado observado, destino separado, detalhes/conta expansíveis, árvore visual carregada na primeira abertura e textos pt-PT/en. Estes itens continuam sujeitos à integração do serviço partilhado (CG-03/04), validação em vários monitores e testes de ligação/teclado/temas antes de serem considerados totalmente concluídos.
+
+Segunda pré-visualização local (redesenho integral da apresentação): `VpnDashboard.qml` substitui a antiga composição de cartões por um estado central (`ConnectionStage.qml`), uma ação principal e um rodapé IP compacto com privacidade/cópia. As vistas de conta, estatísticas e definições são carregadas quando escolhidas. A UI preserva os estados de recuperação, as traduções e o carregamento tardio da shell. O serviço de VPN e os contratos do runner não foram alterados; a validação de ligações reais e vários monitores mantém-se pendente.
+
+Terceira iteração de UX: CTA adaptativo (Ligar/Trocar/Desligar), um menu secundário com vista de detalhes e regresso por Escape, Hero compacto, favoritos/recentes persistidos no `shell.json` através de códigos estritos e histórico apenas depois de observação válida de NetworkManager. Onboarding mostra a etapa pendente. O serviço expõe a hora da última resposta de estado aceite, que é reposta quando o estado passa a desconhecido. O IP fica oculto por omissão em instalações novas; definições existentes são respeitadas. Continuação sujeita a validação de UI real e VPN real.
+
 **Comportamento pretendido**
 
 O utilizador consegue configurar a conta, escolher um país, ligar, trocar de país e desligar através de um painel compacto. O painel mostra o estado observado e permite recuperar de falhas sem adivinhar o que aconteceu. Uma segunda barra ou o restart da shell não inicia outra ligação.

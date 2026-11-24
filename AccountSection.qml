@@ -1,7 +1,9 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "Translations.js" as Translations
 
 // Signed-in identity and logout. Only the plugin's own login (native.ini) can
 // be logged out here; an account read from the vendor CLI's config.ini is
@@ -11,6 +13,10 @@ Column {
   required property var service
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
+  property bool showHeading: true
+  property bool relinking: false
+  readonly property bool needsRelink: pluginLogin && !service.syncingServers && service.serverList === "probe"
+  readonly property string uiLanguage: typeof Commons.I18n !== "undefined" ? Commons.I18n.language : "en"
   readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property bool pluginLogin: service.accountSource === "native"
   // Two-step confirmation, disarmed automatically after a few seconds.
@@ -29,7 +35,14 @@ Column {
     disarm.stop()
     service.logout()
   }
-  onVisibleChanged: armed = false
+  function clearPassword() {
+    const form = relinkLoader.item as SetupCard
+    if (form) form.clearPassword()
+  }
+  onVisibleChanged: {
+    armed = false
+    if (!visible) { relinking = false; clearPassword() }
+  }
 
   Timer {
     id: disarm
@@ -38,12 +51,14 @@ Column {
   }
 
   PanelSeparator {
+    visible: root.showHeading
     width: parent.width
     foreground: root.foreground
   }
 
   PanelSectionHeader {
-    text: "ACCOUNT"
+    visible: root.showHeading
+    text: Translations.t("account.heading", root.uiLanguage)
     foreground: root.foreground
     fontFamily: root.fontFamily
   }
@@ -78,7 +93,7 @@ Column {
         objectName: "accountName"
         width: parent.width
         // An email address is personal; privacy mode masks it too.
-        text: root.service.hideDetails ? "Hidden" : (root.service.accountName || "CyberGhost account")
+        text: root.service.hideDetails ? Translations.t("account.hidden", root.uiLanguage) : (root.service.accountName || Translations.t("account.generic", root.uiLanguage))
         textFormat: Text.PlainText
         color: root.foreground
         font.family: root.fontFamily
@@ -90,13 +105,13 @@ Column {
         width: parent.width
         // A live session reads CyberGhost's own server list; once it expires
         // connects still work by probing, and linking again refreshes it.
-        // Short enough to fit the panel's narrowest width without eliding.
-        text: (root.pluginLogin ? "This device" : "CyberGhost CLI config") + (root.service.syncingServers ? " · syncing servers " + root.service.syncProgress : (root.service.serverList === "live" ? " · live servers" : (root.service.serverList === "probe" && root.pluginLogin ? " · relink to refresh servers" : "")))
+        // Wrap status independently; actionable relinking guidance lives below.
+        text: (root.pluginLogin ? Translations.t("account.device", root.uiLanguage) : Translations.t("account.cli", root.uiLanguage)) + (root.service.syncingServers ? Translations.t("account.sync", root.uiLanguage, root.service.syncProgress) : (root.service.serverList === "live" ? Translations.t("account.live", root.uiLanguage) : ""))
         textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
+        wrapMode: Text.WordWrap
       }
     }
 
@@ -106,7 +121,7 @@ Column {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       visible: root.pluginLogin
-      text: root.armed ? (root.service.connected ? "Disconnect & log out" : "Confirm log out") : "Log out"
+      text: root.armed ? (root.service.connected ? Translations.t("account.disconnectLogout", root.uiLanguage) : Translations.t("account.confirm", root.uiLanguage)) : Translations.t("account.logout", root.uiLanguage)
       iconText: ""
       fontSize: Style.font.caption
       horizontalPadding: Style.space(8)
@@ -116,9 +131,74 @@ Column {
       enabled: !root.service.busy
       foreground: root.armed ? Commons.Color.urgent : root.foreground
       fontFamily: root.fontFamily
-      tooltipText: root.armed ? "Click again to forget this device's CyberGhost login" : "Forget this device's CyberGhost login. You will need your password to link it again."
+      tooltipText: root.armed ? Translations.t("account.confirmTooltip", root.uiLanguage) : Translations.t("account.logoutTooltip", root.uiLanguage)
       Accessible.name: text
       onClicked: root.requestLogout()
+    }
+  }
+
+  Text {
+    objectName: "accountRelinkHint"
+    visible: root.needsRelink || root.relinking
+    width: parent.width
+    text: Translations.t("account.relinkHint", root.uiLanguage)
+    textFormat: Text.PlainText
+    color: root.foreground
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    wrapMode: Text.WordWrap
+  }
+
+  Button {
+    objectName: "accountRelink"
+    visible: root.needsRelink && !root.relinking
+    width: parent.width
+    text: Translations.t("account.relinkAction", root.uiLanguage)
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    fontSize: Style.font.bodySmall
+    bordered: true
+    focusable: true
+    Accessible.name: text
+    onClicked: {
+      root.relinking = true
+    }
+  }
+
+  Loader {
+    id: relinkLoader
+    width: parent.width
+    active: root.relinking
+    visible: root.relinking
+    onLoaded: {
+      const form = item as SetupCard
+      if (form) form.focusTarget.forceActiveFocus()
+    }
+    sourceComponent: Component {
+      SetupCard {
+        width: parent.width
+        service: root.service
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        relinking: true
+      }
+    }
+  }
+
+  Button {
+    objectName: "accountRelinkCancel"
+    visible: root.relinking
+    width: parent.width
+    enabled: !root.service.regBusy
+    text: Translations.t("account.cancelRelink", root.uiLanguage)
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    fontSize: Style.font.bodySmall
+    focusable: true
+    Accessible.name: text
+    onClicked: {
+      root.clearPassword()
+      root.relinking = false
     }
   }
 }

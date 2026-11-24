@@ -2,7 +2,7 @@
 # Explicit, synthetic-data preview in the existing Omarchy shell.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-ID="test.cyberghost-release-171"
+ID="test.cyberghost-release-172"
 TARGET="$HOME/.config/omarchy/plugins/$ID"
 case "${1:---help}" in
   --install)

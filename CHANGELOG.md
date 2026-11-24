@@ -2,6 +2,10 @@
 
 ## 1.7.2 — Unreleased
 
+- Keep the primary action readable on keyboard focus and hover; move favorites beside the country picker and populated shortcuts below the main action.
+- Add a working display-privacy preference to Settings, retain copy/privacy controls in Details, and label credential fields persistently.
+- Simplify Account headings and wrap server-list guidance; offer explicit account relinking without logging out or forgetting saved credentials.
+- Refresh the synthetic real-shell visual fixture and smoke test for the current dashboard navigation and bounded panel height.
 - Split the 2,600-line backend into the `cyberghost/` package (constants, system, validation, transport, wireguard, credentials, vendor, server_data, server_selection, networkmanager, setup, cli). `cyberghost_runner.py` remains the stable CLI entry point and compatibility facade: it re-exports the historical surface and forwards attribute patches to the owning submodule, so QML and the existing suite keep their contract.
 - Move pure status sampling, GeoIP parsing, connect-result normalization and the bar tooltip into `ServiceUtils.js`; cover them directly in Qt tests. `Service.qml` is ~120 lines smaller and no longer carries rate-sampling math.
 - Enforce the `Countries.js` ↔ backend city-table relationship in `tests/test_contracts.py`, with `UK → GB` as the only documented alias. Keep the QML components at the plugin root: the Qt tests and visual fixture import the root as a module, so a `components/` move would be a breaking change without runtime benefit.
@@ -11,6 +15,19 @@
 - Resolve Omarchy palette colors explicitly through `Commons.Color`, avoiding the Qt 6.12 `Color` type collision and restoring setup error/status colors.
 - Rename the password-field id so it no longer shadows the host control’s password property; retain masked input, focus navigation and password clearing.
 - Type the loaded panel before injecting its host properties and use block-scoped declarations where Qt 6.12 diagnoses hoisting.
+- Fix the real-shell panel anchor on Qt 6.12: cast the dynamically loaded item to `Ui.Panel` so late host-bar injection works, instead of opening the popup at the screen's top-left fallback.
+- Match the Omarchy 4.5 bar icon sizing and global reduced-motion setting, make the VPN switch keyboard-focusable, and show legacy-tunnel notices as warnings.
+- Rebuild the popup layout around a new `VpnDashboard.qml` and `ConnectionStage.qml`: one central verified-state display, one prominent connect/disconnect action, country selection, a compact public-IP utility row, and an on-demand details/account/settings menu. Selecting a country never connects by itself.
+- Treat connecting/disconnecting/unknown/legacy/stale as distinct UI states; show progress on the primary action and a single recovery action for unverified status. Respect both global and plugin-specific reduced-motion preferences.
+- Build the visual panel on first open using Omarchy 4.5 `KeyboardPanel.content`, retain service/IPC while closed and limit the panel height for shorter screens.
+- Add plugin-owned English and Portuguese (Portugal) interface strings tied to the live Omarchy language setting; preserve raw backend errors when no safe translation exists.
+- Preserve ordinary Tab navigation through controls and offer Ctrl+Tab/Ctrl+Shift+Tab to switch adjacent Omarchy popouts while the viewport has focus.
+- Make the main action context-aware: connect when disconnected, switch to the newly selected country when an observed VPN tunnel is active, or disconnect when no switch is pending. Retain a separate disconnect button during pending switches.
+- Compress the connection hero and move Account and Settings into an overflow menu, with a dedicated details view and Back/Escape navigation.
+- Replace the overflow menu with two direct, keyboard-accessible Account and Settings icons in the panel header. Highlight the active subview, keep Details as the dedicated main-page action, and use one contextual heading with a back icon on subpages.
+- Add locally persisted, validated country favorites (up to 8) and recent verified NetworkManager destinations (up to 5). Selecting a shortcut never starts a VPN connection; recent destinations are based on observed tunnel state.
+- Guide initial setup one requirement at a time; surface only the current step and summarize completed checks. The details screen shows the last successful status observation rather than the panel-open time.
+- Hide the public IP by default for fresh installations; existing saved visibility preferences continue to apply.
 - Prepare the Omarchy 4.5 follow-up plan with explicit acceptance criteria for a shared service, lazy UI and native integration. This patch retains the current per-widget architecture.
 
 ## 1.7.1

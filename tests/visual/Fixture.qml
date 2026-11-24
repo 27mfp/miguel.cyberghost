@@ -8,7 +8,7 @@ import "ServiceUtils.js" as Logic
 // Only this synthetic service replaces the network/account boundary.
 Plugin.Panel {
   id: preview
-  moduleName: "test.cyberghost-release-171"
+  moduleName: "test.cyberghost-release-172"
   ipcTarget: moduleName
   cyberghost: sample
   settings: ({
@@ -42,7 +42,7 @@ Plugin.Panel {
   function focusControl(object) {
     if (!object)
       return false
-    if (object.activeFocusOnTab) {
+    if (object.activeFocusOnTab || object.objectName === "vpnPanelViewport") {
       object.forceActiveFocus()
       return true
     }
@@ -81,6 +81,8 @@ Plugin.Panel {
         x: point.x,
         y: point.y,
         text: item.text && (item.objectName === "accountPassword" || item.objectName === "accountUsername") ? "<redacted>" : (item.text || ""),
+        value: item.objectName === "dashboardCountryPicker" ? item.value : "",
+        activeFocus: item.activeFocus === true,
         selected: item.selected === true,
         checked: item.checked === true,
         tooltipText: item.tooltipText || "",
@@ -95,7 +97,7 @@ Plugin.Panel {
   }
 
   IpcHandler {
-    target: "test.cyberghost-release-171"
+    target: "test.cyberghost-release-172"
     function snapshot(): string {
       return preview.snapshot()
     }
@@ -103,6 +105,7 @@ Plugin.Panel {
       return preview.focusControl(preview.find(name))
     }
     function scenario(name: string): void {
+      if (preview.visualContent) preview.visualContent.dashboard.goTo("")
       sample.connecting = name === "connecting"
       sample.disconnecting = false
       sample.busy = sample.connecting
@@ -110,6 +113,7 @@ Plugin.Panel {
       sample.statusProbeError = ""
       sample.actionStatus = ""
       sample.lastError = name === "error" ? "Could not reach the VPN server. Your connection was not changed." : ""
+      sample.serverList = name === "relink" ? "probe" : "live"
       sample.hideDetails = false
       sample.setCountry("PT")
       sample.rxRate = name === "sampling" ? -1 : 505036.8
@@ -127,7 +131,7 @@ Plugin.Panel {
       sample.tunnelStale = name === "stale"
       sample.connected = name === "connected" || name === "stale" || name === "sampling"
       preview.preferredContentWidth = name === "narrow" ? 280 : 380
-      preview.maximumContentHeight = name === "short-setup" ? 260 : 0
+      preview.maximumContentHeight = name === "short-setup" ? 260 : 620
       var setup = name === "setup" || name === "short-setup"
       sample.setupCardState = setup ? "first-run" : "ready"
       sample.setupDone = !setup
@@ -144,6 +148,10 @@ Plugin.Panel {
   QtObject {
     id: sample
     property bool statusUnknown: false
+    property string rawStatusText: "{\"connected\":false}"
+    property real statusObservedAt: Date.now()
+    property var favoriteCountries: []
+    property var recentCountries: []
     property int recheckCalls: 0
     property bool connected: false
     property bool connecting: false
@@ -159,6 +167,10 @@ Plugin.Panel {
     property bool readyCreds: true
     property string accountName: "user@example.com"
     property string accountSource: "native"
+    property string serverList: "live"
+    property bool syncingServers: false
+    property string syncProgress: ""
+    property bool depsBusy: false
     property string actionKind: ""
     property bool resolvingAutomaticServer: false
     property string activeCountry: ""
@@ -218,6 +230,7 @@ Plugin.Panel {
     property string publicOrg: "Example Network — synthetic organization for wrapping checks"
     property string transferText: "↓ 12 MiB · ↑ 3 MiB"
     property string endpoint: "198.51.100.20:1337"
+    property string activeServer: "lisbon-s405-i19"
     onActiveCountryChanged: {
       publicCountry = activeCountry || "PT"
       publicCity = activeCountry === "ES" ? "Madrid" : "Lisbon"
@@ -227,6 +240,15 @@ Plugin.Panel {
       country = c.code
       countryName = c.name
       countryFlag = c.flag
+      return true
+    }
+    function toggleFavorite(code) {
+      if (favoriteCountries.indexOf(code) >= 0)
+        favoriteCountries = favoriteCountries.filter(function(value) { return value !== code })
+      else if (favoriteCountries.length < 8)
+        favoriteCountries = favoriteCountries.concat([code])
+      else return false
+      return true
     }
     function setProtocol(value) {
       protocol = value

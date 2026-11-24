@@ -21,7 +21,7 @@
     "defaults": {
       "refreshIntervalSec": 8,
       "defaultCountry": "PT",
-      "hideDetails": false,
+      "hideDetails": true,
       "reduceMotion": false
     },
     "schema": [
@@ -45,7 +45,7 @@
         "type": "boolean",
         "label": "Hide IP and connection details",
         "description": "Mask IP, location, provider and session info in the widget panel.",
-        "defaultValue": false
+        "defaultValue": true
       },
       {
         "key": "reduceMotion",

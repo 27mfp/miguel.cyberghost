@@ -4,6 +4,7 @@ Item {
   property string label: ""
   property string placeholderText: ""
   property string value: ""
+  property bool showLabel: true
   property var options: []
   property bool popupOpen: false
   property int popupMinHeight: 0

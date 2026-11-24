@@ -6,6 +6,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "Countries.js" as Countries
 import "ServiceUtils.js" as ServiceUtils
+import "Translations.js" as Translations
 
 // Observed connection data, not a protection claim. Laid out like Omarchy's
 // network panel: dimmed labels, right-aligned values, "--" placeholders so the
@@ -15,6 +16,11 @@ Column {
   required property var service
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
+  readonly property string uiLanguage: typeof Commons.I18n !== "undefined" ? Commons.I18n.language : "en"
+  // Compact instances live behind the new disclosure, where the summary
+  // already supplies the IP, location and privacy controls.
+  property bool technicalOnly: false
+  property bool showHeading: true
   property bool ipCopied: false
   property bool copyTimedOut: false
   readonly property bool hidden: service.hideDetails
@@ -34,7 +40,7 @@ Column {
   }
 
   function masked(value, fallback) {
-    return hidden ? "Hidden" : (value || fallback)
+    return hidden ? Translations.t("details.hidden", uiLanguage) : (value || fallback)
   }
 
   Process {
@@ -68,21 +74,23 @@ Column {
   }
 
   PanelSeparator {
+    visible: root.showHeading
     width: parent.width
     foreground: root.foreground
   }
 
   Item {
     width: parent.width
-    implicitHeight: Math.max(sectionHeader.implicitHeight, privacy.implicitHeight)
+    implicitHeight: Math.max(root.showHeading ? sectionHeader.implicitHeight : 0, privacy.implicitHeight)
 
     PanelSectionHeader {
       id: sectionHeader
+      visible: root.showHeading
       objectName: "detailsHeader"
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       // The address the internet sees: the tunnel's exit, or your own ISP's.
-      text: root.tunnel ? "VPN CONNECTION" : "YOUR CONNECTION"
+      text: Translations.t(root.tunnel ? "details.vpn" : "details.your", root.uiLanguage)
       foreground: root.foreground
       fontFamily: root.fontFamily
     }
@@ -96,8 +104,8 @@ Column {
       focusable: true
       enabled: !root.hidden && root.service.publicIp !== "" && !clipboardProcess.running
       iconText: root.ipCopied ? "" : ""
-      tooltipText: root.ipCopied ? "Copied" : "Copy public IP (c)"
-      Accessible.name: root.ipCopied ? "Public IP copied" : "Copy public IP"
+      tooltipText: Translations.t(root.ipCopied ? "details.copied" : "details.copy", root.uiLanguage)
+      Accessible.name: Translations.t(root.ipCopied ? "details.publicIpCopied" : "details.copyPublicIp", root.uiLanguage)
       foreground: root.foreground
       fontFamily: root.fontFamily
       onClicked: root.copyIp()
@@ -110,8 +118,8 @@ Column {
       anchors.verticalCenter: parent.verticalCenter
       focusable: true
       iconText: root.hidden ? "" : ""
-      tooltipText: (root.hidden ? "Show connection details" : "Hide connection details") + " (h)"
-      Accessible.name: root.hidden ? "Show connection details" : "Hide connection details"
+      tooltipText: Translations.t(root.hidden ? "details.show" : "details.hide", root.uiLanguage) + " (h)"
+      Accessible.name: Translations.t(root.hidden ? "details.show" : "details.hide", root.uiLanguage)
       foreground: root.foreground
       fontFamily: root.fontFamily
       onClicked: {
@@ -124,15 +132,20 @@ Column {
   // Long values (IP, place, provider, server) get full-width rows so the
   // address is never cut off; only the short transfer stats share a row.
   readonly property var rows: {
-    var list = [{ label: "IP", text: masked(service.publicIp, service.fetchingIp ? "Checking…" : "Unavailable"), name: "ipValue", lines: 1 }, { label: "Location", text: masked([service.publicCity, service.publicCountry ? Countries.countryName(service.publicCountry) : ""].filter(function (value) {
-            return !!value
-          }).join(", "), "Unavailable"), name: "locationValue", lines: 1 }, { label: "Provider", text: masked(service.publicOrg, "Unavailable"), name: "providerValue", lines: 2 }]
+    var list = []
+    if (!root.technicalOnly) {
+      list.push({ label: Translations.t("details.ip", root.uiLanguage), text: masked(service.publicIp, service.fetchingIp ? Translations.t("details.checking", root.uiLanguage) : Translations.t("details.unavailable", root.uiLanguage)), name: "ipValue", lines: 1 })
+      list.push({ label: Translations.t("details.location", root.uiLanguage), text: masked([service.publicCity, service.publicCountry ? Countries.countryName(service.publicCountry) : ""].filter(function (value) {
+        return !!value
+      }).join(", "), Translations.t("details.unavailable", root.uiLanguage)), name: "locationValue", lines: 1 })
+    }
+    list.push({ label: Translations.t("details.provider", root.uiLanguage), text: masked(service.publicOrg, Translations.t("details.unavailable", root.uiLanguage)), name: "providerValue", lines: 2 })
     if (tunnel)
-      list.push({ label: "Server", text: masked(service.activeServer || service.endpoint, "--"), name: "serverValue", lines: 1 })
+      list.push({ label: Translations.t("details.server", root.uiLanguage), text: masked(service.activeServer || service.endpoint, "--"), name: "serverValue", lines: 1 })
     return list
   }
 
-  readonly property var stats: tunnel ? [["Receiving", ServiceUtils.formatRate(service.rxRate), "receivingValue"], ["Sending", ServiceUtils.formatRate(service.txRate), "sendingValue"], ["Downloaded", ServiceUtils.formatBytes(service.rxBytes), "downloadedValue"], ["Uploaded", ServiceUtils.formatBytes(service.txBytes), "uploadedValue"]] : []
+  readonly property var stats: tunnel ? [[Translations.t("details.receiving", uiLanguage), ServiceUtils.formatRate(service.rxRate), "receivingValue"], [Translations.t("details.sending", uiLanguage), ServiceUtils.formatRate(service.txRate), "sendingValue"], [Translations.t("details.downloaded", uiLanguage), ServiceUtils.formatBytes(service.rxBytes), "downloadedValue"], [Translations.t("details.uploaded", uiLanguage), ServiceUtils.formatBytes(service.txBytes), "uploadedValue"]] : []
 
   Column {
     width: parent.width
@@ -189,7 +202,7 @@ Column {
     objectName: "trafficSampling"
     visible: root.tunnel && (root.service.rxRate < 0 || root.service.txRate < 0)
     width: parent.width
-    text: "Sampling traffic… Rates appear after two status checks."
+    text: Translations.t("details.sampling", root.uiLanguage)
     textFormat: Text.PlainText
     color: root.foreground
     opacity: 0.6

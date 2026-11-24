@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import "Countries.js" as Countries
+import "CountryRecents.js" as CountryRecents
 import "ServiceUtils.js" as ServiceUtils
 
 Item {
@@ -21,6 +22,10 @@ Item {
   property string country: "PT"
   property string countryName: "Portugal"
   property string countryFlag: "🇵🇹"
+  // Short canonical CSVs in shell settings; lists exposed to QML controls.
+  property var favoriteCountries: []
+  property var recentCountries: []
+  property string _recentObservedCountry: ""
   // `fastest` means the lowest-load live instance for the selected country.
   // A concrete value is an exact server name returned by the official CLI.
   property string serverSelection: "fastest"
@@ -87,6 +92,10 @@ Item {
   property int statusGeneration: 0
   property bool statusRefreshPending: false
   property bool statusUnknown: false
+  // Timestamp of the last accepted, current-generation status response.
+  property real statusObservedAt: 0
+  onStatusUnknownChanged: if (statusUnknown) statusObservedAt = 0
+  onStatusProbeErrorChanged: if (statusProbeError !== "") statusObservedAt = 0
   // A tunnel created by the pre-1.7 root helper. It can only be removed by
   // that installed helper, so it keeps its own disconnect path.
   property bool legacyTunnel: false
@@ -190,6 +199,36 @@ Item {
     if (settings && settings[key] === value)
       return
     settingChanged(key, value)
+  }
+
+  function toggleFavorite(code) {
+    const normalized = CountryRecents.normalizeCode(code)
+    if (!normalized)
+      return false
+    const current = CountryRecents.normalizeList(favoriteCountries, 8)
+    const index = current.indexOf(normalized)
+    if (index >= 0) {
+      current.splice(index, 1)
+    } else {
+      if (current.length >= 8)
+        return false
+      current.push(normalized)
+    }
+    favoriteCountries = current
+    persistSetting("favoriteCountries", CountryRecents.toCsv(current, 8))
+    return true
+  }
+
+  function recordVerifiedRecent() {
+    const normalized = CountryRecents.normalizeCode(activeCountry)
+    if (!normalized || _recentObservedCountry === normalized)
+      return
+    _recentObservedCountry = normalized
+    const updated = CountryRecents.addRecent(recentCountries, normalized)
+    if (updated.join(",") === CountryRecents.toCsv(recentCountries, 5))
+      return
+    recentCountries = updated
+    persistSetting("recentCountries", CountryRecents.toCsv(updated, 5))
   }
 
   function setCountry(code) {
@@ -804,6 +843,7 @@ Item {
       statusProbeError = rawStatusText === "" ? "VPN status response was empty; current state is unknown." : "VPN status response was invalid; current state is unknown."
       return
     }
+    statusObservedAt = Date.now()
     lastBackend = typeof data.backend === "string" ? data.backend.substring(0, 32) : ""
     legacyTunnel = data.connected && lastBackend === "legacy"
     var isConnected = data.connected
@@ -836,6 +876,14 @@ Item {
     statusUnknown = false
     statusProbeError = ""
     connected = isConnected
+
+    // A selection or even a successful action reply does not establish an
+    // observed active tunnel. Only a verified NetworkManager status does.
+    if (isConnected && !legacyTunnel && lastBackend === "networkmanager"
+        && data.state === "activated" && !connecting && !disconnecting)
+      recordVerifiedRecent()
+    else if (!isConnected || legacyTunnel)
+      _recentObservedCountry = ""
 
     if (isConnected && !wasConnected)
       staleNotified = false
@@ -941,6 +989,8 @@ Item {
     serverType = saved.serverType
     serverSelection = saved.serverSelection
     hideDetails = saved.hideDetails
+    favoriteCountries = CountryRecents.fromCsv(setting("favoriteCountries", ""), 8)
+    recentCountries = CountryRecents.fromCsv(setting("recentCountries", ""), 5)
   }
   onSettingsChanged: restoreSettings()
   Component.onCompleted: {

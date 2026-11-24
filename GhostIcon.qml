@@ -32,12 +32,12 @@ Item {
     loops: Animation.Infinite
     NumberAnimation {
       to: 0.35
-      duration: 650
+      duration: Style.duration(650)
       easing.type: Easing.InOutSine
     }
     NumberAnimation {
       to: 1.0
-      duration: 650
+      duration: Style.duration(650)
       easing.type: Easing.InOutSine
     }
   }

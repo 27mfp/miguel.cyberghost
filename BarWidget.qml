@@ -12,7 +12,7 @@ Ui.BarWidget {
   moduleName: "miguel.cyberghost"
   readonly property color brandYellow: "#FFCE00"
   readonly property color successGreen: "#10B981"
-  readonly property bool reduceMotion: !!setting("reduceMotion", false)
+  readonly property bool reduceMotion: Style.reduceMotion || !!setting("reduceMotion", false)
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing : false
   readonly property var actionService: cyberghost
@@ -42,14 +42,14 @@ Ui.BarWidget {
   }
 
   function injectPanel() {
-    var panel = panelLoader.item as Panel
+    // The Loader creates the plugin's Panel.qml dynamically. A cast to the
+    // local `Panel` type succeeds in qmllint but is null at runtime on Qt 6.12.
+    // Its Ui.Panel base is stable and carries the two late host injections.
+    var panel = panelLoader.item as Ui.Panel
     if (!panel)
       return
     panel.bar = root.bar
     panel.settings = root.settings
-    panel.anchorItem = button
-    panel.hostWidget = root
-    panel.cyberghost = cyberghost
   }
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
@@ -80,6 +80,8 @@ Ui.BarWidget {
     active: true
     visible: false
     Component.onCompleted: setSource(Qt.resolvedUrl("Panel.qml"), {
+      // Stable references are assigned at creation; bar/settings above must
+      // be refreshed when the shell injects them later.
       cyberghost: cyberghost,
       bar: root.bar,
       settings: root.settings,
@@ -146,7 +148,7 @@ Ui.BarWidget {
 
         GhostIcon {
           anchors.centerIn: parent
-          iconSize: Style.font.icon
+          iconSize: button.iconSize
           color: cyberghost.active ? root.brandYellow : (root.bar ? root.bar.barForeground : Commons.Color.foreground)
           innerColor: Commons.Color.bar.background
           active: cyberghost.active
@@ -203,12 +205,12 @@ Ui.BarWidget {
       loops: Animation.Infinite
       NumberAnimation {
         to: 0.25
-        duration: 500
+        duration: Style.duration(500)
         easing.type: Easing.InOutSine
       }
       NumberAnimation {
         to: 1.0
-        duration: 500
+        duration: Style.duration(500)
         easing.type: Easing.InOutSine
       }
     }
