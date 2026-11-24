@@ -10,6 +10,7 @@ import signal
 import socket
 import threading
 import time
+from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from .constants import ACCOUNT_API_BUDGET_SECONDS, API_BASE, MAX_HTTP_RESPONSE_BYTES, USER_AGENT
@@ -155,7 +156,9 @@ def _build_mapped_adapter_classes():
                         "Installed urllib3 cannot construct the pinned CyberGhost connection pool"
                     ) from exc
 
-            self.poolmanager.key_fn_by_scheme["https"] = normalize_pool_key
+            # urllib3 types this private hook as a partial[PoolKey]; the probe
+            # above is what validates the actual callable shape at runtime.
+            self.poolmanager.key_fn_by_scheme["https"] = cast("Any", normalize_pool_key)
 
     _MAPPED_ADAPTER_CLASSES = (MappedConnection, MappedHTTPSConnectionPool, MappedAdapter)
     return _MAPPED_ADAPTER_CLASSES
