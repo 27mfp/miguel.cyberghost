@@ -27,8 +27,65 @@ An attempted upstream raw clock URL returned 404. We used the installed, working
 | `Service.qml` | Connection state, status/action/streaming processes, settings restoration and notifications. |
 | `SetupController.qml` | Independent dependency, account, legacy-cleanup and readiness processes. |
 | `ServerInventory.qml` | Bounded optional inventory request with selection-key validation. |
-| `ServiceUtils.js` | Pure normalization/readiness/inventory/result helpers, exercised directly in Qt tests. |
-| `cyberghost_runner.py` | Unprivileged backend: validation, transport, credential handling, key generation and the NetworkManager tunnel lifecycle. |
+| `ServiceUtils.js` | Pure normalization/readiness/inventory/result/status-sampling helpers, exercised directly in Qt tests. |
+| `cyberghost_runner.py` | Stable CLI entry point and compatibility facade; delegates to the internal `cyberghost` package. |
+
+### Backend package (split in 1.7.2)
+
+The former ~2,600-line `cyberghost_runner.py` monolith now lives in
+`cyberghost/`, split along the domains the tests already exercise:
+
+| Module | Responsibility |
+| --- | --- |
+| `constants.py` | Release constants, action set and the country → city tables (`CITY_MAP`, `DIALUP_CITY_MAP`). |
+| `system.py` | Bounded subprocess I/O, private state files, the per-user lifecycle lock, cancellation and system-file recognizers. |
+| `validation.py` | Strict validation of keys, IPs, ports, hosts, country codes, selectors, DNS and bounded config text. |
+| `transport.py` | Pinned-TLS endpoint requests, the account JSON API and request payload builders. |
+| `wireguard.py` | RFC 7748 X25519 key generation (no `wireguard-tools`). |
+| `credentials.py` | Native/legacy config paths, credential loading and atomic profile writes. |
+| `vendor.py` | Optional, read-only inventory through the official CLI. |
+| `server_data.py` | Server cache, live inventory, JWT/session metadata and the paced background sync. |
+| `server_selection.py` | Candidate ordering, killable reachability probes and key exchange. |
+| `networkmanager.py` | `nmcli` lifecycle, connect/disconnect/logout, counters and `status`. |
+| `setup.py` | Native account registration and the readiness payload for the setup card. |
+| `cli.py` | `argparse` surface and the JSON action envelope. |
+
+`cyberghost_runner.py` re-exports the historical module surface and forwards
+attribute patches to the submodule that owns each name (`cyberghost/_compat.py`).
+That keeps two contracts intact without weakening the split: `Service.qml`
+still executes one stable CLI file, and the test suite can keep doing
+`mock.patch.object(runner, "nm_active_state", …)` exactly as before.
+`tests/test_module_facade.py` guards the behaviour. Import order is acyclic;
+`logout` lives with the NetworkManager lifecycle, which is why the credentials
+module does not import it back.
+
+### Why the QML components stay at the plugin root
+
+`Panel.qml` resolves `AccountSection`, `ConnectionSettings`, `ConnectionDetails`,
+`StatusNotice`, `SetupCard`, `SetupController`, `ServerInventory` and
+`GhostIcon` as sibling files. Moving them into `components/` would require a
+directory import in every consumer, and the tests import the repository root as
+a QML module (`import "../.." as Plugin`) to instantiate `Plugin.SetupCard` and
+`Plugin.ConnectionSettings` directly. `scripts/visual-preview.sh` and the
+visual fixture also copy root-level `*.qml` into a temporary plugin. Only
+`manifest.json` entry points must remain at the root, but the test and fixture
+tooling makes a subdirectory a breaking change for no runtime benefit, so the
+components stay where they are.
+
+### Country data
+
+`Countries.js` (UI labels, flags and the quick-connect set) and the backend
+`CITY_MAP`/`DIALUP_CITY_MAP` (CLI slugs) are one logical table in two runtimes.
+`tests/test_contracts.py` now enforces the exact set relationship, with `UK`
+as the only documented alias (`UK → GB` in the UI, a CLI alias in the backend).
+Adding a country in one place fails the suite until the other side matches.
+
+### Installers
+
+`install.sh` is the single owner of guided setup, `--uninstall` and the
+destructive `--fresh` reset; `--dry-run` plans every mode without changing
+state. `fresh-install.sh` is a deprecated wrapper that delegates to
+`install.sh --fresh` for existing documentation and bookmarks.
 
 ## Privilege model (1.7.0)
 

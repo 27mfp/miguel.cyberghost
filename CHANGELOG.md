@@ -2,6 +2,12 @@
 
 ## 1.7.2 — Unreleased
 
+- Split the 2,600-line backend into the `cyberghost/` package (constants, system, validation, transport, wireguard, credentials, vendor, server_data, server_selection, networkmanager, setup, cli). `cyberghost_runner.py` remains the stable CLI entry point and compatibility facade: it re-exports the historical surface and forwards attribute patches to the owning submodule, so QML and the existing suite keep their contract.
+- Move pure status sampling, GeoIP parsing, connect-result normalization and the bar tooltip into `ServiceUtils.js`; cover them directly in Qt tests. `Service.qml` is ~120 lines smaller and no longer carries rate-sampling math.
+- Enforce the `Countries.js` ↔ backend city-table relationship in `tests/test_contracts.py`, with `UK → GB` as the only documented alias. Keep the QML components at the plugin root: the Qt tests and visual fixture import the root as a module, so a `components/` move would be a breaking change without runtime benefit.
+- Replace `fresh-install.sh` with a deprecated wrapper for the unified `install.sh` (`--fresh`, `--uninstall`, `--dry-run`, `-y`, `--purge-deps`). Both prompts fail closed on EOF; reset still stages and validates the replacement before teardown and preserves the vendor CLI config.
+- Add `ruff` format/lint gates, `mypy` over the package and scripts, `shfmt -i 2 -ci` and ShellCheck for every shell script, pytest coverage reporting, and a tag-driven `release.yml` that verifies tag/manifest/changelog consistency, runs both suites, packages a zip and publishes `SHA256SUMS`.
+- Add `SECURITY.md`, `CONTRIBUTING.md`, Dependabot for GitHub Actions and pip tooling, issue/PR templates, and `scripts/sync-preview.py` to keep `preview.png` identical to the documented connected screenshot. Rename the screenshot to kebab-case and move dated audits to `docs/audits/`.
 - Resolve Omarchy palette colors explicitly through `Commons.Color`, avoiding the Qt 6.12 `Color` type collision and restoring setup error/status colors.
 - Rename the password-field id so it no longer shadows the host control’s password property; retain masked input, focus navigation and password clearing.
 - Type the loaded panel before injecting its host properties and use block-scoped declarations where Qt 6.12 diagnoses hoisting.

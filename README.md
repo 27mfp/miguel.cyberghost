@@ -12,7 +12,7 @@ Version 1.7.2 prepares compatibility with Omarchy 4.5 / Qt 6.12. The larger serv
 
 <p align="center">
   <img src="docs/screenshots/screenshot-disconnected.png" alt="CyberGhost VPN disconnected with connection details hidden" width="360">
-  <img src="docs/screenshots/screenshot_connected.png" alt="CyberGhost VPN connected to Portugal with WireGuard active" width="360">
+  <img src="docs/screenshots/screenshot-connected.png" alt="CyberGhost VPN connected to Portugal with WireGuard active" width="360">
 </p>
 
 Preview images use synthetic account and connection data, not a live VPN session.
@@ -28,7 +28,19 @@ Open the ghost icon and complete the setup steps:
 1. If `python-requests` is missing, install it from the panel (it opens Omarchy's floating terminal).
 2. Link your CyberGhost account. Native credentials are stored in `~/.cyberghost/native.ini`.
 
-That's it: connecting uses NetworkManager, which Omarchy already runs, and its Polkit policy already lets your desktop session manage network connections. You can also run `bash install.sh` from a checkout for guided setup. The vendor CLI is not required.
+That's it: connecting uses NetworkManager, which Omarchy already runs, and its Polkit policy already lets your desktop session manage network connections. The vendor CLI is not required.
+
+From a checkout, one script owns every mode:
+
+```bash
+bash install.sh              # guided setup (dependencies + account link)
+bash install.sh --dry-run    # print the plan without changing anything
+bash install.sh --uninstall  # remove the plugin, native credentials and recognized legacy files
+bash install.sh --fresh      # destructive developer reset, then reinstall
+```
+
+`fresh-install.sh` still works but is deprecated: it now delegates to
+`install.sh --fresh`. See the [installer reference](INSTALLER.md).
 
 ## Use
 
@@ -73,9 +85,17 @@ The updater rescans plugins, but an already-loaded widget can retain cached QML.
 
 ```bash
 pytest -q
-ruff check .
-ruff format --check .
+ruff check . && ruff format --check .
+mypy
 bash scripts/test-qml.sh
+python3 scripts/check_manifest.py
+python3 scripts/sync-preview.py --check
 ```
+
+The backend is the `cyberghost/` package (constants, validation, transport,
+server data, NetworkManager lifecycle, setup and CLI), with
+`cyberghost_runner.py` kept as the stable entry point. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full check list and conventions, and
+[SECURITY.md](SECURITY.md) for the threat model and private reporting process.
 
 Read the [release checklist](docs/release-checklist.md), [architecture](docs/architecture.md), and [testing guide](docs/testing.md) for additional details. The repository contains experimental vendor compatibility code, but it is not part of the supported release.

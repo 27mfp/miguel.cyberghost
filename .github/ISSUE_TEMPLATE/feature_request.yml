@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a capability or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that the plugin makes hard?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Which area does this touch?
+      options:
+        - Bar widget / panel UI
+        - Connection lifecycle / NetworkManager
+        - Server selection / inventory
+        - Account linking / credentials
+        - Installers / legacy migration
+        - Packaging / release
+        - Not sure
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope acknowledgement
+      options:
+        - label: This does not require adding a root-running helper or daemon.
+        - label: I understand there is no kill switch and no leak-protection claim.
