@@ -13,7 +13,10 @@ while (($#)); do
   case "$1" in
     --yes) ASSUME_YES=1 ;;
     --strict) STRICT=1 ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
   esac
   shift
 done
@@ -24,7 +27,10 @@ WG_CONF_PATH="/etc/wireguard/cyberghost.conf"
 LOCK_PATH="/run/lock/cyberghost.lock"
 MARKER_PATH="$HOME/.local/state/cyberghost/polkit-rule-installed"
 
-[[ $EUID != 0 ]] || { echo "Run as your desktop user; this script invokes sudo." >&2; exit 1; }
+[[ $EUID != 0 ]] || {
+  echo "Run as your desktop user; this script invokes sudo." >&2
+  exit 1
+}
 
 RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cyberghost_runner.py"
 
@@ -32,8 +38,8 @@ RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/cyberghost_runner
 # installed until the widget has disconnected that tunnel. NetworkManager also
 # lists such an externally created interface as an active "cyberghost"
 # connection, so ask the runner: it tells ours apart by its profile UUID.
-if ! backend=$(/usr/bin/python3 "$RUNNER" status --json \
-  | /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("backend") or "")'); then
+if ! backend=$(/usr/bin/python3 "$RUNNER" status --json |
+  /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin).get("backend") or "")'); then
   echo "Could not verify the VPN state; nothing was removed." >&2
   exit 1
 fi
@@ -47,9 +53,12 @@ echo "  $HELPER_PATH"
 echo "  $RULE_PATH (only the plugin's own rule; a customized file is left alone)"
 echo "  $LOCK_PATH is preserved to avoid replacing a held advisory lock."
 echo "  $WG_CONF_PATH is preserved: its contents do not prove plugin ownership."
-if (( ! ASSUME_YES )); then
+if ((!ASSUME_YES)); then
   read -rp "Continue? [y/N] " answer || answer=""
-  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || { echo "Nothing was changed."; exit 0; }
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || {
+    echo "Nothing was changed."
+    exit 0
+  }
 fi
 
 /usr/bin/sudo /usr/bin/bash -s -- "$HELPER_PATH" "$RULE_PATH" "$WG_CONF_PATH" "$LOCK_PATH" "$STRICT" <<'ROOT'
