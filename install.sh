@@ -6,13 +6,13 @@
 # Modes:
 #   (default)      guided dependency check and account link
 #   --fresh        destructive developer reset: remove plugin state, then
-#                  reinstall from this checkout (--local) or from GitHub
+#                  reinstall from this checkout (never from the network)
 #   --uninstall    remove the plugin, its native credentials and recognized
 #                  pre-1.7 files; the vendor CLI config is preserved
 #
 # Options:
 #   --dry-run      print what would run, without changing anything
-#   --local        with --fresh: install this checkout instead of cloning
+#   --local        accepted for compatibility; --fresh always uses this checkout
 #   --purge-deps   with --fresh/--uninstall: also uninstall python-requests
 #   -y, --yes      answer yes to prompts (never implied by --dry-run)
 #   -h, --help     show this help
@@ -22,7 +22,6 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="miguel.cyberghost"
-PLUGIN_URL="https://github.com/27mfp/miguel.cyberghost.git"
 PLUGINS_DIR="$HOME/.config/omarchy/plugins"
 RUNNER="$DIR/cyberghost_runner.py"
 
@@ -35,7 +34,6 @@ NC='\033[0m'
 MODE="guided"
 DRY_RUN=0
 ASSUME_YES=0
-FROM_LOCAL=0
 PURGE_DEPS=0
 STAGE_ROOT=""
 SOURCE_DIR=""
@@ -202,22 +200,18 @@ restart_shell() {
 stage_replacement() {
   step "Staging replacement plugin"
   if ((DRY_RUN)); then
-    if ((FROM_LOCAL)); then
-      say "${DIM}would stage $DIR into $PLUGINS_DIR/$PLUGIN_ID${NC}"
-    else
-      say "${DIM}would clone $PLUGIN_URL into $PLUGINS_DIR/$PLUGIN_ID${NC}"
-    fi
+    say "${DIM}would stage $DIR into $PLUGINS_DIR/$PLUGIN_ID${NC}"
     return 0
   fi
   require_tool jq
   STAGE_ROOT=$(/usr/bin/mktemp -d /tmp/cyberghost-fresh.XXXXXX)
   SOURCE_DIR="$STAGE_ROOT/$PLUGIN_ID"
   mkdir -p "$SOURCE_DIR"
-  if ((FROM_LOCAL)); then
-    cp -a "$DIR"/. "$SOURCE_DIR"/
-  else
-    GIT_TERMINAL_PROMPT=0 /usr/bin/git clone --depth 1 -- "$PLUGIN_URL" "$SOURCE_DIR"
-  fi
+  # Reinstall only the checkout this script belongs to. Cloning a moving
+  # branch here would run code (the legacy-helper cleanup) that was never part
+  # of the reviewed snapshot; to reinstall a newer release, update the
+  # checkout first (git pull) or use `omarchy plugin update`.
+  cp -a "$DIR"/. "$SOURCE_DIR"/
   /usr/bin/jq -e --arg id "$PLUGIN_ID" '.id == $id and .entryPoints.barWidget == "BarWidget.qml"' \
     "$SOURCE_DIR/manifest.json" >/dev/null
   if command -v omarchy-plugin-validate >/dev/null 2>&1; then
@@ -399,10 +393,13 @@ while (($#)); do
     --fresh) MODE="fresh" ;;
     --uninstall) MODE="uninstall" ;;
     --dry-run) DRY_RUN=1 ;;
-    --local) FROM_LOCAL=1 ;;
+    --local) ;; # Compatibility no-op: --fresh always stages this checkout.
     --purge-deps) PURGE_DEPS=1 ;;
     -y | --yes) ASSUME_YES=1 ;;
-    --github) say "--github is now the default; use --local for the local checkout" ;;
+    --github)
+      echo "--github was removed: --fresh reinstalls this checkout; update it first (git pull)." >&2
+      exit 1
+      ;;
     -h | --help)
       usage
       exit 0

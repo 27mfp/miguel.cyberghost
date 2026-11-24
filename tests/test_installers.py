@@ -96,3 +96,20 @@ def test_dry_run_purge_deps_does_not_call_pacman(tmp_path):
 def test_all_shell_scripts_parse():
     for script in [*ROOT.glob("*.sh"), *ROOT.glob("scripts/*.sh")]:
         subprocess.run(["/usr/bin/bash", "-n", str(script)], check=True)  # noqa: S603 - syntax check, no execution
+
+
+def test_fresh_reinstalls_this_checkout_without_network_clone(tmp_path):
+    script = (ROOT / "install.sh").read_text()
+    assert "git clone" not in script
+    assert "PLUGIN_URL" not in script
+    result = _run(["--dry-run", "--fresh"], tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert f"would stage {ROOT}" in result.stdout
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_removed_github_flag_fails_closed(tmp_path):
+    result = _run(["--dry-run", "--fresh", "--github"], tmp_path)
+    assert result.returncode == 1
+    assert "git pull" in result.stderr
+    assert list(tmp_path.iterdir()) == []

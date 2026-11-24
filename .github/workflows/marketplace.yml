@@ -1,0 +1,56 @@
+name: Marketplace
+
+# Runs the Omarchy plugin marketplace's own update validation and automated
+# security baseline on this exact commit, so a release passes before a
+# "[Verify]" request is opened. The rules come from the marketplace's default
+# branch on purpose: they must match what its bot enforces today.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketplace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  marketplace:
+    # The baseline reads the commit through the GitHub API of this repository,
+    # so fork pull-request heads cannot be checked here.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out marketplace rules
+        uses: actions/checkout@v7
+        with:
+          repository: omacom/omarchy-plugin-marketplace
+          path: .marketplace
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install marketplace dependencies
+        working-directory: .marketplace
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Marketplace validation and security baseline
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node .github/marketplace/check.mjs \
+            --marketplace=.marketplace \
+            --plugin-id=miguel.cyberghost \
+            --repo="https://github.com/${GITHUB_REPOSITORY}" \
+            --commit="$COMMIT" \
+            --allowed-capabilities=.github/marketplace/allowed-capabilities.json
