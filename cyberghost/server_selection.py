@@ -6,6 +6,7 @@ import re
 import signal
 import socket
 import time
+from typing import Any, cast
 
 from .constants import (
     DIALUP_CITY_MAP,
@@ -79,8 +80,13 @@ def select_native_candidates(country_code, server_type="traffic", city=None, ser
             )
         candidates = [host[: -len(".cg-dialup.net")] for host in reachable]
 
-    seen = set()
-    candidates = [candidate for candidate in candidates if not (candidate in seen or seen.add(candidate))]
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            unique.append(candidate)
+    candidates = unique
     return cc, [f"{candidate}.cg-dialup.net" for candidate in candidates[:MAX_NATIVE_CANDIDATES]]
 
 
@@ -89,7 +95,7 @@ def _probe_endpoint(host, port=1337, timeout=ENDPOINT_PROBE_TIMEOUT_SECONDS):
     started = time.monotonic()
     try:
         address = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)[0][4]
-        with socket.create_connection(address[:2], timeout=timeout):
+        with socket.create_connection((str(address[0]), int(address[1])), timeout=timeout):
             pass
     except OSError:
         return host, None
@@ -113,9 +119,9 @@ def reachable_endpoints(hosts, budget=ENDPOINT_PROBE_BUDGET_SECONDS, grace=ENDPO
     context = multiprocessing.get_context("fork")
     deadline = time.monotonic() + budget
     first_answer_at = None
-    answered = []
-    pending = {}
-    workers = []
+    answered: list[tuple[str, float]] = []
+    pending: dict[Any, Any] = {}
+    workers: list[Any] = []
     remaining_hosts = iter(hosts)
 
     def start_worker(host):
@@ -143,7 +149,8 @@ def reachable_endpoints(hosts, budget=ENDPOINT_PROBE_BUDGET_SECONDS, grace=ENDPO
             remaining = limit - time.monotonic()
             if remaining <= 0:
                 break
-            for reader in multiprocessing.connection.wait(pending, timeout=remaining):
+            for waited in multiprocessing.connection.wait(pending, timeout=remaining):
+                reader = cast("Any", waited)
                 process = pending.pop(reader)
                 try:
                     host, latency = reader.recv()
@@ -180,7 +187,7 @@ def probe_servers(country_codes, session=None):
     The probe itself sends no credentials. With a usable session it also lists
     what CyberGhost's own server API returns, to compare the two.
     """
-    report = {}
+    report: dict[str, dict[str, Any]] = {}
     for code in country_codes:
         cc = validate_country_code(code)
         city = DIALUP_CITY_MAP.get(cc)

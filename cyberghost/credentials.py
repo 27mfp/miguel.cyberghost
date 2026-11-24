@@ -80,13 +80,13 @@ def load_account(config_path=None):
             raise RuntimeError("Configuration file must belong to the current user")
 
         with os.fdopen(fd, "r", encoding="utf-8", errors="strict") as config_file:
-            fd = None
+            fd = -1  # ownership transferred to the file object
             cfg = configparser.ConfigParser(interpolation=None)
             cfg.read_file(config_file)
     except (OSError, UnicodeError, configparser.Error) as e:
         raise RuntimeError(f"Failed to parse config file at {path}: {e}") from e
     finally:
-        if fd is not None:
+        if fd != -1:
             os.close(fd)
 
     if not cfg.has_section("device") or not cfg.has_option("device", "token") or not cfg.has_option("device", "secret"):
@@ -172,7 +172,7 @@ def write_user_config(path, username, device_name, device, session=None):
 def cli_account_configured():
     """Local prerequisite check only; this does not prove vendor authentication."""
     path = legacy_config_path()
-    fd = None
+    fd = -1
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
         info = os.fstat(fd)
@@ -181,12 +181,12 @@ def cli_account_configured():
         if info.st_uid != invoking_user().pw_uid:
             return False
         with os.fdopen(fd, encoding="utf-8") as stream:
-            fd = None
+            fd = -1  # ownership transferred to the file object
             config = configparser.ConfigParser(interpolation=None)
             config.read_string(stream.read(MAX_CONFIG_BYTES + 1))
         return all(config.get("account", key, fallback="").strip() for key in ("username", "password"))
     except (OSError, UnicodeError, configparser.Error):
         return False
     finally:
-        if fd is not None:
+        if fd != -1:
             os.close(fd)

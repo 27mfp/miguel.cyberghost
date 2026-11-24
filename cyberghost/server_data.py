@@ -34,7 +34,7 @@ from .validation import validate_country_code, validate_server_selector
 
 def group_server_names(names):
     """{"lisbon-s405": [1, 2, ...]}: the compact form used on disk."""
-    grouped = {}
+    grouped: dict[str, list[int]] = {}
     for name in names:
         prefix, _, instance = name.rpartition("-i")
         grouped.setdefault(prefix, []).append(int(instance))
@@ -43,7 +43,7 @@ def group_server_names(names):
 
 def expand_server_names(grouped, limit=20000):
     """Inverse of group_server_names; every name is strictly validated."""
-    names = []
+    names: list[str] = []
     if not isinstance(grouped, dict):
         return names
     for prefix, numbers in grouped.items():
@@ -134,14 +134,14 @@ def probe_sample(names, size=PROBE_SAMPLE_SIZE):
     """Spread a probe across cities and racks, randomly within each."""
     regular = [name for name in names if not is_nospy(name)]
     names = regular or names
-    by_prefix = {}
+    by_prefix: dict[str, list[str]] = {}
     for name in names:
         by_prefix.setdefault(name.rpartition("-i")[0], []).append(name)
     queues = list(by_prefix.values())
     for queue in queues:
         random.shuffle(queue)
     random.shuffle(queues)
-    sample = []
+    sample: list[str] = []
     while queues and len(sample) < size:
         for queue in list(queues):
             if queue:
@@ -247,7 +247,7 @@ def parse_live_inventory(data, max_items=8192):
     The layout is not documented, so walk the JSON (bounded) and accept only
     values that pass the same strict selector validation as the addKey path.
     """
-    found = {}
+    found: dict[str, float] = {}
     stack = [(data, 0)]
     visited = 0
     while stack and visited < 4 * max_items:

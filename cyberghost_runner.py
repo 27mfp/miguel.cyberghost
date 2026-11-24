@@ -46,7 +46,7 @@ else:  # pragma: no cover - only reachable from an exotic embedder
     globals().update({name: getattr(_backend, name) for name in _backend.__all__})
 
 # Explicit binding so readers and linters see the CLI entry point.
-main = _backend.main
+main = _backend.cli.main
 
 
 if __name__ == "__main__":

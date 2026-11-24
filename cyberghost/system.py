@@ -6,6 +6,7 @@ place that spawns processes or takes the per-user lifecycle lock.
 
 import contextlib
 import fcntl
+import io
 import json
 import os
 import pwd
@@ -16,6 +17,7 @@ import signal
 import stat
 import subprocess
 import time
+from typing import Any, cast
 
 from .constants import (
     LEGACY_POLKIT_MARKER_CONTENT,
@@ -55,18 +57,21 @@ def run_bounded(
     )
 
     selector = selectors.DefaultSelector()
-    streams = ((process.stdout, "stdout"), (process.stderr, "stderr"))
+    # Popen types stdout/stderr/stdin as Optional even with PIPE/DEVNULL set;
+    # the casts document the invariant without weakening the rest of the file.
+    stdin = cast("Any", process.stdin)
+    streams = [(cast("Any", process.stdout), "stdout"), (cast("Any", process.stderr), "stderr")]
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     input_offset = 0
     try:
         for stream, name in streams:
             selector.register(stream, selectors.EVENT_READ, name)
-        if process.stdin is not None:
-            os.set_blocking(process.stdin.fileno(), False)
+        if stdin is not None:
+            os.set_blocking(stdin.fileno(), False)
             if input_data:
-                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+                selector.register(stdin, selectors.EVENT_WRITE, "stdin")
             else:
-                process.stdin.close()
+                stdin.close()
 
         deadline = time.monotonic() + timeout
         while selector.get_map():
@@ -79,19 +84,20 @@ def run_bounded(
             for key, _ in events:
                 if key.data == "stdin":
                     try:
-                        written = os.write(process.stdin.fileno(), input_data[input_offset:])
+                        written = os.write(stdin.fileno(), input_data[input_offset:])
                         input_offset += written
                     except BrokenPipeError:
                         input_offset = len(input_data)
                     if input_offset >= len(input_data):
-                        selector.unregister(process.stdin)
-                        process.stdin.close()
+                        selector.unregister(stdin)
+                        stdin.close()
                     continue
 
-                chunk = os.read(key.fileobj.fileno(), 8192)
+                stream = cast("io.IOBase", key.fileobj)
+                chunk = os.read(stream.fileno(), 8192)
                 if not chunk:
-                    selector.unregister(key.fileobj)
-                    key.fileobj.close()
+                    selector.unregister(stream)
+                    stream.close()
                     continue
                 total = len(buffers["stdout"]) + len(buffers["stderr"]) + len(chunk)
                 if total > max_output_bytes:
@@ -126,8 +132,8 @@ def run_bounded(
         for stream, _ in streams:
             if stream and not stream.closed:
                 stream.close()
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
+        if stdin is not None and not stdin.closed:
+            stdin.close()
 
 
 def read_response_bounded(response, max_bytes=MAX_HTTP_RESPONSE_BYTES, deadline=None):

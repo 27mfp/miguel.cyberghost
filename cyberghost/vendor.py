@@ -85,7 +85,7 @@ def get_streaming_services(country_code):
         sys.stderr.write(f"Streaming service discovery unavailable for {cc}: {message}\n")
         return []
 
-    services = []
+    services: list[dict[str, str]] = []
     if res.returncode != 0:
         message = clean_command_error(res.stderr or res.stdout, f"cyberghostvpn exited with code {res.returncode}")
         sys.stderr.write(f"Streaming service discovery unavailable for {cc}: {message}\n")

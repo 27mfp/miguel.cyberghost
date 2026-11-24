@@ -135,10 +135,10 @@ def _register(config_path=None):
     finally:
         # Defense in depth: drop the local copies and re-clear the env vars
         # in case any inner code path re-set them while we were running.
-        username = None
-        password = None
-        env_username = None
-        env_password = None
+        username = ""
+        password = ""
+        env_username = ""
+        env_password = ""
         os.environ.pop("CG_USERNAME", None)
         os.environ.pop("CG_PASSWORD", None)
 
