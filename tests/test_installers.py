@@ -79,6 +79,14 @@ def test_dry_run_plans_without_touching_home(mode, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_dry_run_is_repeatable_without_leaving_state(tmp_path):
+    first = _run(["--dry-run", "--uninstall"], tmp_path)
+    second = _run(["--dry-run", "--uninstall"], tmp_path)
+    assert first.returncode == second.returncode == 0
+    assert first.stdout == second.stdout
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_dry_run_purge_deps_does_not_call_pacman(tmp_path):
     result = _run(["--dry-run", "--uninstall", "--purge-deps"], tmp_path)
     assert result.returncode == 0, result.stderr
