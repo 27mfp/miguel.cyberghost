@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.7.2 — Unreleased
+## 1.8.0 — 2026-11-24
 
 - Keep the primary action readable on keyboard focus and hover; move favorites beside the country picker and populated shortcuts below the main action.
 - Add a working display-privacy preference to Settings, retain copy/privacy controls in Details, and label credential fields persistently.

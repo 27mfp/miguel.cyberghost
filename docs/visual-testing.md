@@ -11,7 +11,7 @@ Requires Omarchy, `wtype`, `grim`, `wl-copy`, `wl-paste` and Python 3.9+. This t
 ```bash
 bash scripts/visual-preview.sh --install
 # Wait for plugin discovery, then:
-omarchy plugin enable test.cyberghost-release-172
+omarchy plugin enable test.cyberghost-release-180
 python3 scripts/visual-smoke.py --run
 # Inspect the PNGs and JSON snapshots in the printed /tmp directory.
 bash scripts/visual-preview.sh --remove

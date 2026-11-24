@@ -6,7 +6,7 @@ A WireGuard VPN plugin for the Omarchy bar. Choose a country and connect with on
 
 [Open the CyberGhost plugin in the Omarchy plugin directory](https://plugins.omarchy.org/plugin.html?id=miguel.cyberghost)
 
-Version 1.7.2 prepares compatibility with Omarchy 4.5 / Qt 6.12. The larger service and UI update is tracked in the [implementation plan](docs/omarchy-4.5-plan.md).
+Version 1.8.0 brings the dashboard redesign, the backend module split and the release hardening for Omarchy 4.5 / Qt 6.12. The remaining shared-service work is tracked in the [implementation plan](docs/omarchy-4.5-plan.md).
 
 ## Preview
 

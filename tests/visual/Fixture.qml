@@ -8,7 +8,7 @@ import "ServiceUtils.js" as Logic
 // Only this synthetic service replaces the network/account boundary.
 Plugin.Panel {
   id: preview
-  moduleName: "test.cyberghost-release-172"
+  moduleName: "test.cyberghost-release-180"
   ipcTarget: moduleName
   cyberghost: sample
   settings: ({
@@ -97,7 +97,7 @@ Plugin.Panel {
   }
 
   IpcHandler {
-    target: "test.cyberghost-release-172"
+    target: "test.cyberghost-release-180"
     function snapshot(): string {
       return preview.snapshot()
     }

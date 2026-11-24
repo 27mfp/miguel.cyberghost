@@ -36,7 +36,7 @@ An attempted upstream raw clock URL returned 404. We used the installed, working
 | `CountryRecents.js` | Strict normalization/serialization of the favorite and recent country CSVs. |
 | `cyberghost_runner.py` | Stable CLI entry point and compatibility facade; delegates to the internal `cyberghost` package. |
 
-### Backend package (split in 1.7.2)
+### Backend package (split in 1.8.0)
 
 The former ~2,600-line `cyberghost_runner.py` monolith now lives in
 `cyberghost/`, split along the domains the tests already exercise:

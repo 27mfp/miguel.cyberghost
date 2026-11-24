@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TARGET = "test.cyberghost-release-172"
+TARGET = "test.cyberghost-release-180"
 
 
 def run(tool, *args, data=None):

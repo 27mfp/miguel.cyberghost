@@ -2,7 +2,7 @@ Plano de implementação — CyberGhost / Omarchy 4.5
 
 Base: versão 1.7.1, commit 581755f; análise de 6 de novembro de 2026. Este ficheiro é planeamento, não evidência de funcionalidades implementadas. O alvo inicial é Omarchy 4.5 / Qt 6.12.
 
-**Estado do patch 1.7.2 — 6 de novembro de 2026**
+**Estado da release 1.8.0 — 24 de novembro de 2026**
 
 CG-01 e CG-02 foram tratados no patch de compatibilidade: Commons.Color explícito, id do campo de password sem colisão, cast do painel e declarações de bloco corrigidas. Verificação local em Omarchy 4.5.0-3 / Qt 6.12.0: 233 testes Python, 76 entradas Qt UI e 13 utilitários; zero avisos de cor indefinida; lint nativo com zero diagnósticos de projeto e as mesmas 53 exceções de metadados. Os itens CG-03 a CG-10 continuam por implementar/validar. Esta evidência não certifica ligações VPN reais nem serviço único.
 
