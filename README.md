@@ -44,13 +44,15 @@ bash install.sh --fresh      # destructive developer reset, then reinstall
 
 ## Use
 
-- Select a country under **Location**. While connected, the selector reads **Next location**: choosing a country alone never reconnects.
+- The bar icon opens a dashboard with one observed-state display and one primary action. **Account** and **Settings** are direct header icons; **Details** opens from the main view. **Back** or Esc returns.
+- Pick a destination with the country picker or the **Quick destinations** shortcuts. Favorites (up to 8) and recent verified NetworkManager destinations (up to 5) are stored locally in the shell settings; choosing one only sets the next destination and never starts a connection.
+- The primary action is context-aware: **Connect** when disconnected, **Switch to …** when another country is selected on an active tunnel, or **Disconnect** otherwise. A pending switch keeps its own **Disconnect** action.
 - While connected, the tunnel also appears as **CyberGhost VPN** in `nmcli` and Omarchy's network tools. It lives only in memory and is gone after a NetworkManager restart or reboot.
-- Use the switch in the panel header to connect or disconnect. If you pick a different country while connected, **Switch to …** moves the tunnel in one click; choosing a country alone never reconnects.
 - If the VPN status can't be verified, or the tunnel looks stale, the panel shows a notice with **Recheck status**, which never connects. Operation errors can be dismissed.
 - Traffic rates appear after two status checks; until then the details show "Sampling traffic…".
-- **Link account** needs the VPN disconnected; the panel explains inline when linking is blocked.
-- Panel shortcuts: `t` or Enter toggles the VPN, `c` copies the public IP (or click the IP), `h` hides details, `r` refreshes, Esc closes.
+- IP, location, provider and account name are hidden by default for new installations. Toggle the privacy preference in **Settings**; saved preferences from earlier releases are respected.
+- **Link account** needs the VPN disconnected; the panel explains inline when linking is blocked. Account can also be relinked without logging out or forgetting cached credentials.
+- Keyboard: Tab/Shift+Tab move through controls, Ctrl+Tab / Ctrl+Shift+Tab switch adjacent Omarchy popouts, `t` toggles the VPN, `c` copies the public IP, `h` toggles privacy, `r` refreshes, and Esc goes back or closes.
 - **Account → Log out** forgets this device's login (`~/.cyberghost/native.ini`) after a second confirming click, disconnecting first if needed. An account from the CyberGhost CLI's own `config.ini` is shown but left alone. Logging out does not remove the device from your CyberGhost account; do that on CyberGhost's website if you no longer use it.
 - Left-click opens the panel; middle- and right-click toggle the VPN.
 

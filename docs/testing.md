@@ -57,7 +57,7 @@ These tests prove plugin bindings and orchestration, **not** Omarchy rendering, 
 
 `qmltestrunner` cannot load this distribution's statically registered Quickshell plugin. Trying to use real shell controls directly in it fails with `quickshell-coreplugin not found`. That is why the doubles are explicit rather than pretending a standalone test runner is the shell.
 
-The 1.7.2 local target is Omarchy 4.5.0-3 / Qt 6.12.0. The unpatched production components pass 76 Qt UI entries and 20 utility entries without undefined-color warnings; the backend suite passes 252 cases, including the facade-patch contract in `tests/test_module_facade.py` and the country-table/asset sync gates. Native lint reports zero project diagnostics and 53 narrowly identified host metadata warnings. This does not establish live VPN routing or shared multi-monitor operation.
+The 1.7.2 local target is Omarchy 4.5.0-3 / Qt 6.12.0. The production components pass 121 Qt UI entries and 20 utility entries without undefined-color warnings; the backend suite passes 252 cases, including the facade-patch contract in `tests/test_module_facade.py` and the country-table/asset sync gates. The dashboard, destination, summary and onboarding suites exercise the redesigned UI directly. Native lint reports zero project diagnostics and 93 narrowly identified host metadata warnings. This does not establish live VPN routing or shared multi-monitor operation.
 
 ### Native lint policy
 

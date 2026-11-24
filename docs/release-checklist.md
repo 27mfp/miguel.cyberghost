@@ -1,4 +1,4 @@
-# 1.7.2 — Omarchy 4.5 compatibility patch (unreleased)
+# 1.7.2 — Omarchy 4.5 compatibility and dashboard redesign (unreleased)
 
 Local verification: 2026-11-06, Omarchy 4.5.0-3 / Qt 6.12.0.
 
@@ -8,11 +8,25 @@ Local verification: 2026-11-06, Omarchy 4.5.0-3 / Qt 6.12.0.
 - [x] Native QML lint: zero project diagnostics; 53 existing, exact host metadata exceptions. No exception was broadened.
 - [x] Ruff 0.16.9 lint/format, manifest validation, Omarchy validator, ShellCheck and whitespace checks passed.
 - [x] Architecture/quality pass: backend package split, JS extractions, unified installer, mypy/shfmt/coverage gates, release workflow and governance files.
-- [ ] Hosted Python 3.9/3.12/3.14 CI on the PR head.
+- [x] Integrated verification (2026-11-24, backend split + PR4 UI): 252 Python, 121 UI and 20 utility Qt tests passed; 0 project QML diagnostics and 93 exact host metadata warnings; Ruff, mypy, ShellCheck, shfmt, manifest, preview-sync and `git diff --check` passed.
+- [x] Hosted Python 3.9/3.12/3.14 CI on PR head `4b686ef` (before the local popup-anchor follow-up).
+- [x] Real Omarchy 4.5 shell preview: detected the popup at `(5,5)` because `as Panel` left its `bar` unset; `as Ui.Panel` restores late host injection, opening the card at `(1535,31)` beside the right-hand icon on a 1920x1080 top bar.
+- [x] Rechecked the local follow-up with 233 Python, 76 UI and 13 utility Qt cases, native QML lint (0 project diagnostics, 52 known host metadata warnings), Ruff and manifest validation.
+- [x] Elsewhen-inspired local UI preview: 233 Python, 85 UI and 13 Qt utility tests passed; native QML lint 0 project diagnostics and 62 explicit host metadata warnings; Ruff and manifest validation passed. New disclosure, clipboard/privacy, stale/unknown status, and pt-PT display cases covered by tests.
+- [x] Installed preview on the live Omarchy 4.5 shell: visible under the right-hand bar icon, compact connection summary, separate destination, details/account/settings initially collapsed, and no CyberGhost QML runtime errors in the inspected log.
+- [x] Second local UI redesign preview: `VpnDashboard` with a new central `ConnectionStage`, single explicit connect/disconnect button, a compact IP row, and one-at-a-time details/account/settings menu; state, country and focus contracts retained. Qt tests: 93 UI + 13 utility passed; Python: 233 passed; QML lint: 0 project diagnostics (79 exact host metadata exceptions); Ruff, manifest and Omarchy validator pass.
+- [x] Runtime visual review confirmed the new panel below the right-hand bar icon and no CyberGhost runtime QML errors. Short-lived connection-state transitions are represented with neutral progress labels and an inactive action button.
+- [x] ShellCheck and shfmt pass on the integration host; CI enforces both for every shell script.
+- [x] Adaptive UX revision: synthetic tests cover the explicit country switch, disconnect as a secondary action, uncertain-status recovery, compact widths 320/375/400, subpage Back, strict favorite/recent codes, and step-by-step onboarding. Local checks: 233 Python, 114 UI, 13 Qt utility tests, 0 project QML diagnostics, Ruff and manifest validation passed.
+- [x] Installed adaptive UX preview in Omarchy 4.5 and visually reviewed the disconnected screen on one 1920×1080 output; panel opens beneath the CyberGhost icon, fits within the output and displays Quick destinations and the new details navigation. No CyberGhost QML exceptions in the checked Quickshell log.
+- [x] Reviewed and installed simplified navigation: direct Account and Settings icons in the header replace the overflow menu, with active-view indication, Back on subpages and Details on the main view. Post-adjustment checks: 114 UI, 13 Qt utility and 233 Python tests passed; manifest, Omarchy validator, Ruff and formatting checks passed; 0 project QML diagnostics (88 known host metadata warnings). On the live 1920x1080 Omarchy 4.5 shell the popup remained anchored below the bar icon, both header icons were visible, and no clipping or overlap appeared in the disconnected main view. Escape closed the panel, shell ping returned `ok`, and the checked Quickshell log showed no CyberGhost runtime errors. Real pointer-driven subpage traversal is covered by synthetic tests but was not automated on this desktop.
+- [ ] Visually verify adaptive switch on a live active tunnel and multiple-monitor placements in an isolated setup; no live VPN connection was initiated by this revision.
+- [ ] Verify actual VPN connected and stale states, longer translated text, bar orientation, multi-monitor behavior, and focus traversal on an isolated test setup before calling the UI migration fully complete.
+- [ ] Hosted CI after the popup-anchor follow-up is published.
 - [ ] Review and merge the compatibility PR before publishing a tag/release.
 - [ ] Tag `v1.7.2` and confirm `.github/workflows/release.yml` publishes the zip and `SHA256SUMS` (tag, manifest and changelog are checked automatically).
 
-The existing per-widget service and eager panel loading remain. Shared services, native multi-monitor/lifecycle coverage and live VPN integration belong to the [follow-up plan](omarchy-4.5-plan.md). No account linking, tunnel activation, disconnection or installed-plugin change was performed for this patch.
+The per-widget service still exists, while the visual `KeyboardPanel.content` now loads on first open. Shared services, native multi-monitor/lifecycle coverage and live VPN integration belong to the [follow-up plan](omarchy-4.5-plan.md). The popup-anchor and visual changes were previewed in the installed shell, without account linking, tunnel activation or disconnection.
 
 Earlier sections below record historical releases and host versions, including the obsolete root-helper architecture. Their completed checks do not certify this release on Omarchy 4.5.
 

@@ -17,17 +17,23 @@ An attempted upstream raw clock URL returned 404. We used the installed, working
 
 | File | Responsibility |
 | --- | --- |
-| `BarWidget.qml` | Bar icon, service ownership, settings persistence, IPC and forwarding open/close/popout lifecycle to the nested panel. |
-| `Panel.qml` | Popup composition, focus (keeps the focused control scrolled into view), Escape and the primary connect/disconnect action. |
+| `BarWidget.qml` | Bar icon, service ownership, settings persistence, IPC, and forwarding open/close/popout lifecycle to the nested panel. |
+| `Panel.qml` | Host panel lifecycle: builds `KeyboardPanel.content` on first open, keeps the service/IPC alive while closed, holds focus and Escape/Ctrl+Tab, and forwards the primary action. |
+| `VpnDashboard.qml` | Presentation-only dashboard: observed-state hero, context-aware primary action, destination picker, Quick destinations, IP utility row, and the Details/Account/Settings subviews with Back/Escape. |
+| `ConnectionStage.qml` | Quiet central visual for connecting/connected/disconnecting/unknown/legacy/stale state; never infers VPN status from the public IP. |
+| `ConnectionSummary.qml` | Compact read-only IP/transfer row with privacy masking, copy and failure feedback. |
+| `QuickDestinations.qml` | Bounded favorites and recent verified NetworkManager destinations; choosing one only changes the next destination. |
 | `StatusNotice.qml` | Shared status/error notice, shown during setup too, with **Recheck status** for connection-state problems and dismissal for operation errors. |
-| `SetupCard.qml` | Required setup steps, form validation and focus routing. |
-| `ConnectionSettings.qml` | Country selection and progressively disclosed advanced controls. |
-| `ConnectionDetails.qml` | Observed IP/session data in a Network-panel-style grid (live rates and totals while connected), masking and click-to-copy. |
-| `AccountSection.qml` | Signed-in identity and two-step logout of the plugin's own login. |
-| `Service.qml` | Connection state, status/action/streaming processes, settings restoration and notifications. |
-| `SetupController.qml` | Independent dependency, account, legacy-cleanup and readiness processes. |
+| `SetupCard.qml` | One-requirement-at-a-time onboarding, completed-step summary, form validation and focus routing. |
+| `ConnectionSettings.qml` | Standalone country/advanced selector retained as a component-test surface; the dashboard owns the production destination picker. |
+| `ConnectionDetails.qml` | Observed IP/session data in a Network-panel-style grid in the Details subview (live rates and totals while connected), masking and click-to-copy. |
+| `AccountSection.qml` | Signed-in identity, relinking without logout, and two-step logout of the plugin's own login. |
+| `Service.qml` | Connection state, status/action/streaming processes, settings restoration, favorites/recents, status observation time and notifications. |
+| `SetupController.qml` | Independent dependency, account, legacy-cleanup, readiness and background-sync processes. |
 | `ServerInventory.qml` | Bounded optional inventory request with selection-key validation. |
-| `ServiceUtils.js` | Pure normalization/readiness/inventory/result/status-sampling helpers, exercised directly in Qt tests. |
+| `ServiceUtils.js` | Pure normalization/readiness/inventory/result/status-sampling/GeoIP/compatibility helpers, exercised directly in Qt tests. |
+| `Translations.js` | Plugin-owned English and pt-PT strings; the caller supplies the live Omarchy language, and backend errors are never translated. |
+| `CountryRecents.js` | Strict normalization/serialization of the favorite and recent country CSVs. |
 | `cyberghost_runner.py` | Stable CLI entry point and compatibility facade; delegates to the internal `cyberghost` package. |
 
 ### Backend package (split in 1.7.2)
