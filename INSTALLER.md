@@ -8,7 +8,7 @@ Since 1.7.0 the plugin installs nothing as root. The tunnel is an in-memory Netw
 | --- | --- | --- |
 | `install.sh` | Guided setup: `python-requests` if missing, account link, and removal of pre-1.7 files. Does not install the vendor CLI. | `sudo pacman` only if `python-requests` is missing. |
 | `bash install.sh --uninstall` | Stops the tunnel, removes recognized legacy files, the plugin registration and `~/.cyberghost/native.ini`. Keeps the vendor CLI config. | One explicit `sudo` step for recognized legacy files. |
-| `bash install.sh --fresh` | Destructive developer reset and reinstall from this checkout (`--local`) or GitHub, not a normal upgrade. Stages and validates the replacement first. | Removes legacy root files with authorization. |
+| `bash install.sh --fresh` | Destructive developer reset that reinstalls this checkout (it never clones from the network), not a normal upgrade. Stages and validates the replacement first; update the checkout with `git pull` beforehand to reinstall a newer release. `--local` is accepted for compatibility. | Removes legacy root files with authorization. |
 | `scripts/remove-legacy-helper.sh` | Removes recognized root helper and Polkit rule files left by releases before 1.7. The panel opens it in Omarchy's floating terminal. | One explicit `sudo` step, run in a visible terminal. |
 | `fresh-install.sh` | **Deprecated** wrapper for `install.sh --fresh`; kept for existing docs and bookmarks and may be removed after 1.8.0. | Same as `install.sh --fresh`. |
 

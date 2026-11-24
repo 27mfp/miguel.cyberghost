@@ -18,7 +18,7 @@ transport_module = importlib.import_module("cyberghost.transport")
 
 
 def test_facade_exposes_functions_constants_and_stdlib_modules():
-    assert runner.PLUGIN_VERSION == "1.8.0"
+    assert runner.PLUGIN_VERSION == "1.8.1"
     assert runner.INTERFACE == "cyberghost"
     assert runner.connect is backend.networkmanager.connect
     assert runner.os is backend.server_data.os
