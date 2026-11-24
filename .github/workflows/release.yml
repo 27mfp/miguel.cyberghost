@@ -9,7 +9,14 @@ permissions:
   contents: write
 
 jobs:
+  marketplace:
+    # A tag that the Omarchy marketplace would reject is not released.
+    uses: ./.github/workflows/marketplace.yml
+    permissions:
+      contents: read
+
   release:
+    needs: marketplace
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

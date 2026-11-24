@@ -3,6 +3,7 @@
 ## 1.8.1 — 2026-11-24
 
 - `install.sh --fresh` now always reinstalls the checkout it runs from and never clones from GitHub. The removed path shallow-cloned a moving branch and then ran its legacy-helper cleanup, which the Omarchy marketplace security baseline flags as unpinned remote execution (`remote-git-execution-unpinned`). Run `git pull` before `--fresh` to reinstall a newer release. `--local` is still accepted as a no-op; `--github` now fails with guidance instead of being ignored.
+- Add a `Marketplace` CI workflow that runs the marketplace's update validation and security baseline on every push, pull request and release tag; releases now depend on it. Any finding, or a capability missing from `.github/marketplace/allowed-capabilities.json`, fails the check.
 
 ## 1.8.0 — 2026-11-24
 
