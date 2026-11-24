@@ -165,25 +165,37 @@ Column {
     }
   }
 
+  // Qt 6.4 cannot instantiate a Component declared in a
+  // `ComponentBehavior: Bound` file through Loader.sourceComponent. Load the
+  // standalone component by URL instead and rebind reactive properties after
+  // creation; this also keeps the required `service` initialised at creation.
   Loader {
     id: relinkLoader
     width: parent.width
-    active: root.relinking
     visible: root.relinking
     onLoaded: {
       const form = item as SetupCard
-      if (form) form.focusTarget.forceActiveFocus()
-    }
-    sourceComponent: Component {
-      SetupCard {
-        width: parent.width
-        service: root.service
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        relinking: true
-      }
+      if (!form)
+        return
+      form.foreground = Qt.binding(function() { return root.foreground })
+      form.fontFamily = Qt.binding(function() { return root.fontFamily })
+      form.width = Qt.binding(function() { return relinkLoader.width })
+      form.focusTarget.forceActiveFocus()
     }
   }
+
+  function syncRelink() {
+    if (!relinking) {
+      relinkLoader.source = ""
+      return
+    }
+    relinkLoader.setSource(Qt.resolvedUrl("SetupCard.qml"), {
+      "service": root.service,
+      "relinking": true
+    })
+  }
+  onRelinkingChanged: syncRelink()
+  Component.onCompleted: syncRelink()
 
   Button {
     objectName: "accountRelinkCancel"

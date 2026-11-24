@@ -55,6 +55,11 @@ Qt tools default to `/usr/lib/qt6/bin`; override with `QT_BIN` if necessary. The
 
 These tests prove plugin bindings and orchestration, **not** Omarchy rendering, compositor focus or actual VPN routing. They are complemented by real installed-import linting and the [real-shell visual smoke fixture](visual-testing.md). The latter uses real host controls, synthetic service data, keyboard interactions and rendered captures—not the component-test doubles.
 
+The QML suite runs on both Ubuntu CI's Qt 6.4 and the Omarchy 4.5 target
+(Qt 6.12). The dashboard subviews are loaded by URL because Qt 6.4 rejects
+`Loader.sourceComponent` for components declared in a
+`pragma ComponentBehavior: Bound` file; the same code passes both versions.
+
 `qmltestrunner` cannot load this distribution's statically registered Quickshell plugin. Trying to use real shell controls directly in it fails with `quickshell-coreplugin not found`. That is why the doubles are explicit rather than pretending a standalone test runner is the shell.
 
 The 1.7.2 local target is Omarchy 4.5.0-3 / Qt 6.12.0. The production components pass 121 Qt UI entries and 20 utility entries without undefined-color warnings; the backend suite passes 252 cases, including the facade-patch contract in `tests/test_module_facade.py` and the country-table/asset sync gates. The dashboard, destination, summary and onboarding suites exercise the redesigned UI directly. Native lint reports zero project diagnostics and 93 narrowly identified host metadata warnings. This does not establish live VPN routing or shared multi-monitor operation.

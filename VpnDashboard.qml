@@ -340,20 +340,35 @@ Column {
     wrapMode: Text.WordWrap
   }
 
+  // Load standalone components by URL: Qt 6.4 rejects sourceComponent for a
+  // Component declared in this `ComponentBehavior: Bound` file. Required
+  // properties are supplied at creation and reactive ones rebound on load.
   Loader {
+    id: detailsLoader
     width: parent.width
     active: root.service.setupDone && root.openSection === "details"
     visible: active
-    sourceComponent: Component {
-      ConnectionDetails {
-        width: parent.width
-        service: root.service
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        showHeading: false
-        technicalOnly: false
-      }
+    onLoaded: {
+      const view = item as ConnectionDetails
+      if (!view)
+        return
+      view.foreground = Qt.binding(function() { return root.foreground })
+      view.fontFamily = Qt.binding(function() { return root.fontFamily })
+      view.width = Qt.binding(function() { return detailsLoader.width })
     }
+    function sync() {
+      if (!active) {
+        source = ""
+        return
+      }
+      setSource(Qt.resolvedUrl("ConnectionDetails.qml"), {
+        "service": root.service,
+        "showHeading": false,
+        "technicalOnly": false
+      })
+    }
+    onActiveChanged: sync()
+    Component.onCompleted: sync()
   }
 
   Loader {
@@ -361,15 +376,26 @@ Column {
     width: parent.width
     active: root.service.setupDone && root.service.readyCreds && root.openSection === "account"
     visible: active
-    sourceComponent: Component {
-      AccountSection {
-        width: parent.width
-        service: root.service
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        showHeading: false
-      }
+    onLoaded: {
+      const view = item as AccountSection
+      if (!view)
+        return
+      view.foreground = Qt.binding(function() { return root.foreground })
+      view.fontFamily = Qt.binding(function() { return root.fontFamily })
+      view.width = Qt.binding(function() { return accountLoader.width })
     }
+    function sync() {
+      if (!active) {
+        source = ""
+        return
+      }
+      setSource(Qt.resolvedUrl("AccountSection.qml"), {
+        "service": root.service,
+        "showHeading": false
+      })
+    }
+    onActiveChanged: sync()
+    Component.onCompleted: sync()
   }
 
   Column {
