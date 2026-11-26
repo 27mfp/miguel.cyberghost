@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.2 — 2026-11-26
+
+- Update the development tools and run the CI test matrix with the declared dependencies. Keep the Python 3.9 mypy target and use compatible pytest and Requests versions on Python 3.9.
+
 ## 1.8.1 — 2026-11-24
 
 - `install.sh --fresh` now always reinstalls the checkout it runs from and never clones from GitHub. The removed path shallow-cloned a moving branch and then ran its legacy-helper cleanup, which the Omarchy marketplace security baseline flags as unpinned remote execution (`remote-git-execution-unpinned`). Run `git pull` before `--fresh` to reinstall a newer release. `--local` is still accepted as a no-op; `--github` now fails with guidance instead of being ignored.

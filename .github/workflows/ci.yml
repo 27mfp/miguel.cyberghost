@@ -75,7 +75,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install test dependencies
-        run: python -m pip install pytest pytest-cov requests
+        run: python -m pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
         run: python -m pytest -q --cov=cyberghost --cov-report=term-missing
